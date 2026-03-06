@@ -4,8 +4,8 @@
   <img src="assets/PixShift.png" alt="PixShift logo" width="280" />
 </p>
 
-[![CI](https://github.com/pixshift/pixshift/actions/workflows/ci.yml/badge.svg)](https://github.com/pixshift/pixshift/actions/workflows/ci.yml)
-[![Release](https://github.com/pixshift/pixshift/actions/workflows/release.yml/badge.svg)](https://github.com/pixshift/pixshift/actions/workflows/release.yml)
+[![CI](https://img.shields.io/github/actions/workflow/status/ChangWinde/pixshift/ci.yml?branch=main&label=CI)](https://github.com/ChangWinde/pixshift/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/actions/workflow/status/ChangWinde/pixshift/release.yml?branch=main&label=Release)](https://github.com/ChangWinde/pixshift/actions/workflows/release.yml)
 
 PixShift is a high-performance CLI toolkit for daily image and PDF workflows.
 It is designed for both direct terminal usage and automation-first pipelines.
@@ -22,6 +22,8 @@ It is designed for both direct terminal usage and automation-first pipelines.
 ```bash
 pip install pixshift
 ```
+
+Requires Python `>=3.10`.
 
 ## Command Tree
 
