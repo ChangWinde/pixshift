@@ -10,7 +10,7 @@ Please do not open public issues for security vulnerabilities.
 
 Use private GitHub security advisories:
 
-- [Report a vulnerability](https://github.com/pixshift/pixshift/security/advisories/new)
+- [Report a vulnerability](https://github.com/ChangWinde/pixshift/security/advisories/new)
 
 Include:
 
