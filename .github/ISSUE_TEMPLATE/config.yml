@@ -1,0 +1,6 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security reports
+    url: https://github.com/pixshift/pixshift/security/advisories/new
+    about: Please report vulnerabilities privately.
+
