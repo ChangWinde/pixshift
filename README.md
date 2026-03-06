@@ -1,7 +1,7 @@
 # PixShift
 
 <p align="center">
-  <img src="assets/PixShift.png" alt="PixShift logo" width="280" />
+  <img src="https://raw.githubusercontent.com/ChangWinde/pixshift/main/assets/PixShift.png" alt="PixShift logo" width="280" />
 </p>
 
 [![CI](https://img.shields.io/github/actions/workflow/status/ChangWinde/pixshift/ci.yml?branch=main&label=CI)](https://github.com/ChangWinde/pixshift/actions/workflows/ci.yml)

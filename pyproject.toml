@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pixshift"
-version = "1.0.0"
+version = "1.0.1"
 description = "⚡ PixShift - 高效图片格式批量转换工具"
 readme = "README.md"
 license = "MIT"
