@@ -108,12 +108,12 @@ def _command_identifier(args: Sequence[str]) -> str:
 @click.version_option(__version__, prog_name="PixShift")
 @click.pass_context
 def cli(ctx: click.Context) -> None:
-    """⚡ 快速、安全、可自动化的图片与 PDF 工具。
+    """快速、安全、可自动化的图片与 PDF 工具。
 
     \b
-    查看命令参数: pixshift COMMAND --help
-    查看可用格式: pixshift formats
-    自动化接口:   支持 --json 的命令提供稳定字段和失败退出码
+    查看命令参数：pixshift COMMAND --help
+    查看可用格式：pixshift formats
+    自动化接口：支持 --json 的命令提供稳定字段和失败退出码
     """
     if ctx.invoked_subcommand is None:
         console.print(get_banner(__version__))

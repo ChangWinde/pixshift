@@ -174,7 +174,7 @@ def register_convert_command(
         bg_color: str,
         as_json: bool,
     ) -> None:
-        """🔄 转换图片格式 (支持单文件/目录/批量, 自动多核并行)"""
+        """转换图片格式，支持单文件、目录和批量并行处理。"""
         validate_affixes_or_exit(
             command="convert",
             as_json=as_json,
@@ -190,7 +190,7 @@ def register_convert_command(
                 emit_json_and_exit(
                     {"command": "convert", "ok": False, "error": "invalid_resize"}, 1
                 )
-            console.print("[red]❌ resize 格式错误, 请使用 WxH 或 百分比%[/red]")
+            console.print("[red]--resize 参数格式错误，请使用 WxH 或 50% 格式。[/red]")
             sys.exit(1)
 
         if resize is not None and max_size is not None:
@@ -215,13 +215,13 @@ def register_convert_command(
                 emit_json_and_exit(
                     {"command": "convert", "ok": False, "error": "invalid_bg_color"}, 1
                 )
-            console.print("[red]❌ bg-color 格式错误, 请使用 R,G,B[/red]")
+            console.print("[red]--bg-color 参数格式错误，请使用 R,G,B 格式。[/red]")
             sys.exit(1)
 
         if as_json:
             files = convert_ops.collect_convert_files(list(inputs), input_format, recursive)
         else:
-            with console.status("[bold cyan]🔍 扫描文件中...[/bold cyan]"):
+            with console.status("[bold cyan]正在扫描文件...[/bold cyan]"):
                 files = convert_ops.collect_convert_files(list(inputs), input_format, recursive)
 
         files, ignored_generated = filter_generated_inputs(
@@ -243,10 +243,10 @@ def register_convert_command(
                     }
                 )
             else:
-                console.print("[yellow]⚠️  未找到可转换的图片文件[/yellow]")
+                console.print("[yellow]未找到可转换的图片文件。[/yellow]")
                 if input_format:
-                    console.print(f"   (筛选格式: .{input_format})")
-                console.print(f"   支持的输入格式: {', '.join(sorted(SUPPORTED_INPUT_FORMATS))}")
+                    console.print(f"  筛选格式：.{input_format}")
+                console.print(f"  支持的输入格式：{', '.join(sorted(SUPPORTED_INPUT_FORMATS))}")
             return
 
         if ignored_generated and not as_json:
@@ -299,13 +299,13 @@ def register_convert_command(
             os.makedirs(output_dir, exist_ok=True)
 
         if not as_json:
-            console.print(f"  📁 找到 [bold green]{len(tasks)}[/bold green] 个文件")
-            console.print(f"  🎯 目标格式: [bold cyan]{output_format.upper()}[/bold cyan]")
-            console.print(f"  💎 质量等级: [bold]{quality}[/bold]")
+            console.print(f"  文件数: [bold green]{len(tasks)}[/bold green]")
+            console.print(f"  目标格式: [bold cyan]{output_format.upper()}[/bold cyan]")
+            console.print(f"  质量等级: [bold]{quality}[/bold]")
             if output_dir:
-                console.print(f"  📂 输出目录: [bold]{output_dir}[/bold]")
+                console.print(f"  输出目录: [bold]{output_dir}[/bold]")
             if resize:
-                console.print(f"  📐 调整大小: [bold]{resize}[/bold]")
+                console.print(f"  尺寸调整: [bold]{resize}[/bold]")
             console.print()
 
         converter_kwargs: dict = {
@@ -358,9 +358,7 @@ def register_convert_command(
                 TextColumn("[bold blue]{task.description}"),
                 BarColumn(bar_width=40),
                 MofNCompleteColumn(),
-                TextColumn("•"),
                 TimeElapsedColumn(),
-                TextColumn("•"),
                 TimeRemainingColumn(),
                 console=console,
             ) as progress:
@@ -464,33 +462,33 @@ def _show_convert_summary(
         pct = (batch.total_output_size / batch.total_input_size) * 100
         if pct < 100:
             ratio = (
-                f"  📉 压缩率: [green]{pct:.1f}%[/green] "
+                f"  压缩率: [green]{pct:.1f}%[/green] "
                 f"(节省 {human_size(batch.total_input_size - batch.total_output_size)})"
             )
         else:
-            ratio = f"  📈 体积变化: [yellow]{pct:.1f}%[/yellow]"
+            ratio = f"  体积变化: [yellow]{pct:.1f}%[/yellow]"
 
     speed = ""
     if batch.total_duration > 0 and batch.success > 0:
         fps = batch.success / batch.total_duration
-        speed = f"  ⚡ 速度: [bold]{fps:.1f}[/bold] 张/秒 ({jobs} 核并行)"
+        speed = f"  速度: [bold]{fps:.1f}[/bold] 张/秒（{jobs} 个并行任务）"
 
     summary = (
-        f"  ✅ 成功: [bold green]{batch.success}[/bold green]"
-        f"  ❌ 失败: [bold red]{batch.failed}[/bold red]"
-        f"  ⏭️  跳过: [bold yellow]{batch.skipped}[/bold yellow]"
-        f"  📊 总计: [bold]{batch.total}[/bold]\n"
-        f"  📦 输入: {human_size(batch.total_input_size)}"
-        f"  →  输出: {human_size(batch.total_output_size)}\n"
+        f"  成功: [bold green]{batch.success}[/bold green]"
+        f"  失败: [bold red]{batch.failed}[/bold red]"
+        f"  跳过: [bold yellow]{batch.skipped}[/bold yellow]"
+        f"  总计: [bold]{batch.total}[/bold]\n"
+        f"  输入: {human_size(batch.total_input_size)}；"
+        f"输出: {human_size(batch.total_output_size)}\n"
         f"{ratio}\n"
         f"{speed}\n"
-        f"  ⏱️  耗时: [bold]{batch.total_duration:.2f}s[/bold]"
+        f"  耗时: [bold]{batch.total_duration:.2f} 秒[/bold]"
     )
 
     console.print(
         Panel(
             summary,
-            title="[bold]📊 转换完成[/bold]",
+            title="[bold]转换完成[/bold]",
             border_style="green" if batch.failed == 0 else "yellow",
             box=box.ROUNDED,
         )

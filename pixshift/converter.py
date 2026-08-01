@@ -33,7 +33,7 @@ except ImportError:
     try:
         from PIL import ExifTags, Image, ImageFile
     except ImportError:
-        print("❌ 请先安装 Pillow: pip install Pillow")
+        print("请先安装 Pillow: pip install Pillow")
         sys.exit(1)
 
 

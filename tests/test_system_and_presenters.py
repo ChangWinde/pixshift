@@ -66,7 +66,7 @@ def test_formats_command_displays_tables():
     runner = CliRunner()
     result = runner.invoke(cli, ["formats"])
     assert result.exit_code == 0
-    assert "运行时能力探测" in result.output
+    assert "运行时能力检测" in result.output
     assert "质量预设" in result.output
 
 
@@ -76,6 +76,8 @@ def test_doctor_command_displays_runtime_checks():
     assert result.exit_code == 0
     assert "环境检查" in result.output
     assert "Python" in result.output
+    assert "结果" in result.output
+    assert "通过" in result.output
 
 
 def test_check_heif_handles_import_error(monkeypatch):
@@ -112,7 +114,7 @@ def test_print_failures_truncates_to_top_ten():
 
     print_failures(console, errors)
     rendered = output.getvalue()
-    assert "❌ 失败文件" in rendered
+    assert "失败文件" in rendered
     assert "err-0" in rendered
     assert "err-9" in rendered
     assert "还有 2 个失败" in rendered
@@ -130,6 +132,6 @@ def test_show_dry_run_table_limits_rows_to_fifty():
         quality_label="high",
     )
     rendered = output.getvalue()
-    assert "预览模式" in rendered
+    assert "预览（不执行）" in rendered
     assert "还有 5 个文件" in rendered
     assert "WebP" in rendered

@@ -46,6 +46,11 @@ def test_advanced_commands_help_available():
     assert "optimize" in root.output
     assert "watch" in root.output
 
+    watermark_help = runner.invoke(cli, ["watermark", "--help"])
+    assert watermark_help.exit_code == 0
+    assert "添加文字水印" in watermark_help.output
+    assert "添加图片水印" in watermark_help.output
+
     for args in [
         ["compare", "--help"],
         ["crop", "--help"],

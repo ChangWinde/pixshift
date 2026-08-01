@@ -277,7 +277,7 @@ def pdf_merge_images(
 
             # 确定页面大小
             if normalized_page_size == "fit":
-                # 自适应：页面大小 = 图片大小 (像素→点, 假设 72 DPI)
+                # 自适应页面使用图片尺寸，按 72 DPI 将像素换算为点。
                 pw, ph = float(img_w), float(img_h)
             else:
                 size = PAGE_SIZES[normalized_page_size]
@@ -444,8 +444,8 @@ def _parse_page_range(pages_str: str | None, total: int) -> list[int]:
     """
     解析页码范围字符串
 
-    支持格式: "1-5,8,10-12" → [0,1,2,3,4,7,9,10,11]
-    None → 全部页码
+    格式 "1-5,8,10-12" 解析为 [0,1,2,3,4,7,9,10,11]。
+    None 表示全部页码。
     """
     if pages_str is None:
         return list(range(total))

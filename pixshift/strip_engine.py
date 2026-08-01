@@ -306,7 +306,7 @@ def _selective_strip(
         if strip_time:
             tags_to_remove |= TIME_TAGS
 
-        # 反向映射：标签名 → 标签ID
+        # 从标签名映射到标签 ID。
         tag_name_to_id = {v: k for k, v in ExifTags.TAGS.items()}
 
         # 删除匹配的标签

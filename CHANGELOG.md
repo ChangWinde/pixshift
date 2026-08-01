@@ -8,6 +8,8 @@ All notable changes to this project are documented in this file.
 
 ### Added
 
+- A repository-wide policy test that rejects emoji in source, tests, documentation,
+  examples, and configuration text.
 - Machine-executable `optimize` plans with structured format estimates and sampling metadata.
 - Successful CLI integration coverage for image watermarks and every PDF transformation.
 - Shared generated-input filtering and idempotent existing-output skips for batch workflows.
@@ -37,6 +39,8 @@ All notable changes to this project are documented in this file.
 
 ### Changed
 
+- Removed decorative emoji from CLI help, status messages, tables, summaries, comments,
+  and descriptions; status is now expressed with concise text.
 - Defaulted conversion/watch quality to `high`, PDF extraction to 150 DPI, and text
   watermark sizing to an image-relative value.
 - Bounded large-image optimization trial encodes to a 1600 px sample (4.6× faster in
