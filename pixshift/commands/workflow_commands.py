@@ -98,7 +98,7 @@ def register_workflow_commands(
         dry_run: bool,
         as_json: bool,
     ) -> None:
-        """🗜️  同格式压缩优化 (批量减小体积, 不改变格式)"""
+        """批量压缩图片，保持原格式。"""
         if quality is not None and target_size is not None:
             payload = {
                 "command": "compress",
@@ -116,7 +116,7 @@ def register_workflow_commands(
         if as_json:
             files = compress_ops.collect_files(list(inputs), input_format, recursive)
         else:
-            with console.status("[bold cyan]🔍 扫描文件中...[/bold cyan]"):
+            with console.status("[bold cyan]正在扫描文件...[/bold cyan]"):
                 files = compress_ops.collect_files(list(inputs), input_format, recursive)
 
         files, ignored_generated = filter_generated_inputs(
@@ -138,7 +138,7 @@ def register_workflow_commands(
                     }
                 )
             else:
-                console.print("[yellow]⚠️  未找到可压缩的图片文件[/yellow]")
+                console.print("[yellow]未找到可压缩的图片文件。[/yellow]")
             return
 
         if ignored_generated and not as_json:
@@ -167,8 +167,8 @@ def register_workflow_commands(
         )
         if warnings and not as_json:
             console.print(
-                "[yellow]⚠️  --quality 仅适用于有损格式；"
-                f"{', '.join(ignored_quality_formats).upper()} 将使用无损压缩设置[/yellow]"
+                "[yellow]--quality 仅适用于有损格式；"
+                f"{', '.join(ignored_quality_formats).upper()} 将使用无损压缩设置。[/yellow]"
             )
 
         tasks = _build_derivative_tasks(
@@ -237,7 +237,6 @@ def register_workflow_commands(
                 TextColumn("[bold blue]{task.description}"),
                 BarColumn(bar_width=40),
                 MofNCompleteColumn(),
-                TextColumn("•"),
                 TimeElapsedColumn(),
                 console=console,
             ) as progress:
@@ -283,15 +282,15 @@ def register_workflow_commands(
             )
             console.print(
                 Panel(
-                    f"  ✅ 成功: [bold green]{summary.success}[/bold green]\n"
-                    f"  ❌ 失败: [bold red]{summary.failed}[/bold red]\n"
-                    f"  ⏭️  跳过: [bold yellow]{summary.skipped}[/bold yellow]\n"
-                    f"  📊 总计: [bold]{summary.total}[/bold]\n"
-                    f"  📦 输入: {human_size(summary.total_input_size)}"
-                    f"  →  输出: {human_size(summary.total_output_size)}\n"
+                    f"  成功: [bold green]{summary.success}[/bold green]\n"
+                    f"  失败: [bold red]{summary.failed}[/bold red]\n"
+                    f"  跳过: [bold yellow]{summary.skipped}[/bold yellow]\n"
+                    f"  总计: [bold]{summary.total}[/bold]\n"
+                    f"  输入: {human_size(summary.total_input_size)}；"
+                    f"输出: {human_size(summary.total_output_size)}\n"
                     f"{ratio_text}\n"
-                    f"  ⏱️  耗时: [bold]{duration:.2f}s[/bold]",
-                    title="[bold]🗜️  压缩完成[/bold]",
+                    f"  耗时: [bold]{duration:.2f} 秒[/bold]",
+                    title="[bold]压缩完成[/bold]",
                     border_style="green" if summary.failed == 0 else "yellow",
                     box=box.ROUNDED,
                 )
@@ -341,14 +340,14 @@ def register_workflow_commands(
         dry_run: bool,
         as_json: bool,
     ) -> None:
-        """🧼 清理图片元数据 (隐私优先、安全默认)"""
+        """清理图片元数据，默认优先保护隐私。"""
         if not as_json:
             console.print(f"\n{mini_logo} [bold]元数据清理[/bold]\n")
 
         if as_json:
             files = strip_ops.collect_files(list(inputs), recursive)
         else:
-            with console.status("[bold cyan]🔍 扫描文件中...[/bold cyan]"):
+            with console.status("[bold cyan]正在扫描文件...[/bold cyan]"):
                 files = strip_ops.collect_files(list(inputs), recursive)
 
         files, ignored_generated = filter_generated_inputs(
@@ -370,7 +369,7 @@ def register_workflow_commands(
                     }
                 )
             else:
-                console.print("[yellow]⚠️  未找到可清理元数据的图片文件[/yellow]")
+                console.print("[yellow]未找到可清理元数据的图片文件。[/yellow]")
             return
 
         if ignored_generated and not as_json:
@@ -416,7 +415,7 @@ def register_workflow_commands(
                     }
                 )
             else:
-                table = Table(title="📋 元数据清理预览", box=box.ROUNDED)
+                table = Table(title="元数据清理预览", box=box.ROUNDED)
                 table.add_column("#", style="dim", width=5)
                 table.add_column("文件", style="cyan")
                 table.add_column("EXIF", style="yellow")
@@ -471,7 +470,6 @@ def register_workflow_commands(
                 TextColumn("[bold blue]{task.description}"),
                 BarColumn(bar_width=40),
                 MofNCompleteColumn(),
-                TextColumn("•"),
                 TimeElapsedColumn(),
                 console=console,
             ) as progress:
@@ -519,15 +517,15 @@ def register_workflow_commands(
             print_failures(console, errors)
             console.print(
                 Panel(
-                    f"  ✅ 成功: [bold green]{summary.success}[/bold green]\n"
-                    f"  ❌ 失败: [bold red]{summary.failed}[/bold red]\n"
-                    f"  ⏭️  跳过: [bold yellow]{summary.skipped}[/bold yellow]\n"
-                    f"  📊 总计: [bold]{summary.total}[/bold]\n"
-                    f"  🧾 清理字段: [bold]{fields_removed}[/bold]\n"
-                    f"  📦 输入: {human_size(summary.total_input_size)}"
-                    f"  →  输出: {human_size(summary.total_output_size)}\n"
-                    f"  ⏱️  耗时: [bold]{duration:.2f}s[/bold]",
-                    title="[bold]🧼 清理完成[/bold]",
+                    f"  成功: [bold green]{summary.success}[/bold green]\n"
+                    f"  失败: [bold red]{summary.failed}[/bold red]\n"
+                    f"  跳过: [bold yellow]{summary.skipped}[/bold yellow]\n"
+                    f"  总计: [bold]{summary.total}[/bold]\n"
+                    f"  已清理字段: [bold]{fields_removed}[/bold]\n"
+                    f"  输入: {human_size(summary.total_input_size)}；"
+                    f"输出: {human_size(summary.total_output_size)}\n"
+                    f"  耗时: [bold]{duration:.2f} 秒[/bold]",
+                    title="[bold]元数据清理完成[/bold]",
                     border_style="green" if summary.failed == 0 else "yellow",
                     box=box.ROUNDED,
                 )
@@ -573,7 +571,7 @@ def register_workflow_commands(
         yes: bool,
         as_json: bool,
     ) -> None:
-        """🧹 检测相似图片，安全清理字节级重复文件"""
+        """检测相似图片，安全清理字节级重复文件。"""
         if not as_json:
             console.print(f"\n{mini_logo} [bold]重复图片检测[/bold]\n")
 
@@ -585,7 +583,7 @@ def register_workflow_commands(
                 threshold=threshold,
             )
         else:
-            with console.status("[bold cyan]🔍 分析中...[/bold cyan]"):
+            with console.status("[bold cyan]正在分析...[/bold cyan]"):
                 result = dedup_ops.analyze(
                     input_paths=list(inputs),
                     recursive=recursive,
@@ -597,7 +595,7 @@ def register_workflow_commands(
             if as_json:
                 emit_json_and_exit({"command": "dedup", "ok": False, "error": result.error}, 1)
             else:
-                console.print(f"[red]❌ 分析失败: {result.error}[/red]\n")
+                console.print(f"[red]分析失败: {result.error}[/red]\n")
                 raise click.exceptions.Exit(1)
             return
         if result.duplicate_groups == 0:
@@ -615,11 +613,11 @@ def register_workflow_commands(
                     }
                 )
             else:
-                console.print("[green]✅ 未发现重复/相似图片[/green]\n")
+                console.print("[green]未发现重复或相似图片。[/green]\n")
             return
 
         if not as_json:
-            table = Table(title="🧹 重复组预览", box=box.ROUNDED)
+            table = Table(title="重复组预览", box=box.ROUNDED)
             table.add_column("#", style="dim", width=5)
             table.add_column("保留文件", style="green")
             table.add_column("相似数量", style="yellow", width=10)
@@ -642,13 +640,13 @@ def register_workflow_commands(
 
             console.print(
                 Panel(
-                    f"  📁 扫描文件: [bold]{result.total_files}[/bold]\n"
-                    f"  🔁 重复组: [bold yellow]{result.duplicate_groups}[/bold yellow]\n"
-                    f"  👀 相似候选: [bold]{result.duplicate_files}[/bold]\n"
-                    f"  🗑️  字节级相同可删: [bold]{result.deletable_files}[/bold]\n"
-                    f"  💾 可回收空间: [bold green]{result.recoverable_size_human}[/bold green]\n"
-                    f"  ⏱️  耗时: [bold]{result.duration:.2f}s[/bold]",
-                    title="[bold]📊 去重分析[/bold]",
+                    f"  扫描文件: [bold]{result.total_files}[/bold]\n"
+                    f"  重复组: [bold yellow]{result.duplicate_groups}[/bold yellow]\n"
+                    f"  相似候选: [bold]{result.duplicate_files}[/bold]\n"
+                    f"  可删除的字节级重复文件: [bold]{result.deletable_files}[/bold]\n"
+                    f"  可回收空间: [bold green]{result.recoverable_size_human}[/bold green]\n"
+                    f"  耗时: [bold]{result.duration:.2f} 秒[/bold]",
+                    title="[bold]去重分析[/bold]",
                     border_style="yellow",
                     box=box.ROUNDED,
                 )
@@ -696,10 +694,10 @@ def register_workflow_commands(
             else:
                 console.print(
                     Panel(
-                        f"  🧪 预览删除: [bold yellow]{len(delete_result['deleted'])}[/bold yellow]\n"
-                        f"  📌 保留文件: [bold]{len(delete_result['kept'])}[/bold]\n"
-                        f"  [dim]去掉 --dry-run 才会实际删除[/dim]",
-                        title="[bold]🧹 删除预览[/bold]",
+                        f"  计划删除: [bold yellow]{len(delete_result['deleted'])}[/bold yellow]\n"
+                        f"  保留文件: [bold]{len(delete_result['kept'])}[/bold]\n"
+                        f"  [dim]移除 --dry-run 后才会实际删除。[/dim]",
+                        title="[bold]删除预览[/bold]",
                         border_style="yellow",
                         box=box.ROUNDED,
                     )
@@ -771,11 +769,11 @@ def register_workflow_commands(
         else:
             console.print(
                 Panel(
-                    f"  ✅ 删除成功: [bold green]{len(delete_result['deleted'])}[/bold green]\n"
-                    f"  📌 保留文件: [bold]{len(delete_result['kept'])}[/bold]\n"
-                    f"  ⚠️  安全跳过: [bold yellow]{len(delete_result['skipped'])}[/bold yellow]\n"
-                    f"  ❌ 删除失败: [bold red]{len(delete_result['errors'])}[/bold red]",
-                    title="[bold]🧹 删除完成[/bold]",
+                    f"  删除成功: [bold green]{len(delete_result['deleted'])}[/bold green]\n"
+                    f"  保留文件: [bold]{len(delete_result['kept'])}[/bold]\n"
+                    f"  安全跳过: [bold yellow]{len(delete_result['skipped'])}[/bold yellow]\n"
+                    f"  删除失败: [bold red]{len(delete_result['errors'])}[/bold red]",
+                    title="[bold]删除完成[/bold]",
                     border_style="green" if not delete_result["errors"] else "yellow",
                     box=box.ROUNDED,
                 )
@@ -783,9 +781,9 @@ def register_workflow_commands(
             if delete_result["errors"]:
                 console.print("[bold red]失败详情:[/bold red]")
                 for err in delete_result["errors"][:10]:
-                    console.print(f"   {err}")
+                    console.print(f"  {err}")
                 if len(delete_result["errors"]) > 10:
-                    console.print(f"   ... 还有 {len(delete_result['errors']) - 10} 个错误")
+                    console.print(f"  ... 还有 {len(delete_result['errors']) - 10} 个错误")
             console.print()
             if delete_result["errors"] or delete_result["skipped"]:
                 raise click.exceptions.Exit(1)

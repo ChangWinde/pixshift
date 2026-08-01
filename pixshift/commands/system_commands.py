@@ -35,7 +35,7 @@ def register_system_commands(cli_group: click.Group, console: Console, mini_logo
         "--json", "as_json", is_flag=True, default=False, help="以 JSON 输出结果（适合脚本调用）"
     )
     def info(files: tuple[str, ...], exif: bool, as_json: bool) -> None:
-        """📋 查看图片详细信息 (格式/尺寸/大小/颜色模式/EXIF)"""
+        """查看图片详细信息（格式、尺寸、大小、颜色模式和 EXIF）。"""
         if as_json:
             items = []
             for filepath in files:
@@ -64,7 +64,7 @@ def register_system_commands(cli_group: click.Group, console: Console, mini_logo
                 had_errors = True
 
             table = Table(
-                title=f"📄 {os.path.basename(filepath)}",
+                title=os.path.basename(filepath),
                 box=box.ROUNDED,
                 show_header=False,
                 title_style="bold cyan",
@@ -83,7 +83,7 @@ def register_system_commands(cli_group: click.Group, console: Console, mini_logo
                 table.add_row("像素", f"{megapixels:.1f} MP")
 
             table.add_row("颜色模式", img_info.get("mode", "N/A"))
-            table.add_row("透明通道", "✅ 是" if img_info.get("has_alpha") else "❌ 否")
+            table.add_row("透明通道", "是" if img_info.get("has_alpha") else "否")
             if img_info.get("error"):
                 table.add_row("错误", f"[red]{img_info['error']}[/red]")
 
@@ -91,7 +91,7 @@ def register_system_commands(cli_group: click.Group, console: Console, mini_logo
 
             if exif and "exif" in img_info:
                 exif_table = Table(
-                    title="📷 EXIF 信息",
+                    title="EXIF 信息",
                     box=box.SIMPLE,
                     show_header=True,
                 )
@@ -110,7 +110,7 @@ def register_system_commands(cli_group: click.Group, console: Console, mini_logo
         "--json", "as_json", is_flag=True, default=False, help="以 JSON 输出结果（适合脚本调用）"
     )
     def formats(as_json: bool) -> None:
-        """📑 列出所有支持的图片格式"""
+        """列出所有支持的图片格式。"""
         in_exts = sorted(SUPPORTED_INPUT_FORMATS)
         out_formats = sorted(SUPPORTED_OUTPUT_FORMATS)
         heif_ok = _check_heif()
@@ -134,28 +134,28 @@ def register_system_commands(cli_group: click.Group, console: Console, mini_logo
 
         console.print(f"\n{mini_logo} [bold]支持的格式[/bold]\n")
 
-        table_rt = Table(title="🔎 运行时能力探测", box=box.ROUNDED)
+        table_rt = Table(title="运行时能力检测", box=box.ROUNDED)
         table_rt.add_column("项目", style="bold cyan", width=22)
         table_rt.add_column("状态", style="")
         table_rt.add_row("输入扩展名数量", str(len(in_exts)))
         table_rt.add_row("输出格式数量", str(len(out_formats)))
         table_rt.add_row(
-            "HEIF/HEIC 支持", "✅ 可用" if heif_ok else "⚠️ 未启用 (pip install pillow-heif)"
+            "HEIF/HEIC 支持", "可用" if heif_ok else "未启用 (pip install pillow-heif)"
         )
         table_rt.add_row(
-            "AVIF 编码支持", "✅ 可用" if avif_ok else "⚠️ 未启用 (pip install pillow-avif-plugin)"
+            "AVIF 编码支持", "可用" if avif_ok else "未启用 (pip install pillow-avif-plugin)"
         )
         table_rt.add_row("输入扩展预览", _preview_items(in_exts))
         table_rt.add_row("输出格式预览", _preview_items(out_formats))
         console.print(table_rt)
         console.print()
 
-        table_q = Table(title="💎 质量预设", box=box.ROUNDED)
+        table_q = Table(title="质量预设", box=box.ROUNDED)
         table_q.add_column("等级", style="bold", width=10)
         table_q.add_column("说明", style="")
         table_q.add_column("适用场景", style="dim")
         table_q.add_row("[green]max[/green]", "最高质量", "专业用途、存档")
-        table_q.add_row("[blue]high[/blue]", "高质量 (默认)", "日常使用")
+        table_q.add_row("[blue]high[/blue]", "高质量（默认）", "日常使用")
         table_q.add_row("[yellow]medium[/yellow]", "中等质量", "一般用途")
         table_q.add_row("[red]low[/red]", "低质量", "缩略图、预览")
         table_q.add_row("[magenta]web[/magenta]", "网页优化", "网站、博客")
@@ -167,7 +167,7 @@ def register_system_commands(cli_group: click.Group, console: Console, mini_logo
         "--json", "as_json", is_flag=True, default=False, help="以 JSON 输出结果（适合脚本调用）"
     )
     def doctor(as_json: bool) -> None:
-        """🩺 检查运行环境和依赖"""
+        """检查运行环境和依赖。"""
         checks = _collect_doctor_checks()
         all_ready = all(ok for _, _, ok, required in checks if required)
         if as_json:
@@ -191,25 +191,25 @@ def register_system_commands(cli_group: click.Group, console: Console, mini_logo
         table.add_column("组件", style="bold", width=28)
         table.add_column("状态", style="")
         table.add_column("类型", style="dim", width=6)
-        table.add_column("", width=3)
+        table.add_column("结果", width=8)
         for name, status, ok, required in checks:
             if ok:
-                icon = "[green]✅[/green]"
+                outcome = "[green]通过[/green]"
                 rendered_status = status
             elif required:
-                icon = "[red]❌[/red]"
+                outcome = "[red]失败[/red]"
                 rendered_status = f"[red]{status}[/red]"
             else:
-                icon = "[yellow]⚠[/yellow]"
+                outcome = "[yellow]不可用[/yellow]"
                 rendered_status = f"[yellow]{status}[/yellow]"
-            table.add_row(name, rendered_status, "必需" if required else "可选", icon)
+            table.add_row(name, rendered_status, "必需" if required else "可选", outcome)
         console.print(table)
 
         if all_ready:
-            console.print("\n  [bold green]🎉 所有依赖已就绪！[/bold green]\n")
+            console.print("\n  [bold green]所有必需依赖均已就绪。[/bold green]\n")
         else:
-            console.print("\n  [bold yellow]⚠️  部分依赖缺失，某些格式可能不支持[/bold yellow]")
-            console.print("  运行以下命令安装所有依赖:")
+            console.print("\n  [bold yellow]部分必需依赖缺失，相关功能不可用。[/bold yellow]")
+            console.print("  运行以下命令安装依赖：")
             console.print("  [bold]pip install pillow pillow-heif click rich PyMuPDF[/bold]\n")
             raise click.exceptions.Exit(1)
 
@@ -253,20 +253,22 @@ def _collect_doctor_checks() -> list[tuple[str, str, bool, bool]]:
     try:
         import pillow_heif
 
-        checks.append(("pillow-heif (HEIC支持)", pillow_heif.__version__, True, True))
+        checks.append(("pillow-heif（HEIC 支持）", pillow_heif.__version__, True, True))
     except ImportError:
-        checks.append(("pillow-heif (HEIC支持)", "未安装 (pip install pillow-heif)", False, True))
+        checks.append(
+            ("pillow-heif（HEIC 支持）", "未安装（pip install pillow-heif）", False, True)
+        )
 
     try:
         import pillow_avif  # noqa: F401
 
-        checks.append(("pillow-avif (AVIF支持)", "✅", True, False))
+        checks.append(("pillow-avif（AVIF 支持）", "已安装", True, False))
     except ImportError:
         avif_builtin = _check_avif()
         checks.append(
             (
                 "AVIF 支持",
-                "内置 (Pillow)" if avif_builtin else "未安装 (pip install pillow-avif-plugin)",
+                "内置（Pillow）" if avif_builtin else "未安装（pip install pillow-avif-plugin）",
                 avif_builtin,
                 False,
             )
@@ -276,21 +278,21 @@ def _collect_doctor_checks() -> list[tuple[str, str, bool, bool]]:
         import fitz
 
         fitz_ver = fitz.version[0] if hasattr(fitz, "version") else fitz.VersionBind
-        checks.append(("PyMuPDF (PDF处理)", str(fitz_ver), True, True))
+        checks.append(("PyMuPDF（PDF 处理）", str(fitz_ver), True, True))
     except ImportError:
-        checks.append(("PyMuPDF (PDF处理)", "未安装 (pip install PyMuPDF)", False, True))
+        checks.append(("PyMuPDF（PDF 处理）", "未安装（pip install PyMuPDF）", False, True))
 
     try:
         from importlib.metadata import version as pkg_version
 
-        checks.append(("Rich (终端美化)", pkg_version("rich"), True, True))
+        checks.append(("Rich（终端界面）", pkg_version("rich"), True, True))
     except Exception:
         checks.append(("Rich", "未安装", False, True))
 
     try:
         from importlib.metadata import version as pkg_version
 
-        checks.append(("Click (CLI框架)", pkg_version("click"), True, True))
+        checks.append(("Click（命令行框架）", pkg_version("click"), True, True))
     except Exception:
         checks.append(("Click", "未安装", False, True))
 

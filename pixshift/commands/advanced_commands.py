@@ -68,7 +68,7 @@ def register_advanced_commands(
     def compare_cmd(
         image_a: str, image_b: str, no_blocks: bool, block_size: int, as_json: bool
     ) -> None:
-        """🧪 对比两张图片质量（SSIM/PSNR/MSE）"""
+        """使用 SSIM、PSNR 和 MSE 对比两张图片。"""
         result = compare_ops.compare(
             image_a, image_b, use_blocks=not no_blocks, block_size=block_size
         )
@@ -97,7 +97,7 @@ def register_advanced_commands(
             emit_json(payload)
             return
         if not result.success:
-            console.print(f"[red]❌ 对比失败: {result.error}[/red]")
+            console.print(f"[red]图片对比失败: {result.error}[/red]")
             raise click.exceptions.Exit(1)
         console.print(f"\n{mini_logo} [bold]图片对比[/bold]\n")
         console.print(
@@ -107,7 +107,7 @@ def register_advanced_commands(
                 f"  MSE : [bold]{result.mse:.4f}[/bold]\n"
                 f"  评级: [bold green]{result.quality_rating}[/bold green]\n"
                 f"  说明: {result.quality_detail}",
-                title="[bold]🧪 对比结果[/bold]",
+                title="[bold]对比结果[/bold]",
                 border_style="green",
                 box=box.ROUNDED,
             )
@@ -150,13 +150,13 @@ def register_advanced_commands(
         dry_run: bool,
         as_json: bool,
     ) -> None:
-        """✂️ 批量裁剪图片（区域/比例/自动裁边）"""
+        """按区域、比例或内容边界批量裁剪图片。"""
         enabled_modes = int(bool(crop_box)) + int(bool(aspect)) + int(bool(trim))
         if enabled_modes != 1:
             message = "select_exactly_one_mode"
             if as_json:
                 emit_json_and_exit({"command": "crop", "ok": False, "error": message}, 1)
-            console.print("[red]❌ 请且仅选择一种模式: --crop / --aspect / --trim[/red]")
+            console.print("[red]请仅选择一种模式: --crop、--aspect 或 --trim。[/red]")
             raise click.exceptions.Exit(2)
 
         files = crop_ops.collect_files(list(inputs), recursive)
@@ -175,7 +175,7 @@ def register_advanced_commands(
                     "message": "no_files",
                     "ignored_generated": ignored_generated,
                 }
-            ) if as_json else console.print("[yellow]⚠️  未找到可裁剪文件[/yellow]")
+            ) if as_json else console.print("[yellow]未找到可裁剪的图片文件。[/yellow]")
             return
 
         if ignored_generated and not as_json:
@@ -215,7 +215,7 @@ def register_advanced_commands(
                 console.print(
                     Panel(
                         f"  共 {len(tasks)} 个文件将被裁剪，{len(skipped_tasks)} 个将跳过",
-                        title="[bold]✂️ 预览[/bold]",
+                        title="[bold]裁剪预览[/bold]",
                         box=box.ROUNDED,
                     )
                 )
@@ -260,11 +260,11 @@ def register_advanced_commands(
             return
         console.print(
             Panel(
-                f"  ✅ 成功: [bold green]{success}[/bold green]\n"
-                f"  ❌ 失败: [bold red]{failed}[/bold red]\n"
-                f"  ⏭️  跳过: [bold yellow]{len(skipped_tasks)}[/bold yellow]\n"
-                f"  📦 输入: {human_size(input_bytes)} → 输出: {human_size(output_bytes)}",
-                title="[bold]✂️ 裁剪完成[/bold]",
+                f"  成功: [bold green]{success}[/bold green]\n"
+                f"  失败: [bold red]{failed}[/bold red]\n"
+                f"  跳过: [bold yellow]{len(skipped_tasks)}[/bold yellow]\n"
+                f"  输入: {human_size(input_bytes)}；输出: {human_size(output_bytes)}",
+                title="[bold]裁剪完成[/bold]",
                 border_style="green" if failed == 0 else "yellow",
                 box=box.ROUNDED,
             )
@@ -275,7 +275,7 @@ def register_advanced_commands(
 
     @cli_group.group("watermark")
     def watermark_group() -> None:
-        """💧 添加文字或图片水印"""
+        """添加文字或图片水印。"""
 
     @watermark_group.command("text")
     @click.argument("inputs", nargs=-1, required=True, type=click.Path(exists=True))
@@ -329,6 +329,7 @@ def register_advanced_commands(
         dry_run: bool,
         as_json: bool,
     ) -> None:
+        """添加文字水印。"""
         _run_watermark(
             mode="text",
             inputs=inputs,
@@ -399,6 +400,7 @@ def register_advanced_commands(
         dry_run: bool,
         as_json: bool,
     ) -> None:
+        """添加图片水印。"""
         _run_watermark(
             mode="image",
             inputs=inputs,
@@ -458,7 +460,7 @@ def register_advanced_commands(
         overwrite: bool,
         as_json: bool,
     ) -> None:
-        """🧩 将多张图片组合为整洁网格。"""
+        """将多张图片组合为网格拼图。"""
         files = montage_ops.collect_files(list(inputs), recursive)
         files, ignored_generated = filter_generated_inputs(
             files,
@@ -477,7 +479,7 @@ def register_advanced_commands(
                     }
                 )
             else:
-                console.print("[yellow]⚠️  未找到可拼图文件[/yellow]")
+                console.print("[yellow]未找到可用于拼图的图片文件。[/yellow]")
             return
         result = montage_ops.create(
             input_paths=files,
@@ -513,7 +515,7 @@ def register_advanced_commands(
             emit_json(payload)
             return
         if not result.success:
-            console.print(f"[red]❌ 拼图失败: {result.error}[/red]")
+            console.print(f"[red]拼图失败: {result.error}[/red]")
             raise click.exceptions.Exit(1)
         console.print(f"\n{mini_logo} [bold]拼图完成[/bold]\n")
         console.print(
@@ -530,13 +532,13 @@ def register_advanced_commands(
     @click.option("-r", "--recursive", is_flag=True, default=False, help="递归处理目录")
     @click.option("--json", "as_json", is_flag=True, default=False, help="以 JSON 输出结果")
     def optimize_cmd(inputs: tuple[str, ...], recursive: bool, as_json: bool) -> None:
-        """📈 分析图片并推荐最佳输出格式"""
+        """分析图片并推荐输出格式。"""
         files = collect_supported_files(list(inputs), SUPPORTED_INPUT_FORMATS, recursive=recursive)
         if not files:
             if as_json:
                 emit_json({"command": "optimize", "ok": True, "total": 0, "message": "no_files"})
             else:
-                console.print("[yellow]⚠️  未找到可分析文件[/yellow]")
+                console.print("[yellow]未找到可分析的图片文件。[/yellow]")
             return
         analyses = [optimize_ops.analyze(f) for f in files]
         if as_json:
@@ -582,7 +584,7 @@ def register_advanced_commands(
                 emit_json_and_exit(payload, 1)
             emit_json(payload)
             return
-        table = Table(title="📈 优化建议", box=box.ROUNDED)
+        table = Table(title="优化建议", box=box.ROUNDED)
         table.add_column("文件", style="cyan")
         table.add_column("类型")
         table.add_column("推荐格式", style="green")
@@ -643,7 +645,7 @@ def register_advanced_commands(
         once: bool,
         as_json: bool,
     ) -> None:
-        """👀 监控目录并自动转换新图片"""
+        """监控目录并自动转换新图片。"""
         if as_json and not once:
             emit_json_and_exit({"command": "watch", "ok": False, "error": "json_requires_once"}, 1)
         config = watch_ops.make_config(
@@ -701,8 +703,8 @@ def register_advanced_commands(
                 emit_json(payload)
                 return
             console.print(
-                f"[green]✅ 处理完成: {success}[/green], "
-                f"[yellow]跳过: {skipped}[/yellow], [red]失败: {failed}[/red]"
+                f"[green]成功: {success}[/green]；"
+                f"[yellow]跳过: {skipped}[/yellow]；[red]失败: {failed}[/red]"
             )
             if failed:
                 raise click.exceptions.Exit(1)
@@ -715,23 +717,25 @@ def register_advanced_commands(
 
         def on_new_file(kind: str, filepath: str, result: Any = None) -> None:
             if kind == "success":
-                console.print(f"[green]✅[/green] {os.path.basename(filepath)}")
+                console.print(f"[green]处理成功:[/green] {os.path.basename(filepath)}")
             elif kind == "skipped":
-                console.print(f"[yellow]⏭️[/yellow] {os.path.basename(filepath)}（输出已存在）")
+                console.print(
+                    f"[yellow]已跳过:[/yellow] {os.path.basename(filepath)}（输出已存在）"
+                )
             elif kind in {"failed", "error"}:
                 err = result.error if hasattr(result, "error") else str(result)
-                console.print(f"[red]❌[/red] {os.path.basename(filepath)}: {err}")
+                console.print(f"[red]处理失败:[/red] {os.path.basename(filepath)}: {err}")
 
         watcher = watch_ops.create_watcher(config, on_new_file=on_new_file, on_status=on_status)
         stats = watcher.start()
         elapsed = max(0.0, time.time() - stats.start_time)
         console.print(
             Panel(
-                f"  ✅ 成功: [bold green]{stats.files_processed}[/bold green]\n"
-                f"  ❌ 失败: [bold red]{stats.files_failed}[/bold red]\n"
-                f"  ⏭️  跳过: [bold yellow]{stats.files_skipped}[/bold yellow]\n"
-                f"  ⏱️  运行: [bold]{elapsed:.1f}s[/bold]",
-                title="[bold]👀 监控结束[/bold]",
+                f"  成功: [bold green]{stats.files_processed}[/bold green]\n"
+                f"  失败: [bold red]{stats.files_failed}[/bold red]\n"
+                f"  跳过: [bold yellow]{stats.files_skipped}[/bold yellow]\n"
+                f"  运行时长: [bold]{elapsed:.1f} 秒[/bold]",
+                title="[bold]监控结束[/bold]",
                 box=box.ROUNDED,
             )
         )
@@ -787,7 +791,7 @@ def _run_watermark(
                 }
             )
         else:
-            console.print("[yellow]⚠️  未找到可处理文件[/yellow]")
+            console.print("[yellow]未找到可处理的图片文件。[/yellow]")
         return
 
     if ignored_generated and not as_json:
@@ -827,7 +831,7 @@ def _run_watermark(
             console.print(
                 Panel(
                     f"  共 {len(tasks)} 个文件将添加水印，{len(skipped_tasks)} 个将跳过",
-                    title="[bold]💧 预览[/bold]",
+                    title="[bold]水印处理预览[/bold]",
                     box=box.ROUNDED,
                 )
             )
@@ -875,13 +879,14 @@ def _run_watermark(
             emit_json_and_exit(payload, 1)
         emit_json(payload)
         return
+    mode_label = "文字" if mode == "text" else "图片"
     console.print(
         Panel(
-            f"  ✅ 成功: [bold green]{success}[/bold green]\n"
-            f"  ❌ 失败: [bold red]{failed}[/bold red]\n"
-            f"  ⏭️  跳过: [bold yellow]{len(skipped_tasks)}[/bold yellow]\n"
-            f"  📦 输入: {human_size(input_bytes)} → 输出: {human_size(output_bytes)}",
-            title=f"[bold]💧 水印完成 ({mode})[/bold]",
+            f"  成功: [bold green]{success}[/bold green]\n"
+            f"  失败: [bold red]{failed}[/bold red]\n"
+            f"  跳过: [bold yellow]{len(skipped_tasks)}[/bold yellow]\n"
+            f"  输入: {human_size(input_bytes)}；输出: {human_size(output_bytes)}",
+            title=f"[bold]{mode_label}水印处理完成[/bold]",
             border_style="green" if failed == 0 else "yellow",
             box=box.ROUNDED,
         )

@@ -11,11 +11,11 @@ LOGO = r"""
   ██║     ██║██╔╝ ██╗███████║██║  ██║██║██║        ██║
   ╚═╝     ╚═╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚═╝╚═╝        ╚═╝
 [/bold cyan]
-[dim]  ⚡ Local Image & PDF Workflows  v{version}[/dim]
+[dim]  Local image and PDF workflows  v{version}[/dim]
 [dim]  ─────────────────────────────────────────────────────[/dim]
 """
 
-MINI_LOGO = "[bold cyan]⚡ PixShift[/bold cyan]"
+MINI_LOGO = "[bold cyan]PixShift[/bold cyan]"
 
 
 def get_banner(version: str) -> str:
