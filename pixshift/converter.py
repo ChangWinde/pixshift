@@ -4,6 +4,7 @@ PixShift Core Converter Engine
 """
 
 import io
+import math
 import os
 import shutil
 import sys
@@ -12,6 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .core.defaults import DEFAULT_CONVERT_QUALITY
 from .core.files import (
     atomic_output_path,
     collect_supported_files,
@@ -81,7 +83,7 @@ def _build_supported_output_formats() -> set[str]:
             image = Image.new("RGB", (16, 16), (1, 2, 3))
             image.save(io.BytesIO(), format=pillow_format)
             supported.add(name)
-        except (KeyError, OSError, ValueError):
+        except (KeyError, OSError, RuntimeError, ValueError):
             continue
     return supported
 
@@ -190,7 +192,7 @@ class PixShiftConverter:
 
     def __init__(
         self,
-        quality: str = "max",
+        quality: str = DEFAULT_CONVERT_QUALITY,
         resize: tuple[int, int] | None = None,
         resize_percent: float | None = None,
         max_size: int | None = None,
@@ -201,6 +203,19 @@ class PixShiftConverter:
         background_color: tuple[int, int, int] = (255, 255, 255),
         auto_orient: bool = True,
     ):
+        if quality not in QUALITY_PRESETS:
+            raise ValueError(f"unsupported_quality_preset: {quality}")
+        resize_modes = sum(option is not None for option in (resize, resize_percent, max_size))
+        if resize_modes > 1:
+            raise ValueError("resize_options_are_mutually_exclusive")
+        if resize is not None and (resize[0] <= 0 or resize[1] <= 0):
+            raise ValueError("resize_dimensions_must_be_positive")
+        if resize_percent is not None and (
+            not math.isfinite(resize_percent) or resize_percent <= 0
+        ):
+            raise ValueError("resize_percent_must_be_positive_and_finite")
+        if max_size is not None and max_size <= 0:
+            raise ValueError("max_size_must_be_positive")
         self.quality = quality
         self.resize = resize
         self.resize_percent = resize_percent
@@ -215,7 +230,7 @@ class PixShiftConverter:
     def get_save_params(self, fmt: str) -> dict[str, Any]:
         """获取指定格式和质量等级的保存参数"""
         fmt = fmt.lower().lstrip(".")
-        preset = QUALITY_PRESETS.get(self.quality, QUALITY_PRESETS["max"])
+        preset = QUALITY_PRESETS[self.quality]
         params = preset.get(fmt, {}).copy()
         return params
 
@@ -247,8 +262,8 @@ class PixShiftConverter:
             img = img.resize(self.resize, Image.Resampling.LANCZOS)
         elif self.resize_percent:
             w, h = img.size
-            new_w = int(w * self.resize_percent / 100)
-            new_h = int(h * self.resize_percent / 100)
+            new_w = max(1, int(w * self.resize_percent / 100))
+            new_h = max(1, int(h * self.resize_percent / 100))
             img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
         elif self.max_size:
             img.thumbnail((self.max_size, self.max_size), Image.Resampling.LANCZOS)

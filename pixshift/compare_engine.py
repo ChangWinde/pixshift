@@ -36,6 +36,8 @@ class CompareResult:
     # 尺寸信息
     size_a: tuple[int, int] = (0, 0)
     size_b: tuple[int, int] = (0, 0)
+    comparison_size: tuple[int, int] = (0, 0)
+    resized_for_comparison: bool = False
     filesize_a: int = 0
     filesize_b: int = 0
 
@@ -224,11 +226,18 @@ def compare_images(
 
         # 如果尺寸不同，调整到相同大小
         if img_a.size != img_b.size:
+            ratio_a = img_a.width / img_a.height
+            ratio_b = img_b.width / img_b.height
+            relative_ratio_difference = abs(ratio_a - ratio_b) / max(ratio_a, ratio_b)
+            if relative_ratio_difference > 0.01:
+                raise ValueError("aspect_ratio_mismatch")
             # 缩放到较小的尺寸
             target_w = min(img_a.width, img_b.width)
             target_h = min(img_a.height, img_b.height)
             img_a = img_a.resize((target_w, target_h), Image.Resampling.LANCZOS)
             img_b = img_b.resize((target_w, target_h), Image.Resampling.LANCZOS)
+            result.resized_for_comparison = True
+        result.comparison_size = img_a.size
 
         # 计算 MSE
         result.mse = _compute_mse(img_a, img_b)

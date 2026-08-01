@@ -4,8 +4,13 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-08-02
+
 ### Added
 
+- Machine-executable `optimize` plans with structured format estimates and sampling metadata.
+- Successful CLI integration coverage for image watermarks and every PDF transformation.
+- Shared generated-input filtering and idempotent existing-output skips for batch workflows.
 - Stable JSON contract version (`schema_version: "1.0"`) for automation and AI clients.
 - Shared path-policy, atomic-output, and orientation-normalization primitives.
 - Regression coverage for traversal, collisions, failed overwrites, EXIF orientation,
@@ -32,6 +37,14 @@ All notable changes to this project are documented in this file.
 
 ### Changed
 
+- Defaulted conversion/watch quality to `high`, PDF extraction to 150 DPI, and text
+  watermark sizing to an image-relative value.
+- Bounded large-image optimization trial encodes to a 1600 px sample (4.6× faster in
+  the recorded 12 MP benchmark).
+- Reduced montage peak memory by decoding one source at a time (58% in the recorded
+  24-image benchmark).
+- Made PNG/TIFF compression ignore lossy `--quality` values with a structured warning.
+- Tightened PDF page-range, page-margin, font-path, and file-argument validation.
 - Refactored CLI into modular command registration architecture.
 - Unified file collection and output planning in shared core helpers.
 - Tightened format support claims to runtime-detected capabilities.
@@ -45,6 +58,11 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- Prevented recursive/repeated workflows from consuming their own outputs or watermark assets.
+- Made the documented "skip existing output" behavior idempotent instead of a failed batch.
+- Prevented invalid or out-of-range PDF page selections from silently succeeding with no output.
+- Rejected misleading comparisons across different aspect ratios and invalid/conflicting
+  resize expressions; tiny percentage resizes now retain at least one pixel per dimension.
 - Removed Pillow deprecation usage in compare engine data access.
 - Prevented output path traversal, flattened-name collisions, recursive watch loops,
   recursive watch same-name overwrites, stale EXIF orientation, and partial overwrite

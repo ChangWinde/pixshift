@@ -11,6 +11,7 @@ from rich.console import Console
 from rich.table import Table
 
 from ..converter import SUPPORTED_INPUT_FORMATS, SUPPORTED_OUTPUT_FORMATS, PixShiftConverter
+from ..core.defaults import automation_defaults
 from ..presenters.json_presenters import emit_json, emit_json_and_exit
 
 
@@ -18,7 +19,12 @@ def register_system_commands(cli_group: click.Group, console: Console, mini_logo
     """Register system and information commands."""
 
     @cli_group.command("info")
-    @click.argument("files", nargs=-1, required=True, type=click.Path(exists=True))
+    @click.argument(
+        "files",
+        nargs=-1,
+        required=True,
+        type=click.Path(exists=True, file_okay=True, dir_okay=False, readable=True),
+    )
     @click.option(
         "--exif",
         is_flag=True,
@@ -121,6 +127,7 @@ def register_system_commands(cli_group: click.Group, console: Console, mini_logo
                         "heif": heif_ok,
                         "avif_encode": avif_ok,
                     },
+                    "defaults": automation_defaults(),
                 }
             )
             return
@@ -147,8 +154,8 @@ def register_system_commands(cli_group: click.Group, console: Console, mini_logo
         table_q.add_column("等级", style="bold", width=10)
         table_q.add_column("说明", style="")
         table_q.add_column("适用场景", style="dim")
-        table_q.add_row("[green]max[/green]", "最高质量 (默认)", "专业用途、存档")
-        table_q.add_row("[blue]high[/blue]", "高质量", "日常使用")
+        table_q.add_row("[green]max[/green]", "最高质量", "专业用途、存档")
+        table_q.add_row("[blue]high[/blue]", "高质量 (默认)", "日常使用")
         table_q.add_row("[yellow]medium[/yellow]", "中等质量", "一般用途")
         table_q.add_row("[red]low[/red]", "低质量", "缩略图、预览")
         table_q.add_row("[magenta]web[/magenta]", "网页优化", "网站、博客")

@@ -12,6 +12,10 @@ Convert image formats in batch.
 pixshift convert INPUTS... -t webp [-o OUT_DIR] [-r] [--json]
 ```
 
+The default `high` quality preset balances visual quality, output size, and encoding
+speed. Use `-q max` explicitly for archival-oriented encoding. Directory discovery
+ignores files already in the target format; an explicit file argument is always honored.
+
 ### `compress`
 
 Compress images without changing format.
@@ -19,6 +23,10 @@ Compress images without changing format.
 ```bash
 pixshift compress INPUTS... [-p medium] [-o OUT_DIR] [-r] [--json]
 ```
+
+`--quality` controls lossy codecs. PNG and TIFF remain lossless and use the selected
+preset's compression settings; JSON reports a warning when `--quality` is ignored for
+those formats. `--quality` and `--target-size` are mutually exclusive.
 
 ### `strip`
 
@@ -49,6 +57,9 @@ Compare quality of two images.
 pixshift compare A.jpg B.jpg [--json]
 ```
 
+Images with the same aspect ratio may be normalized to a common size. Materially
+different aspect ratios fail instead of producing misleading similarity metrics.
+
 ### `crop`
 
 Crop images by explicit box, aspect ratio, or auto trim.
@@ -64,6 +75,8 @@ Add text watermark to one or many images.
 ```bash
 pixshift watermark text INPUTS... --text "demo" [-r] [--json]
 ```
+
+Text size defaults to an image-relative value. Pass `--font-size` for a fixed size.
 
 ### `watermark image`
 
@@ -90,6 +103,9 @@ Analyze images and get format recommendations.
 pixshift optimize INPUTS... [-r] [--json]
 ```
 
+JSON includes bounded format-size estimates, sampling metadata, and a `plan` object with
+a command plus structured arguments. Large images are sampled to keep analysis fast.
+
 ### `watch`
 
 Watch a directory and auto-convert new files.
@@ -98,6 +114,8 @@ Watch a directory and auto-convert new files.
 pixshift watch ./incoming -t webp
 pixshift watch ./incoming --once --json
 ```
+
+Watch conversion defaults to WebP at `high` quality. Existing outputs are skipped.
 
 ## System Commands
 
@@ -134,3 +152,15 @@ pixshift pdf compress input.pdf [-o out.pdf] [--json]
 pixshift pdf concat INPUTS... -o out.pdf [--json]
 pixshift pdf info input.pdf [--pages] [--json]
 ```
+
+`pdf merge` converts images into a PDF; `pdf concat` joins existing PDF documents.
+Page extraction defaults to 150 DPI. Pass `--dpi 300` when print-level raster output is
+more important than speed and file size.
+
+## Repeat Runs
+
+Batch commands skip existing outputs unless `--overwrite` is set. Files discovered in a
+generated output subtree, prior paired derivatives such as `photo_compressed.jpg`, and an
+operation's own aggregate output or watermark asset are not fed back into the operation.
+Explicit file inputs remain authoritative. JSON reports `skipped` and
+`ignored_generated` separately.

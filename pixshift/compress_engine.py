@@ -16,6 +16,7 @@ from typing import Any
 
 from PIL import Image
 
+from .core.defaults import DEFAULT_COMPRESS_PRESET
 from .core.files import atomic_copy_file, atomic_write_bytes
 from .core.metadata import normalize_orientation, normalized_exif_bytes
 
@@ -69,6 +70,8 @@ COMPRESSIBLE_FORMATS: dict[str, dict[str, Any]] = {
     ".tiff": {"min_q": 0, "max_q": 9, "format": "TIFF", "param": "compression"},
     ".tif": {"min_q": 0, "max_q": 9, "format": "TIFF", "param": "compression"},
 }
+
+LOSSLESS_COMPRESSION_FORMATS = {".png", ".tif", ".tiff"}
 
 # 压缩预设
 COMPRESS_PRESETS: dict[str, dict[str, Any]] = {
@@ -138,7 +141,7 @@ def compress_single(
     input_path: str,
     output_path: str,
     quality: int | None = None,
-    preset: str = "medium",
+    preset: str = DEFAULT_COMPRESS_PRESET,
     target_size: str | None = None,
     max_size: int | None = None,
     overwrite: bool = False,
@@ -176,10 +179,14 @@ def compress_single(
             result.error = f"不支持压缩此格式: {ext}"
             return result
 
+        if preset not in COMPRESS_PRESETS:
+            raise ValueError(f"unsupported_compress_preset:{preset}")
         if max_size is not None and max_size <= 0:
             raise ValueError("max_size_must_be_positive")
         if quality is not None and not 1 <= quality <= 100:
             raise ValueError("quality_must_be_between_1_and_100")
+        if quality is not None and target_size is not None:
+            raise ValueError("quality_and_target_size_are_mutually_exclusive")
 
         os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
 
@@ -225,15 +232,19 @@ def compress_single(
 
 def _get_quality(ext: str, quality: int | None, preset: str) -> int:
     """根据格式、自定义质量、预设获取实际质量值"""
+    preset_config = COMPRESS_PRESETS[preset]
+
+    # PNG and TIFF are lossless here. A 1-100 visual-quality value has no
+    # meaningful mapping to their compression effort and must not override it.
+    if ext == ".png":
+        return int(preset_config.get("png_level", 9))
+    if ext in (".tif", ".tiff"):
+        return 0
     if quality is not None:
         return quality
 
-    preset_config = COMPRESS_PRESETS.get(preset, COMPRESS_PRESETS["medium"])
-
     if ext in (".jpg", ".jpeg"):
         return int(preset_config.get("jpg_quality", 82))
-    elif ext == ".png":
-        return int(preset_config.get("png_level", 9))
     elif ext == ".webp" or ext in (".avif",):
         return int(preset_config.get("webp_quality", 80))
     elif ext in (".heic", ".heif"):

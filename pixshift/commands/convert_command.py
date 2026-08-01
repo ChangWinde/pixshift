@@ -1,5 +1,6 @@
 """Registration for convert command."""
 
+import math
 import multiprocessing
 import os
 import sys
@@ -28,6 +29,8 @@ from ..converter import (
     BatchResult,
     ConvertResult,
 )
+from ..core.defaults import DEFAULT_CONVERT_QUALITY
+from ..core.files import filter_generated_inputs, partition_existing_outputs
 from ..ops import convert as convert_ops
 from ..presenters.cli_presenters import print_failures, show_dry_run_table
 from ..presenters.json_presenters import emit_json, emit_json_and_exit
@@ -76,9 +79,9 @@ def register_convert_command(
     @click.option(
         "-q",
         "--quality",
-        default="max",
+        default=DEFAULT_CONVERT_QUALITY,
         type=click.Choice(["max", "high", "medium", "low", "web"], case_sensitive=False),
-        help="质量等级. 可选: max|high|medium|low|web. 默认: max(最高质量)",
+        help="质量等级. 默认: high(平衡质量、体积与速度); max 需显式选择",
     )
     @click.option(
         "-r",
@@ -190,6 +193,19 @@ def register_convert_command(
             console.print("[red]❌ resize 格式错误, 请使用 WxH 或 百分比%[/red]")
             sys.exit(1)
 
+        if resize is not None and max_size is not None:
+            if as_json:
+                emit_json_and_exit(
+                    {
+                        "command": "convert",
+                        "ok": False,
+                        "error": "conflicting_options",
+                        "detail": "--resize and --max-size cannot be used together",
+                    },
+                    1,
+                )
+            raise click.UsageError("--resize 与 --max-size 不能同时使用")
+
         try:
             bg_rgb = tuple(int(x.strip()) for x in bg_color.split(","))
             if len(bg_rgb) != 3 or any(not 0 <= channel <= 255 for channel in bg_rgb):
@@ -208,6 +224,13 @@ def register_convert_command(
             with console.status("[bold cyan]🔍 扫描文件中...[/bold cyan]"):
                 files = convert_ops.collect_convert_files(list(inputs), input_format, recursive)
 
+        files, ignored_generated = filter_generated_inputs(
+            files,
+            list(inputs),
+            output_root=output_dir,
+            excluded_extension=output_format if input_format is None else None,
+        )
+
         if not files:
             if as_json:
                 emit_json(
@@ -216,6 +239,7 @@ def register_convert_command(
                         "ok": True,
                         "total": 0,
                         "message": "no_files",
+                        "ignored_generated": ignored_generated,
                     }
                 )
             else:
@@ -224,6 +248,9 @@ def register_convert_command(
                     console.print(f"   (筛选格式: .{input_format})")
                 console.print(f"   支持的输入格式: {', '.join(sorted(SUPPORTED_INPUT_FORMATS))}")
             return
+
+        if ignored_generated and not as_json:
+            console.print(f"[dim]  已忽略 {ignored_generated} 个既有目标格式或生成文件[/dim]")
 
         tasks = convert_ops.build_convert_tasks(
             files=files,
@@ -235,22 +262,37 @@ def register_convert_command(
             source_paths=list(inputs),
         )
         validate_tasks_or_exit(command="convert", as_json=as_json, tasks=tasks)
+        all_tasks = tasks
+        tasks, skipped_tasks = partition_existing_outputs(tasks, overwrite=overwrite)
 
         if dry_run:
             if as_json:
+                skipped_outputs = {output for _, output in skipped_tasks}
                 emit_json(
                     {
                         "command": "convert",
                         "mode": "dry_run",
                         "ok": True,
-                        "total": len(tasks),
+                        "total": len(all_tasks),
+                        "pending": len(tasks),
+                        "skipped": len(skipped_tasks),
                         "output_format": output_format.lower(),
                         "quality": quality,
-                        "preview": [{"input": inp, "output": out} for inp, out in tasks[:50]],
+                        "ignored_generated": ignored_generated,
+                        "preview": [
+                            {
+                                "input": inp,
+                                "output": out,
+                                "action": "skip_existing" if out in skipped_outputs else "convert",
+                            }
+                            for inp, out in all_tasks[:50]
+                        ],
                     }
                 )
             else:
-                show_dry_run_table(console, tasks, output_format.upper(), quality)
+                show_dry_run_table(console, all_tasks, output_format.upper(), quality)
+                if skipped_tasks:
+                    console.print(f"[dim]  其中 {len(skipped_tasks)} 个已有输出将跳过[/dim]")
             return
 
         if output_dir:
@@ -285,12 +327,14 @@ def register_convert_command(
             jobs = min(multiprocessing.cpu_count(), len(tasks), 8)
         jobs = min(jobs, len(tasks))
 
-        batch_result = BatchResult(total=len(tasks))
+        batch_result = BatchResult(total=len(all_tasks), skipped=len(skipped_tasks))
         start_time = time.time()
         worker_args = [(inp, out, converter_kwargs) for inp, out in tasks]
 
         if as_json:
-            if jobs == 1 or len(tasks) == 1:
+            if not tasks:
+                pass
+            elif jobs == 1 or len(tasks) == 1:
                 for inp, out in tasks:
                     result = convert_ops.convert_one(inp, out, converter_kwargs)
                     batch_result.results.append(result)
@@ -322,7 +366,9 @@ def register_convert_command(
             ) as progress:
                 task_id = progress.add_task("转换中", total=len(tasks))
 
-                if jobs == 1 or len(tasks) == 1:
+                if not tasks:
+                    pass
+                elif jobs == 1 or len(tasks) == 1:
                     for inp, out in tasks:
                         result = convert_ops.convert_one(inp, out, converter_kwargs)
                         batch_result.results.append(result)
@@ -362,8 +408,10 @@ def register_convert_command(
                 "total": batch_result.total,
                 "success": batch_result.success,
                 "failed": batch_result.failed,
+                "skipped": batch_result.skipped,
                 "output_format": output_format.lower(),
                 "quality": quality,
+                "ignored_generated": ignored_generated,
                 "input_bytes": batch_result.total_input_size,
                 "output_bytes": batch_result.total_output_size,
                 "duration_sec": round(batch_result.total_duration, 4),
@@ -384,7 +432,7 @@ def _parse_resize(resize: str | None) -> tuple[tuple[int, int] | None, float | N
         return None, None
     if "%" in resize:
         percent = float(resize.replace("%", ""))
-        if percent <= 0:
+        if not math.isfinite(percent) or percent <= 0:
             raise ValueError("resize percent must be positive")
         return None, percent
     if "x" in resize.lower():
@@ -423,13 +471,14 @@ def _show_convert_summary(
             ratio = f"  📈 体积变化: [yellow]{pct:.1f}%[/yellow]"
 
     speed = ""
-    if batch.total_duration > 0:
+    if batch.total_duration > 0 and batch.success > 0:
         fps = batch.success / batch.total_duration
         speed = f"  ⚡ 速度: [bold]{fps:.1f}[/bold] 张/秒 ({jobs} 核并行)"
 
     summary = (
         f"  ✅ 成功: [bold green]{batch.success}[/bold green]"
         f"  ❌ 失败: [bold red]{batch.failed}[/bold red]"
+        f"  ⏭️  跳过: [bold yellow]{batch.skipped}[/bold yellow]"
         f"  📊 总计: [bold]{batch.total}[/bold]\n"
         f"  📦 输入: {human_size(batch.total_input_size)}"
         f"  →  输出: {human_size(batch.total_output_size)}\n"

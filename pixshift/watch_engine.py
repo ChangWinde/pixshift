@@ -22,6 +22,7 @@ from .converter import (
     PixShiftConverter,
     generate_output_path,
 )
+from .core.defaults import DEFAULT_WATCH_FORMAT, DEFAULT_WATCH_QUALITY
 
 # ============================================================
 #  数据结构
@@ -34,8 +35,8 @@ class WatchConfig:
 
     watch_dir: str = ""
     output_dir: str = ""
-    output_format: str = "webp"
-    quality: str = "max"
+    output_format: str = DEFAULT_WATCH_FORMAT
+    quality: str = DEFAULT_WATCH_QUALITY
     input_format: str | None = None
     recursive: bool = False
     interval: float = 2.0  # 扫描间隔（秒）
@@ -167,6 +168,13 @@ class DirectoryWatcher:
                 output_dir=output_dir,
                 source_paths=[self.config.watch_dir],
             )
+
+            if os.path.isfile(output_path) and not self.config.overwrite:
+                self.processed_files.add(filepath)
+                self.stats.files_skipped += 1
+                if self.on_new_file:
+                    self.on_new_file("skipped", filepath)
+                return
 
             if self.on_new_file:
                 self.on_new_file("processing", filepath)

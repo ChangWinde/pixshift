@@ -21,6 +21,7 @@ image/PDF engines
           ▼
 core policy
   ├─ files.py     collection, root containment, collision checks, atomic writes
+  ├─ defaults.py  canonical human and automation defaults
   ├─ metadata.py  visual orientation and canonical EXIF handling
   ├─ errors.py    stable policy error codes
   └─ models.py    shared batch summaries
@@ -40,6 +41,9 @@ live under each command.
 ## Safety Invariants
 
 - A full batch is planned and checked for destination collisions before writing.
+- Directory-discovered generated artifacts are excluded at the shared planning boundary;
+  explicit inputs remain authoritative.
+- Existing outputs are successful batch skips unless overwrite is explicit.
 - A generated path stays below the explicitly selected output root.
 - Encoders write to a same-directory temporary file and atomically replace only
   after successful completion.
@@ -50,8 +54,9 @@ live under each command.
 - An impossible target-size request fails without leaving a misleading output.
 - JSON documents with `ok: false` terminate with a non-zero exit code.
 
-The accepted design and alternatives are recorded in
-[ADR-0001](adr/0001-safe-operation-boundaries.md).
+The accepted designs and alternatives are recorded in
+[ADR-0001](adr/0001-safe-operation-boundaries.md) and
+[ADR-0002](adr/0002-opinionated-defaults-and-ai-plans.md).
 
 ## Automation and AI Clients
 
@@ -60,6 +65,8 @@ document contains `schema_version`, `command`, and `ok`; paths and numeric sizes
 are explicit, Click parsing failures use the same JSON channel, and dry-run modes
 expose bounded previews. No model call sits in the media-processing hot path, so
 local performance and reproducibility do not depend on network availability.
+`optimize` returns a structured command plan and explicitly marks sampled estimates,
+so agents can act without parsing localized prose or treating estimates as exact facts.
 
 ## Performance Model
 
@@ -71,6 +78,7 @@ local performance and reproducibility do not depend on network availability.
 - Exact-file SHA-256 is computed only for equal-size candidates.
 - Target-size compression encodes in memory and atomically writes the exact tested
   payload, avoiding a second unverified encode.
+- Format analysis bounds large images to a 1600 px sample before trial encodes.
 
 ## Quality Gates
 

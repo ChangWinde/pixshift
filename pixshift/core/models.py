@@ -10,6 +10,7 @@ class OperationSummary:
     total: int = 0
     success: int = 0
     failed: int = 0
+    skipped: int = 0
     total_input_size: int = 0
     total_output_size: int = 0
 

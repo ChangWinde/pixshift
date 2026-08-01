@@ -3,6 +3,7 @@
 import os
 import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import click
@@ -19,8 +20,14 @@ from rich.progress import (
 )
 from rich.table import Table
 
-from ..compress_engine import COMPRESS_PRESETS
-from ..core.files import derivative_output_name, plan_output_path
+from ..compress_engine import COMPRESS_PRESETS, LOSSLESS_COMPRESSION_FORMATS
+from ..core.defaults import DEFAULT_COMPRESS_PRESET, DEFAULT_STRIP_MODE
+from ..core.files import (
+    derivative_output_name,
+    filter_generated_inputs,
+    partition_existing_outputs,
+    plan_output_path,
+)
 from ..core.models import OperationSummary
 from ..ops import compress as compress_ops
 from ..ops import dedup as dedup_ops
@@ -54,12 +61,15 @@ def register_workflow_commands(
     @click.option(
         "-p",
         "--preset",
-        default="medium",
+        default=DEFAULT_COMPRESS_PRESET,
         type=click.Choice(list(COMPRESS_PRESETS.keys()), case_sensitive=False),
         help="压缩预设: lossless|high|medium|low|tiny. 默认: medium",
     )
     @click.option(
-        "--quality", default=None, type=click.IntRange(1, 100), help="自定义质量(1-100), 覆盖预设"
+        "--quality",
+        default=None,
+        type=click.IntRange(1, 100),
+        help="有损格式质量(1-100)，覆盖预设；PNG/TIFF 保持无损设置",
     )
     @click.option("--target-size", default=None, type=str, help="目标大小, 如 500KB/1MB")
     @click.option(
@@ -89,6 +99,17 @@ def register_workflow_commands(
         as_json: bool,
     ) -> None:
         """🗜️  同格式压缩优化 (批量减小体积, 不改变格式)"""
+        if quality is not None and target_size is not None:
+            payload = {
+                "command": "compress",
+                "ok": False,
+                "error": "conflicting_options",
+                "detail": "--quality and --target-size cannot be used together",
+            }
+            if as_json:
+                emit_json_and_exit(payload, 1)
+            raise click.UsageError("--quality 与 --target-size 不能同时使用")
+
         if not as_json:
             console.print(f"\n{mini_logo} [bold]图片压缩[/bold]\n")
 
@@ -98,12 +119,57 @@ def register_workflow_commands(
             with console.status("[bold cyan]🔍 扫描文件中...[/bold cyan]"):
                 files = compress_ops.collect_files(list(inputs), input_format, recursive)
 
+        files, ignored_generated = filter_generated_inputs(
+            files,
+            list(inputs),
+            output_root=output_dir,
+            generated_suffix="_compressed",
+        )
+
         if not files:
             if as_json:
-                emit_json({"command": "compress", "ok": True, "total": 0, "message": "no_files"})
+                emit_json(
+                    {
+                        "command": "compress",
+                        "ok": True,
+                        "total": 0,
+                        "message": "no_files",
+                        "ignored_generated": ignored_generated,
+                    }
+                )
             else:
                 console.print("[yellow]⚠️  未找到可压缩的图片文件[/yellow]")
             return
+
+        if ignored_generated and not as_json:
+            console.print(f"[dim]  已忽略 {ignored_generated} 个既有压缩输出[/dim]")
+
+        ignored_quality_formats = (
+            sorted(
+                {Path(path).suffix.lower().lstrip(".") for path in files}
+                & {extension.lstrip(".") for extension in LOSSLESS_COMPRESSION_FORMATS}
+            )
+            if quality is not None
+            else []
+        )
+        warnings = (
+            [
+                {
+                    "code": "quality_ignored_for_lossless",
+                    "files": sum(
+                        Path(path).suffix.lower() in LOSSLESS_COMPRESSION_FORMATS for path in files
+                    ),
+                    "formats": ignored_quality_formats,
+                }
+            ]
+            if ignored_quality_formats
+            else []
+        )
+        if warnings and not as_json:
+            console.print(
+                "[yellow]⚠️  --quality 仅适用于有损格式；"
+                f"{', '.join(ignored_quality_formats).upper()} 将使用无损压缩设置[/yellow]"
+            )
 
         tasks = _build_derivative_tasks(
             files=files,
@@ -113,25 +179,41 @@ def register_workflow_commands(
             source_paths=list(inputs),
         )
         validate_tasks_or_exit(command="compress", as_json=as_json, tasks=tasks)
+        all_tasks = tasks
+        tasks, skipped_tasks = partition_existing_outputs(tasks, overwrite=overwrite)
         if dry_run:
             if as_json:
+                skipped_outputs = {output for _, output in skipped_tasks}
                 emit_json(
                     {
                         "command": "compress",
                         "mode": "dry_run",
                         "ok": True,
-                        "total": len(tasks),
-                        "preview": [{"input": inp, "output": out} for inp, out in tasks[:50]],
+                        "total": len(all_tasks),
+                        "pending": len(tasks),
+                        "skipped": len(skipped_tasks),
+                        "ignored_generated": ignored_generated,
+                        "warnings": warnings,
+                        "preview": [
+                            {
+                                "input": inp,
+                                "output": out,
+                                "action": "skip_existing" if out in skipped_outputs else "compress",
+                            }
+                            for inp, out in all_tasks[:50]
+                        ],
                     }
                 )
             else:
-                show_dry_run_table(console, tasks, "same-format", preset)
+                show_dry_run_table(console, all_tasks, "same-format", preset)
+                if skipped_tasks:
+                    console.print(f"[dim]  其中 {len(skipped_tasks)} 个已有输出将跳过[/dim]")
             return
 
         if output_dir:
             os.makedirs(output_dir, exist_ok=True)
 
-        summary = OperationSummary()
+        summary = OperationSummary(total=len(skipped_tasks), skipped=len(skipped_tasks))
         start_time = time.time()
         errors: list[str] = []
 
@@ -183,10 +265,13 @@ def register_workflow_commands(
                 "total": summary.total,
                 "success": summary.success,
                 "failed": summary.failed,
+                "skipped": summary.skipped,
                 "input_bytes": summary.total_input_size,
                 "output_bytes": summary.total_output_size,
                 "duration_sec": round(duration, 4),
                 "errors": errors,
+                "ignored_generated": ignored_generated,
+                "warnings": warnings,
             }
             if summary.failed > 0:
                 emit_json_and_exit(payload, 1)
@@ -200,6 +285,7 @@ def register_workflow_commands(
                 Panel(
                     f"  ✅ 成功: [bold green]{summary.success}[/bold green]\n"
                     f"  ❌ 失败: [bold red]{summary.failed}[/bold red]\n"
+                    f"  ⏭️  跳过: [bold yellow]{summary.skipped}[/bold yellow]\n"
                     f"  📊 总计: [bold]{summary.total}[/bold]\n"
                     f"  📦 输入: {human_size(summary.total_input_size)}"
                     f"  →  输出: {human_size(summary.total_output_size)}\n"
@@ -226,7 +312,7 @@ def register_workflow_commands(
     )
     @click.option(
         "--mode",
-        default="privacy",
+        default=DEFAULT_STRIP_MODE,
         type=click.Choice(
             ["privacy", "all", "gps", "device", "personal", "time"], case_sensitive=False
         ),
@@ -265,12 +351,30 @@ def register_workflow_commands(
             with console.status("[bold cyan]🔍 扫描文件中...[/bold cyan]"):
                 files = strip_ops.collect_files(list(inputs), recursive)
 
+        files, ignored_generated = filter_generated_inputs(
+            files,
+            list(inputs),
+            output_root=output_dir,
+            generated_suffix="_clean",
+        )
+
         if not files:
             if as_json:
-                emit_json({"command": "strip", "ok": True, "total": 0, "message": "no_files"})
+                emit_json(
+                    {
+                        "command": "strip",
+                        "ok": True,
+                        "total": 0,
+                        "message": "no_files",
+                        "ignored_generated": ignored_generated,
+                    }
+                )
             else:
                 console.print("[yellow]⚠️  未找到可清理元数据的图片文件[/yellow]")
             return
+
+        if ignored_generated and not as_json:
+            console.print(f"[dim]  已忽略 {ignored_generated} 个既有清理输出[/dim]")
 
         tasks = _build_derivative_tasks(
             files=files,
@@ -280,10 +384,13 @@ def register_workflow_commands(
             source_paths=list(inputs),
         )
         validate_tasks_or_exit(command="strip", as_json=as_json, tasks=tasks)
+        all_tasks = tasks
+        tasks, skipped_tasks = partition_existing_outputs(tasks, overwrite=overwrite)
 
         if dry_run:
             preview: list[dict[str, Any]] = []
-            for file_path in files[:50]:
+            skipped_outputs = {output for _, output in skipped_tasks}
+            for file_path, output_path in all_tasks[:50]:
                 meta = strip_ops.analyze_one(file_path)
 
                 preview.append(
@@ -291,6 +398,8 @@ def register_workflow_commands(
                         "file": file_path,
                         "has_exif": bool(meta.get("has_exif")),
                         "has_gps": bool(meta.get("has_gps")),
+                        "output": output_path,
+                        "action": "skip_existing" if output_path in skipped_outputs else "strip",
                     }
                 )
             if as_json:
@@ -299,7 +408,10 @@ def register_workflow_commands(
                         "command": "strip",
                         "mode": "dry_run",
                         "ok": True,
-                        "total": len(tasks),
+                        "total": len(all_tasks),
+                        "pending": len(tasks),
+                        "skipped": len(skipped_tasks),
+                        "ignored_generated": ignored_generated,
                         "preview": preview,
                     }
                 )
@@ -316,8 +428,10 @@ def register_workflow_commands(
                         "yes" if item["has_exif"] else "no",
                         "yes" if item["has_gps"] else "no",
                     )
-                if len(files) > 50:
-                    table.add_row("...", f"(还有 {len(files) - 50} 个文件)", "", "")
+                if len(all_tasks) > 50:
+                    table.add_row("...", f"(还有 {len(all_tasks) - 50} 个文件)", "", "")
+                if skipped_tasks:
+                    console.print(f"[dim]  其中 {len(skipped_tasks)} 个已有输出将跳过[/dim]")
                 console.print(table)
                 console.print("  [dim]去掉 --dry-run 执行实际清理[/dim]\n")
             return
@@ -327,7 +441,7 @@ def register_workflow_commands(
 
         mode_flags = _resolve_strip_mode(mode.lower())
 
-        summary = OperationSummary()
+        summary = OperationSummary(total=len(skipped_tasks), skipped=len(skipped_tasks))
         fields_removed = 0
         start_time = time.time()
         errors: list[str] = []
@@ -390,11 +504,13 @@ def register_workflow_commands(
                 "total": summary.total,
                 "success": summary.success,
                 "failed": summary.failed,
+                "skipped": summary.skipped,
                 "fields_removed": fields_removed,
                 "input_bytes": summary.total_input_size,
                 "output_bytes": summary.total_output_size,
                 "duration_sec": round(duration, 4),
                 "errors": errors,
+                "ignored_generated": ignored_generated,
             }
             if summary.failed > 0:
                 emit_json_and_exit(payload, 1)
@@ -405,6 +521,7 @@ def register_workflow_commands(
                 Panel(
                     f"  ✅ 成功: [bold green]{summary.success}[/bold green]\n"
                     f"  ❌ 失败: [bold red]{summary.failed}[/bold red]\n"
+                    f"  ⏭️  跳过: [bold yellow]{summary.skipped}[/bold yellow]\n"
                     f"  📊 总计: [bold]{summary.total}[/bold]\n"
                     f"  🧾 清理字段: [bold]{fields_removed}[/bold]\n"
                     f"  📦 输入: {human_size(summary.total_input_size)}"

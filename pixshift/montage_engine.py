@@ -36,6 +36,7 @@ class MontageResult:
     total_images: int = 0
     grid_size: tuple[int, int] = (0, 0)  # (cols, rows)
     canvas_size: tuple[int, int] = (0, 0)  # (width, height)
+    skipped_invalid: int = 0
 
 
 # ============================================================
@@ -101,33 +102,33 @@ def create_montage(
 
         os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
 
-        # 加载所有图片
-        images = []
-        labels_text = []
+        # First pass keeps only dimensions and paths. Full decoded images are
+        # intentionally not retained together, which bounds peak memory for batches.
+        image_specs: list[tuple[str, int, int]] = []
         for p in input_paths:
             try:
-                with Image.open(p) as source:
-                    images.append(normalize_orientation(source).copy())
-                labels_text.append(Path(p).name)
+                with Image.open(p) as source, normalize_orientation(source) as normalized:
+                    image_specs.append((p, normalized.width, normalized.height))
             except Exception:
+                result.skipped_invalid += 1
                 continue
 
-        if not images:
+        if not image_specs:
             result.error = "没有可用的图片"
             return result
 
-        result.total_images = len(images)
+        result.total_images = len(image_specs)
 
         # 计算网格
-        rows = (len(images) + cols - 1) // cols
+        rows = (len(image_specs) + cols - 1) // cols
         result.grid_size = (cols, rows)
 
         # 计算单元格大小
         if cell_width is None or cell_height is None:
             if auto_size:
                 # 自动计算：取所有图片的中位数大小
-                widths = sorted([img.width for img in images])
-                heights = sorted([img.height for img in images])
+                widths = sorted(spec[1] for spec in image_specs)
+                heights = sorted(spec[2] for spec in image_specs)
                 median_w = widths[len(widths) // 2]
                 median_h = heights[len(heights) // 2]
 
@@ -137,8 +138,8 @@ def create_montage(
                     cell_height = min(median_h, 600)
             else:
                 # 使用最大尺寸
-                cell_width = cell_width or max(img.width for img in images)
-                cell_height = cell_height or max(img.height for img in images)
+                cell_width = cell_width or max(spec[1] for spec in image_specs)
+                cell_height = cell_height or max(spec[2] for spec in image_specs)
 
         # 标签高度
         label_height = (label_size + 10) if label else 0
@@ -162,7 +163,7 @@ def create_montage(
             font = _get_simple_font(label_size)
 
         # 放置图片
-        for idx, img in enumerate(images):
+        for idx, (image_path, _, _) in enumerate(image_specs):
             row = idx // cols
             col = idx % cols
 
@@ -170,7 +171,8 @@ def create_montage(
             y = gap + row * (cell_height + label_height + gap)
 
             # 缩放图片以适应单元格
-            resized = _fit_image(img, cell_width, cell_height)
+            with Image.open(image_path) as source, normalize_orientation(source) as img:
+                resized = _fit_image(img, cell_width, cell_height)
 
             # 居中放置
             offset_x = x + (cell_width - resized.width) // 2
@@ -196,10 +198,10 @@ def create_montage(
                 canvas.paste(resized, (offset_x, offset_y))
 
             # 标签
-            if label and font and idx < len(labels_text):
+            if label and font:
                 label_x = x + cell_width // 2
                 label_y = y + cell_height + 2
-                text = labels_text[idx]
+                text = Path(image_path).name
                 # 截断过长的文件名
                 if len(text) > 30:
                     text = text[:27] + "..."

@@ -17,7 +17,14 @@ from ..converter import (
     SUPPORTED_OUTPUT_FORMATS,
     PixShiftConverter,
 )
-from ..core.files import collect_supported_files, derivative_output_name, plan_output_path
+from ..core.defaults import DEFAULT_WATCH_FORMAT, DEFAULT_WATCH_QUALITY
+from ..core.files import (
+    collect_supported_files,
+    derivative_output_name,
+    filter_generated_inputs,
+    partition_existing_outputs,
+    plan_output_path,
+)
 from ..ops import compare as compare_ops
 from ..ops import crop as crop_ops
 from ..ops import montage as montage_ops
@@ -49,8 +56,12 @@ def register_advanced_commands(
     """Register advanced workflow commands."""
 
     @cli_group.command("compare")
-    @click.argument("image_a", type=click.Path(exists=True))
-    @click.argument("image_b", type=click.Path(exists=True))
+    @click.argument(
+        "image_a", type=click.Path(exists=True, file_okay=True, dir_okay=False, readable=True)
+    )
+    @click.argument(
+        "image_b", type=click.Path(exists=True, file_okay=True, dir_okay=False, readable=True)
+    )
     @click.option("--no-blocks", is_flag=True, default=False, help="关闭分块 SSIM（更快）")
     @click.option("--block-size", default=64, type=click.IntRange(16, 256), help="分块大小")
     @click.option("--json", "as_json", is_flag=True, default=False, help="以 JSON 输出结果")
@@ -68,6 +79,8 @@ def register_advanced_commands(
             "image_b": image_b,
             "size_a": result.size_a,
             "size_b": result.size_b,
+            "comparison_size": result.comparison_size,
+            "resized_for_comparison": result.resized_for_comparison,
             "filesize_a": result.filesize_a,
             "filesize_b": result.filesize_b,
             "mse": round(result.mse, 6),
@@ -147,11 +160,26 @@ def register_advanced_commands(
             raise click.exceptions.Exit(2)
 
         files = crop_ops.collect_files(list(inputs), recursive)
+        files, ignored_generated = filter_generated_inputs(
+            files,
+            list(inputs),
+            output_root=output_dir,
+            generated_suffix="_crop",
+        )
         if not files:
             emit_json(
-                {"command": "crop", "ok": True, "total": 0, "message": "no_files"}
+                {
+                    "command": "crop",
+                    "ok": True,
+                    "total": 0,
+                    "message": "no_files",
+                    "ignored_generated": ignored_generated,
+                }
             ) if as_json else console.print("[yellow]⚠️  未找到可裁剪文件[/yellow]")
             return
+
+        if ignored_generated and not as_json:
+            console.print(f"[dim]已忽略 {ignored_generated} 个既有裁剪输出[/dim]")
 
         tasks: list[tuple[str, str]] = []
         for f in files:
@@ -159,21 +187,34 @@ def register_advanced_commands(
             out_path = plan_output_path(f, out_name, output_dir, flatten, list(inputs))
             tasks.append((f, out_path))
         validate_tasks_or_exit(command="crop", as_json=as_json, tasks=tasks)
+        all_tasks = tasks
+        tasks, skipped_tasks = partition_existing_outputs(tasks, overwrite=overwrite)
 
         if dry_run:
+            skipped_outputs = {output for _, output in skipped_tasks}
             payload = {
                 "command": "crop",
                 "ok": True,
                 "mode": "dry_run",
-                "total": len(tasks),
-                "preview": [{"input": i, "output": o} for i, o in tasks[:50]],
+                "total": len(all_tasks),
+                "pending": len(tasks),
+                "skipped": len(skipped_tasks),
+                "ignored_generated": ignored_generated,
+                "preview": [
+                    {
+                        "input": input_path,
+                        "output": output_path,
+                        "action": "skip_existing" if output_path in skipped_outputs else "crop",
+                    }
+                    for input_path, output_path in all_tasks[:50]
+                ],
             }
             if as_json:
                 emit_json(payload)
             else:
                 console.print(
                     Panel(
-                        f"  共 {len(tasks)} 个文件将被裁剪",
+                        f"  共 {len(tasks)} 个文件将被裁剪，{len(skipped_tasks)} 个将跳过",
                         title="[bold]✂️ 预览[/bold]",
                         box=box.ROUNDED,
                     )
@@ -202,13 +243,15 @@ def register_advanced_commands(
         payload = {
             "command": "crop",
             "ok": failed == 0,
-            "total": len(tasks),
+            "total": len(all_tasks),
             "success": success,
             "failed": failed,
+            "skipped": len(skipped_tasks),
             "input_bytes": input_bytes,
             "output_bytes": output_bytes,
             "duration_sec": round(time.time() - start, 4),
             "errors": errors,
+            "ignored_generated": ignored_generated,
         }
         if as_json:
             if failed:
@@ -219,6 +262,7 @@ def register_advanced_commands(
             Panel(
                 f"  ✅ 成功: [bold green]{success}[/bold green]\n"
                 f"  ❌ 失败: [bold red]{failed}[/bold red]\n"
+                f"  ⏭️  跳过: [bold yellow]{len(skipped_tasks)}[/bold yellow]\n"
                 f"  📦 输入: {human_size(input_bytes)} → 输出: {human_size(output_bytes)}",
                 title="[bold]✂️ 裁剪完成[/bold]",
                 border_style="green" if failed == 0 else "yellow",
@@ -237,8 +281,19 @@ def register_advanced_commands(
     @click.argument("inputs", nargs=-1, required=True, type=click.Path(exists=True))
     @click.option("--text", required=True, help="水印文字")
     @click.option("-o", "--output", "output_dir", default=None, type=click.Path(), help="输出目录")
-    @click.option("--font", "font_path", default=None, type=click.Path(), help="字体文件路径")
-    @click.option("--font-size", default=36, type=click.IntRange(1), help="字体大小")
+    @click.option(
+        "--font",
+        "font_path",
+        default=None,
+        type=click.Path(exists=True, file_okay=True, dir_okay=False, readable=True),
+        help="字体文件路径",
+    )
+    @click.option(
+        "--font-size",
+        default=None,
+        type=click.IntRange(1, 4096),
+        help="字体大小；默认按图片短边自动计算",
+    )
     @click.option("--color", default="255,255,255", help="颜色")
     @click.option("--opacity", default=128, type=click.IntRange(0, 255), help="透明度")
     @click.option(
@@ -260,7 +315,7 @@ def register_advanced_commands(
         text: str,
         output_dir: str | None,
         font_path: str | None,
-        font_size: int,
+        font_size: int | None,
         color: str,
         opacity: int,
         position: str,
@@ -296,6 +351,7 @@ def register_advanced_commands(
                 "margin": margin,
             },
             apply_image_kwargs=None,
+            excluded_files=(),
             console=console,
             human_size=human_size,
         )
@@ -362,6 +418,7 @@ def register_advanced_commands(
                 "tile": tile,
                 "tile_spacing": tile_spacing,
             },
+            excluded_files=(watermark_path,),
             console=console,
             human_size=human_size,
         )
@@ -403,9 +460,22 @@ def register_advanced_commands(
     ) -> None:
         """🧩 将多张图片组合为整洁网格。"""
         files = montage_ops.collect_files(list(inputs), recursive)
+        files, ignored_generated = filter_generated_inputs(
+            files,
+            list(inputs),
+            excluded_files=(output_path,),
+        )
         if not files:
             if as_json:
-                emit_json({"command": "montage", "ok": True, "total": 0, "message": "no_files"})
+                emit_json(
+                    {
+                        "command": "montage",
+                        "ok": True,
+                        "total": 0,
+                        "message": "no_files",
+                        "ignored_generated": ignored_generated,
+                    }
+                )
             else:
                 console.print("[yellow]⚠️  未找到可拼图文件[/yellow]")
             return
@@ -434,6 +504,8 @@ def register_advanced_commands(
             "output_bytes": result.output_size,
             "duration_sec": round(result.duration, 4),
             "error": result.error or "",
+            "ignored_generated": ignored_generated,
+            "skipped_invalid": result.skipped_invalid,
         }
         if as_json:
             if not result.success:
@@ -479,6 +551,28 @@ def register_advanced_commands(
                         "image_type": r.image_type,
                         "recommended_format": r.recommended_format,
                         "recommended_reason": r.recommended_reason,
+                        "analysis": {
+                            "input_format": r.input_format,
+                            "has_alpha": r.has_alpha,
+                            "image_type_reason": r.image_type_reason,
+                            "dimensions": [r.width, r.height],
+                            "analyzed_dimensions": list(r.analysis_size),
+                            "sampled": r.sampled,
+                            "estimate_scale": round(r.estimate_scale, 4),
+                        },
+                        "estimates": [
+                            {
+                                "format": estimate.format_name,
+                                "estimated_bytes": estimate.estimated_size,
+                                "compression_ratio": round(estimate.compression_ratio, 4),
+                                "quality_note": estimate.quality_note,
+                                "lossless": estimate.is_lossless,
+                                "supports_alpha": estimate.supports_alpha,
+                                "recommended": estimate.is_recommended,
+                            }
+                            for estimate in r.estimates
+                        ],
+                        "plan": r.plan,
                         "error": r.error or "",
                     }
                     for r in analyses
@@ -492,12 +586,14 @@ def register_advanced_commands(
         table.add_column("文件", style="cyan")
         table.add_column("类型")
         table.add_column("推荐格式", style="green")
+        table.add_column("下一步", style="cyan")
         table.add_column("原因")
         for r in analyses[:50]:
             table.add_row(
                 Path(r.input_path).name,
                 r.image_type or "-",
                 r.recommended_format or "-",
+                _format_optimization_plan(r.plan),
                 r.recommended_reason or r.error,
             )
         console.print(table)
@@ -513,14 +609,18 @@ def register_advanced_commands(
         "-t",
         "--to",
         "output_format",
-        default="webp",
+        default=DEFAULT_WATCH_FORMAT,
         type=click.Choice(sorted(SUPPORTED_OUTPUT_FORMATS), case_sensitive=False),
         help="目标格式；选项按当前运行环境探测",
     )
     @click.option("-o", "--output", "output_dir", default="", type=click.Path(), help="输出目录")
     @click.option("-f", "--from", "input_format", default=None, help="仅监控指定输入格式")
     @click.option(
-        "-q", "--quality", default="max", type=click.Choice(["max", "high", "medium", "low", "web"])
+        "-q",
+        "--quality",
+        default=DEFAULT_WATCH_QUALITY,
+        type=click.Choice(["max", "high", "medium", "low", "web"]),
+        help="编码质量；默认 high（平衡质量、体积与速度）",
     )
     @click.option("-r", "--recursive", is_flag=True, default=False, help="递归监控子目录")
     @click.option(
@@ -562,6 +662,7 @@ def register_advanced_commands(
             converter = PixShiftConverter(quality=quality, overwrite=overwrite)
             success = 0
             failed = 0
+            skipped = 0
             out_dir = output_dir or str(Path(watch_dir) / "converted")
             os.makedirs(out_dir, exist_ok=True)
             errors: list[str] = []
@@ -573,6 +674,9 @@ def register_advanced_commands(
                     False,
                     [watch_dir],
                 )
+                if Path(out).is_file() and not overwrite:
+                    skipped += 1
+                    continue
                 result = converter.convert_single(f, out)
                 if result.success:
                     success += 1
@@ -586,6 +690,9 @@ def register_advanced_commands(
                 "total": len(files),
                 "success": success,
                 "failed": failed,
+                "skipped": skipped,
+                "output_format": output_format.lower(),
+                "quality": quality,
                 "errors": errors,
             }
             if as_json:
@@ -593,7 +700,10 @@ def register_advanced_commands(
                     emit_json_and_exit(payload, 1)
                 emit_json(payload)
                 return
-            console.print(f"[green]✅ 处理完成: {success}[/green], [red]失败: {failed}[/red]")
+            console.print(
+                f"[green]✅ 处理完成: {success}[/green], "
+                f"[yellow]跳过: {skipped}[/yellow], [red]失败: {failed}[/red]"
+            )
             if failed:
                 raise click.exceptions.Exit(1)
             return
@@ -606,6 +716,8 @@ def register_advanced_commands(
         def on_new_file(kind: str, filepath: str, result: Any = None) -> None:
             if kind == "success":
                 console.print(f"[green]✅[/green] {os.path.basename(filepath)}")
+            elif kind == "skipped":
+                console.print(f"[yellow]⏭️[/yellow] {os.path.basename(filepath)}（输出已存在）")
             elif kind in {"failed", "error"}:
                 err = result.error if hasattr(result, "error") else str(result)
                 console.print(f"[red]❌[/red] {os.path.basename(filepath)}: {err}")
@@ -617,6 +729,7 @@ def register_advanced_commands(
             Panel(
                 f"  ✅ 成功: [bold green]{stats.files_processed}[/bold green]\n"
                 f"  ❌ 失败: [bold red]{stats.files_failed}[/bold red]\n"
+                f"  ⏭️  跳过: [bold yellow]{stats.files_skipped}[/bold yellow]\n"
                 f"  ⏱️  运行: [bold]{elapsed:.1f}s[/bold]",
                 title="[bold]👀 监控结束[/bold]",
                 box=box.ROUNDED,
@@ -624,6 +737,19 @@ def register_advanced_commands(
         )
         if stats.files_failed:
             raise click.exceptions.Exit(1)
+
+
+def _format_optimization_plan(plan: dict[str, Any]) -> str:
+    """Render a compact human-readable form of a structured optimization plan."""
+    command = str(plan.get("command", ""))
+    arguments = plan.get("arguments", {})
+    if not command or not isinstance(arguments, dict):
+        return "-"
+    if command == "compress":
+        if "quality" in arguments:
+            return f"compress --quality {arguments['quality']}"
+        return f"compress -p {arguments.get('preset', 'medium')}"
+    return f"convert -t {arguments.get('to', 'png')} -q {arguments.get('quality', 'high')}"
 
 
 def _run_watermark(
@@ -637,18 +763,35 @@ def _run_watermark(
     as_json: bool,
     apply_text_kwargs: dict[str, Any] | None,
     apply_image_kwargs: dict[str, Any] | None,
+    excluded_files: tuple[str, ...],
     console: Console,
     human_size: Callable[[int], str],
 ) -> None:
     files = watermark_ops.collect_files(list(inputs), recursive)
+    files, ignored_generated = filter_generated_inputs(
+        files,
+        list(inputs),
+        output_root=output_dir,
+        generated_suffix="_wm",
+        excluded_files=excluded_files,
+    )
     if not files:
         if as_json:
             emit_json(
-                {"command": f"watermark.{mode}", "ok": True, "total": 0, "message": "no_files"}
+                {
+                    "command": f"watermark.{mode}",
+                    "ok": True,
+                    "total": 0,
+                    "message": "no_files",
+                    "ignored_generated": ignored_generated,
+                }
             )
         else:
             console.print("[yellow]⚠️  未找到可处理文件[/yellow]")
         return
+
+    if ignored_generated and not as_json:
+        console.print(f"[dim]已忽略 {ignored_generated} 个水印资产或既有输出[/dim]")
 
     tasks: list[tuple[str, str]] = []
     for f in files:
@@ -656,21 +799,34 @@ def _run_watermark(
         out_path = plan_output_path(f, out_name, output_dir, flatten, list(inputs))
         tasks.append((f, out_path))
     validate_tasks_or_exit(command=f"watermark.{mode}", as_json=as_json, tasks=tasks)
+    all_tasks = tasks
+    tasks, skipped_tasks = partition_existing_outputs(tasks, overwrite=overwrite)
 
     if dry_run:
+        skipped_outputs = {output for _, output in skipped_tasks}
         payload = {
             "command": f"watermark.{mode}",
             "ok": True,
             "mode": "dry_run",
-            "total": len(tasks),
-            "preview": [{"input": i, "output": o} for i, o in tasks[:50]],
+            "total": len(all_tasks),
+            "pending": len(tasks),
+            "skipped": len(skipped_tasks),
+            "ignored_generated": ignored_generated,
+            "preview": [
+                {
+                    "input": input_path,
+                    "output": output_path,
+                    "action": "skip_existing" if output_path in skipped_outputs else "watermark",
+                }
+                for input_path, output_path in all_tasks[:50]
+            ],
         }
         if as_json:
             emit_json(payload)
         else:
             console.print(
                 Panel(
-                    f"  共 {len(tasks)} 个文件将添加水印",
+                    f"  共 {len(tasks)} 个文件将添加水印，{len(skipped_tasks)} 个将跳过",
                     title="[bold]💧 预览[/bold]",
                     box=box.ROUNDED,
                 )
@@ -704,13 +860,15 @@ def _run_watermark(
     payload = {
         "command": f"watermark.{mode}",
         "ok": failed == 0,
-        "total": len(tasks),
+        "total": len(all_tasks),
         "success": success,
         "failed": failed,
+        "skipped": len(skipped_tasks),
         "input_bytes": input_bytes,
         "output_bytes": output_bytes,
         "duration_sec": round(time.time() - start, 4),
         "errors": errors,
+        "ignored_generated": ignored_generated,
     }
     if as_json:
         if failed:
@@ -721,6 +879,7 @@ def _run_watermark(
         Panel(
             f"  ✅ 成功: [bold green]{success}[/bold green]\n"
             f"  ❌ 失败: [bold red]{failed}[/bold red]\n"
+            f"  ⏭️  跳过: [bold yellow]{len(skipped_tasks)}[/bold yellow]\n"
             f"  📦 输入: {human_size(input_bytes)} → 输出: {human_size(output_bytes)}",
             title=f"[bold]💧 水印完成 ({mode})[/bold]",
             border_style="green" if failed == 0 else "yellow",
