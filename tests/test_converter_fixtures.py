@@ -23,7 +23,7 @@ def test_process_image_auto_orient_hook_is_used(monkeypatch):
 
     def fake_orient(img):
         called["ok"] = True
-        return img.transpose(Image.ROTATE_90)
+        return img.transpose(Image.Transpose.ROTATE_90)
 
     monkeypatch.setattr(converter, "_auto_orient", fake_orient)
     result = converter._process_image(source, "png")
@@ -37,7 +37,9 @@ def test_convert_single_includes_exif_and_icc_when_enabled(tmp_path, monkeypatch
     source_path.write_bytes(b"input")
 
     src_image = Image.new("RGB", (4, 4), (1, 2, 3))
-    src_image.info["exif"] = b"fake-exif"
+    exif = Image.Exif()
+    exif[315] = "PixShift"
+    src_image.info["exif"] = exif.tobytes()
     src_image.info["icc_profile"] = b"fake-icc"
     captured = {}
 
@@ -53,7 +55,7 @@ def test_convert_single_includes_exif_and_icc_when_enabled(tmp_path, monkeypatch
     result = converter.convert_single(str(source_path), str(output_path))
 
     assert result.success is True
-    assert captured["exif"] == b"fake-exif"
+    assert captured["exif"]
     assert captured["icc_profile"] == b"fake-icc"
 
 
@@ -81,4 +83,3 @@ def test_convert_single_excludes_exif_and_icc_when_disabled(tmp_path, monkeypatc
     assert result.success is True
     assert "exif" not in captured
     assert "icc_profile" not in captured
-

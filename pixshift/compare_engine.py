@@ -9,25 +9,24 @@ PixShift Compare Engine — 图片对比（SSIM / PSNR）
   - 无需 numpy/scipy，纯 Pillow 实现
 """
 
-import os
 import math
+import os
 import time
-from pathlib import Path
-from typing import Optional, Tuple, List
 from dataclasses import dataclass
 
 from PIL import Image, ImageChops, ImageFilter, ImageStat
 
-from .converter import _human_size
-
+from .core.metadata import normalize_orientation
 
 # ============================================================
 #  数据结构
 # ============================================================
 
+
 @dataclass
 class CompareResult:
     """图片对比结果"""
+
     image_a: str = ""
     image_b: str = ""
     success: bool = False
@@ -35,15 +34,15 @@ class CompareResult:
     duration: float = 0.0
 
     # 尺寸信息
-    size_a: Tuple[int, int] = (0, 0)
-    size_b: Tuple[int, int] = (0, 0)
+    size_a: tuple[int, int] = (0, 0)
+    size_b: tuple[int, int] = (0, 0)
     filesize_a: int = 0
     filesize_b: int = 0
 
     # 质量指标
-    mse: float = 0.0       # 均方误差 (越小越好，0=完全相同)
-    psnr: float = 0.0      # 峰值信噪比 (越大越好，>40dB 几乎无损)
-    ssim: float = 0.0      # 结构相似性 (0-1，1=完全相同)
+    mse: float = 0.0  # 均方误差 (越小越好，0=完全相同)
+    psnr: float = 0.0  # 峰值信噪比 (越大越好，>40dB 几乎无损)
+    ssim: float = 0.0  # 结构相似性 (0-1，1=完全相同)
 
     # 质量评估
     quality_rating: str = ""  # 优秀/良好/一般/较差
@@ -53,6 +52,7 @@ class CompareResult:
 # ============================================================
 #  SSIM 计算（纯 Pillow 实现）
 # ============================================================
+
 
 def _compute_ssim(img_a: Image.Image, img_b: Image.Image) -> float:
     """
@@ -78,10 +78,10 @@ def _compute_ssim(img_a: Image.Image, img_b: Image.Image) -> float:
     b_blur = b_gray.filter(ImageFilter.GaussianBlur(radius=window_size // 2))
 
     # 获取像素数据
-    a_data = list(a_gray.tobytes())
-    b_data = list(b_gray.tobytes())
-    a_blur_data = list(a_blur.tobytes())
-    b_blur_data = list(b_blur.tobytes())
+    a_data = a_gray.tobytes()
+    b_data = b_gray.tobytes()
+    a_blur_data = a_blur.tobytes()
+    b_blur_data = b_blur.tobytes()
 
     n = len(a_data)
     if n == 0:
@@ -94,11 +94,11 @@ def _compute_ssim(img_a: Image.Image, img_b: Image.Image) -> float:
     # 计算方差和协方差
     sigma_a_sq = sum((a - mu_a) ** 2 for a in a_data) / n
     sigma_b_sq = sum((b - mu_b) ** 2 for b in b_data) / n
-    sigma_ab = sum((a - mu_a) * (b - mu_b) for a, b in zip(a_data, b_data)) / n
+    sigma_ab = sum((a - mu_a) * (b - mu_b) for a, b in zip(a_data, b_data, strict=True)) / n
 
     # SSIM 公式
     numerator = (2 * mu_a * mu_b + C1) * (2 * sigma_ab + C2)
-    denominator = (mu_a ** 2 + mu_b ** 2 + C1) * (sigma_a_sq + sigma_b_sq + C2)
+    denominator = (mu_a**2 + mu_b**2 + C1) * (sigma_a_sq + sigma_b_sq + C2)
 
     if denominator == 0:
         return 1.0
@@ -129,8 +129,8 @@ def _compute_ssim_blocks(img_a: Image.Image, img_b: Image.Image, block_size: int
             block_a = a_gray.crop(box)
             block_b = b_gray.crop(box)
 
-            a_data = list(block_a.tobytes())
-            b_data = list(block_b.tobytes())
+            a_data = block_a.tobytes()
+            b_data = block_b.tobytes()
             n = len(a_data)
 
             if n == 0:
@@ -141,10 +141,10 @@ def _compute_ssim_blocks(img_a: Image.Image, img_b: Image.Image, block_size: int
 
             sigma_a_sq = sum((a - mu_a) ** 2 for a in a_data) / n
             sigma_b_sq = sum((b - mu_b) ** 2 for b in b_data) / n
-            sigma_ab = sum((a - mu_a) * (b - mu_b) for a, b in zip(a_data, b_data)) / n
+            sigma_ab = sum((a - mu_a) * (b - mu_b) for a, b in zip(a_data, b_data, strict=True)) / n
 
             num = (2 * mu_a * mu_b + C1) * (2 * sigma_ab + C2)
-            den = (mu_a ** 2 + mu_b ** 2 + C1) * (sigma_a_sq + sigma_b_sq + C2)
+            den = (mu_a**2 + mu_b**2 + C1) * (sigma_a_sq + sigma_b_sq + C2)
 
             if den > 0:
                 ssim_values.append(num / den)
@@ -159,6 +159,7 @@ def _compute_ssim_blocks(img_a: Image.Image, img_b: Image.Image, block_size: int
 #  MSE / PSNR 计算
 # ============================================================
 
+
 def _compute_mse(img_a: Image.Image, img_b: Image.Image) -> float:
     """计算均方误差 (MSE)"""
     a_rgb = img_a.convert("RGB")
@@ -168,7 +169,7 @@ def _compute_mse(img_a: Image.Image, img_b: Image.Image) -> float:
     stat = ImageStat.Stat(diff)
 
     # 各通道的均方值
-    mse_per_channel = [s ** 2 for s in stat.rms]
+    mse_per_channel = [s**2 for s in stat.rms]
     return sum(mse_per_channel) / len(mse_per_channel)
 
 
@@ -177,12 +178,13 @@ def _compute_psnr(mse: float) -> float:
     if mse == 0:
         return float("inf")
     max_pixel = 255.0
-    return 10 * math.log10((max_pixel ** 2) / mse)
+    return 10 * math.log10((max_pixel**2) / mse)
 
 
 # ============================================================
 #  核心对比函数
 # ============================================================
+
 
 def compare_images(
     image_a: str,
@@ -213,8 +215,9 @@ def compare_images(
         result.filesize_a = os.path.getsize(image_a)
         result.filesize_b = os.path.getsize(image_b)
 
-        img_a = Image.open(image_a)
-        img_b = Image.open(image_b)
+        with Image.open(image_a) as source_a, Image.open(image_b) as source_b:
+            img_a = normalize_orientation(source_a).copy()
+            img_b = normalize_orientation(source_b).copy()
 
         result.size_a = img_a.size
         result.size_b = img_b.size
@@ -224,8 +227,8 @@ def compare_images(
             # 缩放到较小的尺寸
             target_w = min(img_a.width, img_b.width)
             target_h = min(img_a.height, img_b.height)
-            img_a = img_a.resize((target_w, target_h), Image.LANCZOS)
-            img_b = img_b.resize((target_w, target_h), Image.LANCZOS)
+            img_a = img_a.resize((target_w, target_h), Image.Resampling.LANCZOS)
+            img_b = img_b.resize((target_w, target_h), Image.Resampling.LANCZOS)
 
         # 计算 MSE
         result.mse = _compute_mse(img_a, img_b)
@@ -253,7 +256,7 @@ def compare_images(
     return result
 
 
-def _rate_quality(ssim: float, psnr: float, mse: float) -> Tuple[str, str]:
+def _rate_quality(ssim: float, psnr: float, mse: float) -> tuple[str, str]:
     """评估质量等级"""
     if ssim >= 0.99 or psnr == float("inf"):
         return "完美", "几乎无差异，视觉上完全相同"

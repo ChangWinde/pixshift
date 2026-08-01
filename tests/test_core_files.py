@@ -83,4 +83,3 @@ def test_plan_output_path_flatten_writes_into_output_root(tmp_path):
     )
 
     assert Path(target) == out_dir / "photo_clean.jpg"
-

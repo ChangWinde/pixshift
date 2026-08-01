@@ -26,6 +26,7 @@ PixShift provides stable JSON output for automation with the `--json` flag.
 
 ## Common Fields
 
+- `schema_version`: machine-contract version; currently `"1.0"`
 - `command`: command identifier, e.g. `compress`, `pdf.info`
 - `ok`: boolean success state
 - `error`: error string when `ok` is false (if available)
@@ -60,13 +61,17 @@ PixShift provides stable JSON output for automation with the `--json` flag.
 Analyze mode (`--delete` not set):
 - `mode: "analyze"`
 - `total_files`, `duplicate_groups`, `duplicate_files`
-- `recoverable_bytes`
+- `deletable_files`, `recoverable_bytes`
 - `preview` (array of groups, truncated)
+
+Perceptual similarity is advisory. `deletable_files` and `recoverable_bytes` count
+only byte-identical files verified with SHA-256.
 
 Delete mode (`--delete` set):
 - `mode: "delete"`
-- `deleted`, `kept`
+- `deleted`, `kept`, `skipped`
 - `errors` (array)
+- A candidate changed after analysis is reported in `skipped` and is not deleted.
 - In `--json` mode, use `--yes` with `--delete` to avoid interactive prompts.
 
 Delete dry-run mode (`--delete --dry-run`):
@@ -90,7 +95,8 @@ Delete dry-run mode (`--delete --dry-run`):
 ### `doctor --json`
 
 - `all_ready` (boolean)
-- `checks` (array with `name`, `status`, `ok`)
+- `checks` (array with `name`, `status`, `ok`, `required`)
+- Missing optional encoders remain visible in `checks` but do not make the command fail.
 
 ## Advanced Command Payloads
 
@@ -180,5 +186,6 @@ remain backward compatible.
 Notes:
 - "No files found" cases that are non-destructive and expected return `ok: true`
   with exit code `0`.
-- Validation failures (for example invalid arguments) return `ok: false` with
-  exit code `1`.
+- Validation failures (including Click's missing parameter, invalid value, and
+  unknown option errors) return versioned JSON with `ok: false` and a non-zero
+  exit code whenever `--json` is present.

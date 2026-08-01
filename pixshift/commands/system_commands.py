@@ -4,15 +4,14 @@ import multiprocessing
 import os
 import sys
 from io import BytesIO
-from typing import List, Tuple
 
 import click
 from rich import box
 from rich.console import Console
 from rich.table import Table
 
-from ..converter import PixShiftConverter, SUPPORTED_INPUT_FORMATS, SUPPORTED_OUTPUT_FORMATS
-from ..presenters.json_presenters import emit_json
+from ..converter import SUPPORTED_INPUT_FORMATS, SUPPORTED_OUTPUT_FORMATS, PixShiftConverter
+from ..presenters.json_presenters import emit_json, emit_json_and_exit
 
 
 def register_system_commands(cli_group: click.Group, console: Console, mini_logo: str) -> None:
@@ -20,11 +19,16 @@ def register_system_commands(cli_group: click.Group, console: Console, mini_logo
 
     @cli_group.command("info")
     @click.argument("files", nargs=-1, required=True, type=click.Path(exists=True))
-    @click.option("--exif", is_flag=True, default=False,
-                  help="显示完整 EXIF 元数据(拍摄参数/设备等). 默认: 不显示")
-    @click.option("--json", "as_json", is_flag=True, default=False,
-                  help="以 JSON 输出结果（适合脚本调用）")
-    def info(files, exif, as_json):
+    @click.option(
+        "--exif",
+        is_flag=True,
+        default=False,
+        help="显示完整 EXIF 元数据(拍摄参数/设备等). 默认: 不显示",
+    )
+    @click.option(
+        "--json", "as_json", is_flag=True, default=False, help="以 JSON 输出结果（适合脚本调用）"
+    )
+    def info(files: tuple[str, ...], exif: bool, as_json: bool) -> None:
         """📋 查看图片详细信息 (格式/尺寸/大小/颜色模式/EXIF)"""
         if as_json:
             items = []
@@ -34,18 +38,24 @@ def register_system_commands(cli_group: click.Group, console: Console, mini_logo
                     img_info = dict(img_info)
                     img_info.pop("exif", None)
                 items.append(img_info)
-            emit_json({
+            payload = {
                 "command": "info",
-                "ok": True,
+                "ok": all(not item.get("error") for item in items),
                 "total": len(items),
                 "files": items,
-            })
+            }
+            if not payload["ok"]:
+                emit_json_and_exit(payload, 1)
+            emit_json(payload)
             return
 
         console.print(f"\n{mini_logo} [bold]图片信息[/bold]\n")
 
+        had_errors = False
         for filepath in files:
             img_info = PixShiftConverter.get_image_info(filepath)
+            if img_info.get("error"):
+                had_errors = True
 
             table = Table(
                 title=f"📄 {os.path.basename(filepath)}",
@@ -68,6 +78,8 @@ def register_system_commands(cli_group: click.Group, console: Console, mini_logo
 
             table.add_row("颜色模式", img_info.get("mode", "N/A"))
             table.add_row("透明通道", "✅ 是" if img_info.get("has_alpha") else "❌ 否")
+            if img_info.get("error"):
+                table.add_row("错误", f"[red]{img_info['error']}[/red]")
 
             console.print(table)
 
@@ -84,11 +96,14 @@ def register_system_commands(cli_group: click.Group, console: Console, mini_logo
                 console.print(exif_table)
 
             console.print()
+        if had_errors:
+            raise click.exceptions.Exit(1)
 
     @cli_group.command("formats")
-    @click.option("--json", "as_json", is_flag=True, default=False,
-                  help="以 JSON 输出结果（适合脚本调用）")
-    def formats(as_json):
+    @click.option(
+        "--json", "as_json", is_flag=True, default=False, help="以 JSON 输出结果（适合脚本调用）"
+    )
+    def formats(as_json: bool) -> None:
         """📑 列出所有支持的图片格式"""
         in_exts = sorted(SUPPORTED_INPUT_FORMATS)
         out_formats = sorted(SUPPORTED_OUTPUT_FORMATS)
@@ -96,16 +111,18 @@ def register_system_commands(cli_group: click.Group, console: Console, mini_logo
         avif_ok = _check_avif()
 
         if as_json:
-            emit_json({
-                "command": "formats",
-                "ok": True,
-                "input_extensions": in_exts,
-                "output_formats": out_formats,
-                "features": {
-                    "heif": heif_ok,
-                    "avif_encode": avif_ok,
-                },
-            })
+            emit_json(
+                {
+                    "command": "formats",
+                    "ok": True,
+                    "input_extensions": in_exts,
+                    "output_formats": out_formats,
+                    "features": {
+                        "heif": heif_ok,
+                        "avif_encode": avif_ok,
+                    },
+                }
+            )
             return
 
         console.print(f"\n{mini_logo} [bold]支持的格式[/bold]\n")
@@ -115,8 +132,12 @@ def register_system_commands(cli_group: click.Group, console: Console, mini_logo
         table_rt.add_column("状态", style="")
         table_rt.add_row("输入扩展名数量", str(len(in_exts)))
         table_rt.add_row("输出格式数量", str(len(out_formats)))
-        table_rt.add_row("HEIF/HEIC 支持", "✅ 可用" if heif_ok else "⚠️ 未启用 (pip install pillow-heif)")
-        table_rt.add_row("AVIF 编码支持", "✅ 可用" if avif_ok else "⚠️ 未启用 (pip install pillow-avif-plugin)")
+        table_rt.add_row(
+            "HEIF/HEIC 支持", "✅ 可用" if heif_ok else "⚠️ 未启用 (pip install pillow-heif)"
+        )
+        table_rt.add_row(
+            "AVIF 编码支持", "✅ 可用" if avif_ok else "⚠️ 未启用 (pip install pillow-avif-plugin)"
+        )
         table_rt.add_row("输入扩展预览", _preview_items(in_exts))
         table_rt.add_row("输出格式预览", _preview_items(out_formats))
         console.print(table_rt)
@@ -135,22 +156,26 @@ def register_system_commands(cli_group: click.Group, console: Console, mini_logo
         console.print()
 
     @cli_group.command("doctor")
-    @click.option("--json", "as_json", is_flag=True, default=False,
-                  help="以 JSON 输出结果（适合脚本调用）")
-    def doctor(as_json):
+    @click.option(
+        "--json", "as_json", is_flag=True, default=False, help="以 JSON 输出结果（适合脚本调用）"
+    )
+    def doctor(as_json: bool) -> None:
         """🩺 检查运行环境和依赖"""
         checks = _collect_doctor_checks()
-        all_ready = all(ok for _, _, ok in checks)
+        all_ready = all(ok for _, _, ok, required in checks if required)
         if as_json:
-            emit_json({
+            payload = {
                 "command": "doctor",
-                "ok": True,
+                "ok": all_ready,
                 "all_ready": all_ready,
                 "checks": [
-                    {"name": name, "status": status, "ok": ok}
-                    for name, status, ok in checks
+                    {"name": name, "status": status, "ok": ok, "required": required}
+                    for name, status, ok, required in checks
                 ],
-            })
+            }
+            if not all_ready:
+                emit_json_and_exit(payload, 1)
+            emit_json(payload)
             return
 
         console.print(f"\n{mini_logo} [bold]环境检查[/bold]\n")
@@ -158,10 +183,19 @@ def register_system_commands(cli_group: click.Group, console: Console, mini_logo
         table = Table(box=box.ROUNDED, show_header=True)
         table.add_column("组件", style="bold", width=28)
         table.add_column("状态", style="")
+        table.add_column("类型", style="dim", width=6)
         table.add_column("", width=3)
-        for name, status, ok in checks:
-            icon = "[green]✅[/green]" if ok else "[red]❌[/red]"
-            table.add_row(name, status if ok else f"[red]{status}[/red]", icon)
+        for name, status, ok, required in checks:
+            if ok:
+                icon = "[green]✅[/green]"
+                rendered_status = status
+            elif required:
+                icon = "[red]❌[/red]"
+                rendered_status = f"[red]{status}[/red]"
+            else:
+                icon = "[yellow]⚠[/yellow]"
+                rendered_status = f"[yellow]{status}[/yellow]"
+            table.add_row(name, rendered_status, "必需" if required else "可选", icon)
         console.print(table)
 
         if all_ready:
@@ -170,12 +204,14 @@ def register_system_commands(cli_group: click.Group, console: Console, mini_logo
             console.print("\n  [bold yellow]⚠️  部分依赖缺失，某些格式可能不支持[/bold yellow]")
             console.print("  运行以下命令安装所有依赖:")
             console.print("  [bold]pip install pillow pillow-heif click rich PyMuPDF[/bold]\n")
+            raise click.exceptions.Exit(1)
 
 
 def _check_heif() -> bool:
     """Check if pillow-heif is available."""
     try:
         import pillow_heif  # noqa: F401
+
         return True
     except ImportError:
         return False
@@ -194,58 +230,70 @@ def _check_avif() -> bool:
         return False
 
 
-def _collect_doctor_checks() -> List[Tuple[str, str, bool]]:
+def _collect_doctor_checks() -> list[tuple[str, str, bool, bool]]:
     """Collect runtime doctor checks used by both rich and JSON output."""
-    checks: List[Tuple[str, str, bool]] = []
+    checks: list[tuple[str, str, bool, bool]] = []
     py_ver = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
-    checks.append(("Python", py_ver, sys.version_info >= (3, 8)))
+    checks.append(("Python", py_ver, sys.version_info >= (3, 10), True))
 
     try:
         from PIL import Image
-        checks.append(("Pillow", Image.__version__, True))
+
+        checks.append(("Pillow", Image.__version__, True, True))
     except ImportError:
-        checks.append(("Pillow", "未安装", False))
+        checks.append(("Pillow", "未安装", False, True))
 
     try:
         import pillow_heif
-        checks.append(("pillow-heif (HEIC支持)", pillow_heif.__version__, True))
+
+        checks.append(("pillow-heif (HEIC支持)", pillow_heif.__version__, True, True))
     except ImportError:
-        checks.append(("pillow-heif (HEIC支持)", "未安装 (pip install pillow-heif)", False))
+        checks.append(("pillow-heif (HEIC支持)", "未安装 (pip install pillow-heif)", False, True))
 
     try:
         import pillow_avif  # noqa: F401
-        checks.append(("pillow-avif (AVIF支持)", "✅", True))
+
+        checks.append(("pillow-avif (AVIF支持)", "✅", True, False))
     except ImportError:
         avif_builtin = _check_avif()
-        checks.append(("AVIF 支持", "内置 (Pillow)" if avif_builtin else "未安装 (pip install pillow-avif-plugin)", avif_builtin))
+        checks.append(
+            (
+                "AVIF 支持",
+                "内置 (Pillow)" if avif_builtin else "未安装 (pip install pillow-avif-plugin)",
+                avif_builtin,
+                False,
+            )
+        )
 
     try:
         import fitz
+
         fitz_ver = fitz.version[0] if hasattr(fitz, "version") else fitz.VersionBind
-        checks.append(("PyMuPDF (PDF处理)", str(fitz_ver), True))
+        checks.append(("PyMuPDF (PDF处理)", str(fitz_ver), True, True))
     except ImportError:
-        checks.append(("PyMuPDF (PDF处理)", "未安装 (pip install PyMuPDF)", False))
+        checks.append(("PyMuPDF (PDF处理)", "未安装 (pip install PyMuPDF)", False, True))
 
     try:
         from importlib.metadata import version as pkg_version
-        checks.append(("Rich (终端美化)", pkg_version("rich"), True))
+
+        checks.append(("Rich (终端美化)", pkg_version("rich"), True, True))
     except Exception:
-        checks.append(("Rich", "未安装", False))
+        checks.append(("Rich", "未安装", False, True))
 
     try:
         from importlib.metadata import version as pkg_version
-        checks.append(("Click (CLI框架)", pkg_version("click"), True))
-    except Exception:
-        checks.append(("Click", "未安装", False))
 
-    checks.append(("CPU 核心数", str(multiprocessing.cpu_count()), True))
+        checks.append(("Click (CLI框架)", pkg_version("click"), True, True))
+    except Exception:
+        checks.append(("Click", "未安装", False, True))
+
+    checks.append(("CPU 核心数", str(multiprocessing.cpu_count()), True, True))
     return checks
 
 
-def _preview_items(items: List[str], limit: int = 18) -> str:
+def _preview_items(items: list[str], limit: int = 18) -> str:
     """Render compact preview string for long capability lists."""
     if len(items) <= limit:
         return ", ".join(items)
     head = ", ".join(items[:limit])
     return f"{head}, ... (+{len(items) - limit})"
-

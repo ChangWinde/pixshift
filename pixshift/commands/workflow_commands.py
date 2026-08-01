@@ -2,7 +2,8 @@
 
 import os
 import time
-from typing import Callable, List, Optional, Tuple
+from collections.abc import Callable
+from typing import Any
 
 import click
 from rich import box
@@ -26,6 +27,7 @@ from ..ops import dedup as dedup_ops
 from ..ops import strip as strip_ops
 from ..presenters.cli_presenters import print_failures, show_dry_run_table, size_ratio_text
 from ..presenters.json_presenters import emit_json, emit_json_and_exit
+from .common import validate_tasks_or_exit
 
 
 def register_workflow_commands(
@@ -38,37 +40,48 @@ def register_workflow_commands(
 
     @cli_group.command("compress")
     @click.argument("inputs", nargs=-1, required=True, type=click.Path(exists=True))
-    @click.option("-o", "--output", "output_dir", default=None, type=click.Path(),
-                  help="输出目录路径. 默认: 原目录")
-    @click.option("-f", "--from", "input_format", default=None,
-                  help="只处理指定输入格式, 如 -f jpg")
-    @click.option("-p", "--preset", default="medium",
-                  type=click.Choice(list(COMPRESS_PRESETS.keys()), case_sensitive=False),
-                  help="压缩预设: lossless|high|medium|low|tiny. 默认: medium")
-    @click.option("--quality", default=None, type=click.IntRange(1, 100),
-                  help="自定义质量(1-100), 覆盖预设")
-    @click.option("--target-size", default=None, type=str,
-                  help="目标大小, 如 500KB/1MB")
-    @click.option("--max-size", default=None, type=int,
-                  help="最大边长限制(px), 如 2048")
-    @click.option("-r", "--recursive", is_flag=True, default=False,
-                  help="递归处理子目录. 默认: 仅当前目录")
-    @click.option("--overwrite", is_flag=True, default=False,
-                  help="覆盖已存在输出文件. 默认: 跳过")
-    @click.option("--flatten", is_flag=True, default=False,
-                  help="输出到同一目录, 不保留层级")
-    @click.option("--dry-run", is_flag=True, default=False,
-                  help="预览模式, 不实际压缩")
-    @click.option("--json", "as_json", is_flag=True, default=False,
-                  help="以 JSON 输出结果（适合脚本调用）")
+    @click.option(
+        "-o",
+        "--output",
+        "output_dir",
+        default=None,
+        type=click.Path(),
+        help="输出目录路径. 默认: 原目录",
+    )
+    @click.option(
+        "-f", "--from", "input_format", default=None, help="只处理指定输入格式, 如 -f jpg"
+    )
+    @click.option(
+        "-p",
+        "--preset",
+        default="medium",
+        type=click.Choice(list(COMPRESS_PRESETS.keys()), case_sensitive=False),
+        help="压缩预设: lossless|high|medium|low|tiny. 默认: medium",
+    )
+    @click.option(
+        "--quality", default=None, type=click.IntRange(1, 100), help="自定义质量(1-100), 覆盖预设"
+    )
+    @click.option("--target-size", default=None, type=str, help="目标大小, 如 500KB/1MB")
+    @click.option(
+        "--max-size", default=None, type=click.IntRange(1), help="最大边长限制(px), 如 2048"
+    )
+    @click.option(
+        "-r", "--recursive", is_flag=True, default=False, help="递归处理子目录. 默认: 仅当前目录"
+    )
+    @click.option("--overwrite", is_flag=True, default=False, help="覆盖已存在输出文件. 默认: 跳过")
+    @click.option("--flatten", is_flag=True, default=False, help="输出到同一目录, 不保留层级")
+    @click.option("--dry-run", is_flag=True, default=False, help="预览模式, 不实际压缩")
+    @click.option(
+        "--json", "as_json", is_flag=True, default=False, help="以 JSON 输出结果（适合脚本调用）"
+    )
     def compress_cmd(
         inputs: tuple,
-        output_dir: Optional[str],
-        input_format: Optional[str],
+        output_dir: str | None,
+        input_format: str | None,
         preset: str,
-        quality: Optional[int],
-        target_size: Optional[str],
-        max_size: Optional[int],
+        quality: int | None,
+        target_size: str | None,
+        max_size: int | None,
         recursive: bool,
         overwrite: bool,
         flatten: bool,
@@ -99,15 +112,18 @@ def register_workflow_commands(
             flatten=flatten,
             source_paths=list(inputs),
         )
+        validate_tasks_or_exit(command="compress", as_json=as_json, tasks=tasks)
         if dry_run:
             if as_json:
-                emit_json({
-                    "command": "compress",
-                    "mode": "dry_run",
-                    "ok": True,
-                    "total": len(tasks),
-                    "preview": [{"input": inp, "output": out} for inp, out in tasks[:50]],
-                })
+                emit_json(
+                    {
+                        "command": "compress",
+                        "mode": "dry_run",
+                        "ok": True,
+                        "total": len(tasks),
+                        "preview": [{"input": inp, "output": out} for inp, out in tasks[:50]],
+                    }
+                )
             else:
                 show_dry_run_table(console, tasks, "same-format", preset)
             return
@@ -117,7 +133,7 @@ def register_workflow_commands(
 
         summary = OperationSummary()
         start_time = time.time()
-        errors: List[str] = []
+        errors: list[str] = []
 
         if as_json:
             for inp, out in tasks:
@@ -177,45 +193,59 @@ def register_workflow_commands(
             emit_json(payload)
         else:
             print_failures(console, errors)
-            ratio_text = size_ratio_text(summary.total_input_size, summary.total_output_size, human_size)
-            console.print(Panel(
-                f"  ✅ 成功: [bold green]{summary.success}[/bold green]\n"
-                f"  ❌ 失败: [bold red]{summary.failed}[/bold red]\n"
-                f"  📊 总计: [bold]{summary.total}[/bold]\n"
-                f"  📦 输入: {human_size(summary.total_input_size)}"
-                f"  →  输出: {human_size(summary.total_output_size)}\n"
-                f"{ratio_text}\n"
-                f"  ⏱️  耗时: [bold]{duration:.2f}s[/bold]",
-                title="[bold]🗜️  压缩完成[/bold]",
-                border_style="green" if summary.failed == 0 else "yellow",
-                box=box.ROUNDED,
-            ))
+            ratio_text = size_ratio_text(
+                summary.total_input_size, summary.total_output_size, human_size
+            )
+            console.print(
+                Panel(
+                    f"  ✅ 成功: [bold green]{summary.success}[/bold green]\n"
+                    f"  ❌ 失败: [bold red]{summary.failed}[/bold red]\n"
+                    f"  📊 总计: [bold]{summary.total}[/bold]\n"
+                    f"  📦 输入: {human_size(summary.total_input_size)}"
+                    f"  →  输出: {human_size(summary.total_output_size)}\n"
+                    f"{ratio_text}\n"
+                    f"  ⏱️  耗时: [bold]{duration:.2f}s[/bold]",
+                    title="[bold]🗜️  压缩完成[/bold]",
+                    border_style="green" if summary.failed == 0 else "yellow",
+                    box=box.ROUNDED,
+                )
+            )
             console.print()
+            if summary.failed:
+                raise click.exceptions.Exit(1)
 
     @cli_group.command("strip")
     @click.argument("inputs", nargs=-1, required=True, type=click.Path(exists=True))
-    @click.option("-o", "--output", "output_dir", default=None, type=click.Path(),
-                  help="输出目录路径. 默认: 原目录")
-    @click.option("--mode", default="privacy",
-                  type=click.Choice(["privacy", "all", "gps", "device", "personal", "time"], case_sensitive=False),
-                  help="清理模式. 默认: privacy")
-    @click.option("-r", "--recursive", is_flag=True, default=False,
-                  help="递归处理子目录. 默认: 仅当前目录")
-    @click.option("--strip-icc", is_flag=True, default=False,
-                  help="同时移除 ICC 色彩配置")
-    @click.option("--no-keep-orientation", is_flag=True, default=False,
-                  help="不应用原始方向信息")
-    @click.option("--overwrite", is_flag=True, default=False,
-                  help="覆盖已存在输出文件. 默认: 跳过")
-    @click.option("--flatten", is_flag=True, default=False,
-                  help="输出到同一目录, 不保留层级")
-    @click.option("--dry-run", is_flag=True, default=False,
-                  help="预览模式, 不实际写文件")
-    @click.option("--json", "as_json", is_flag=True, default=False,
-                  help="以 JSON 输出结果（适合脚本调用）")
+    @click.option(
+        "-o",
+        "--output",
+        "output_dir",
+        default=None,
+        type=click.Path(),
+        help="输出目录路径. 默认: 原目录",
+    )
+    @click.option(
+        "--mode",
+        default="privacy",
+        type=click.Choice(
+            ["privacy", "all", "gps", "device", "personal", "time"], case_sensitive=False
+        ),
+        help="清理模式. 默认: privacy",
+    )
+    @click.option(
+        "-r", "--recursive", is_flag=True, default=False, help="递归处理子目录. 默认: 仅当前目录"
+    )
+    @click.option("--strip-icc", is_flag=True, default=False, help="同时移除 ICC 色彩配置")
+    @click.option("--no-keep-orientation", is_flag=True, default=False, help="不应用原始方向信息")
+    @click.option("--overwrite", is_flag=True, default=False, help="覆盖已存在输出文件. 默认: 跳过")
+    @click.option("--flatten", is_flag=True, default=False, help="输出到同一目录, 不保留层级")
+    @click.option("--dry-run", is_flag=True, default=False, help="预览模式, 不实际写文件")
+    @click.option(
+        "--json", "as_json", is_flag=True, default=False, help="以 JSON 输出结果（适合脚本调用）"
+    )
     def strip_cmd(
         inputs: tuple,
-        output_dir: Optional[str],
+        output_dir: str | None,
         mode: str,
         recursive: bool,
         strip_icc: bool,
@@ -249,9 +279,10 @@ def register_workflow_commands(
             flatten=flatten,
             source_paths=list(inputs),
         )
+        validate_tasks_or_exit(command="strip", as_json=as_json, tasks=tasks)
 
         if dry_run:
-            preview = []
+            preview: list[dict[str, Any]] = []
             for file_path in files[:50]:
                 meta = strip_ops.analyze_one(file_path)
 
@@ -263,13 +294,15 @@ def register_workflow_commands(
                     }
                 )
             if as_json:
-                emit_json({
-                    "command": "strip",
-                    "mode": "dry_run",
-                    "ok": True,
-                    "total": len(tasks),
-                    "preview": preview,
-                })
+                emit_json(
+                    {
+                        "command": "strip",
+                        "mode": "dry_run",
+                        "ok": True,
+                        "total": len(tasks),
+                        "preview": preview,
+                    }
+                )
             else:
                 table = Table(title="📋 元数据清理预览", box=box.ROUNDED)
                 table.add_column("#", style="dim", width=5)
@@ -297,7 +330,7 @@ def register_workflow_commands(
         summary = OperationSummary()
         fields_removed = 0
         start_time = time.time()
-        errors: List[str] = []
+        errors: list[str] = []
 
         if as_json:
             for inp, out in tasks:
@@ -368,37 +401,51 @@ def register_workflow_commands(
             emit_json(payload)
         else:
             print_failures(console, errors)
-            console.print(Panel(
-                f"  ✅ 成功: [bold green]{summary.success}[/bold green]\n"
-                f"  ❌ 失败: [bold red]{summary.failed}[/bold red]\n"
-                f"  📊 总计: [bold]{summary.total}[/bold]\n"
-                f"  🧾 清理字段: [bold]{fields_removed}[/bold]\n"
-                f"  📦 输入: {human_size(summary.total_input_size)}"
-                f"  →  输出: {human_size(summary.total_output_size)}\n"
-                f"  ⏱️  耗时: [bold]{duration:.2f}s[/bold]",
-                title="[bold]🧼 清理完成[/bold]",
-                border_style="green" if summary.failed == 0 else "yellow",
-                box=box.ROUNDED,
-            ))
+            console.print(
+                Panel(
+                    f"  ✅ 成功: [bold green]{summary.success}[/bold green]\n"
+                    f"  ❌ 失败: [bold red]{summary.failed}[/bold red]\n"
+                    f"  📊 总计: [bold]{summary.total}[/bold]\n"
+                    f"  🧾 清理字段: [bold]{fields_removed}[/bold]\n"
+                    f"  📦 输入: {human_size(summary.total_input_size)}"
+                    f"  →  输出: {human_size(summary.total_output_size)}\n"
+                    f"  ⏱️  耗时: [bold]{duration:.2f}s[/bold]",
+                    title="[bold]🧼 清理完成[/bold]",
+                    border_style="green" if summary.failed == 0 else "yellow",
+                    box=box.ROUNDED,
+                )
+            )
             console.print()
+            if summary.failed:
+                raise click.exceptions.Exit(1)
 
     @cli_group.command("dedup")
     @click.argument("inputs", nargs=-1, required=True, type=click.Path(exists=True))
-    @click.option("-r", "--recursive", is_flag=True, default=False,
-                  help="递归处理子目录. 默认: 仅当前目录")
-    @click.option("--hash-method", default="phash",
-                  type=click.Choice(["phash", "ahash", "dhash"], case_sensitive=False),
-                  help="哈希算法. 默认: phash")
-    @click.option("--threshold", default=5, type=click.IntRange(0, 32),
-                  help="相似度阈值(汉明距离). 默认: 5")
-    @click.option("--delete", "apply_delete", is_flag=True, default=False,
-                  help="执行删除建议中的重复文件")
-    @click.option("--dry-run", is_flag=True, default=False,
-                  help="与 --delete 一起使用时预览删除，不实际删文件")
-    @click.option("--yes", is_flag=True, default=False,
-                  help="跳过删除确认(与 --delete 一起使用)")
-    @click.option("--json", "as_json", is_flag=True, default=False,
-                  help="以 JSON 输出结果（适合脚本调用）")
+    @click.option(
+        "-r", "--recursive", is_flag=True, default=False, help="递归处理子目录. 默认: 仅当前目录"
+    )
+    @click.option(
+        "--hash-method",
+        default="phash",
+        type=click.Choice(["phash", "ahash", "dhash"], case_sensitive=False),
+        help="哈希算法. 默认: phash",
+    )
+    @click.option(
+        "--threshold", default=5, type=click.IntRange(0, 32), help="相似度阈值(汉明距离). 默认: 5"
+    )
+    @click.option(
+        "--delete", "apply_delete", is_flag=True, default=False, help="执行删除建议中的重复文件"
+    )
+    @click.option(
+        "--dry-run",
+        is_flag=True,
+        default=False,
+        help="与 --delete 一起使用时预览删除，不实际删文件",
+    )
+    @click.option("--yes", is_flag=True, default=False, help="跳过删除确认(与 --delete 一起使用)")
+    @click.option(
+        "--json", "as_json", is_flag=True, default=False, help="以 JSON 输出结果（适合脚本调用）"
+    )
     def dedup_cmd(
         inputs: tuple,
         recursive: bool,
@@ -409,7 +456,7 @@ def register_workflow_commands(
         yes: bool,
         as_json: bool,
     ) -> None:
-        """🧹 检测并清理重复/相似图片"""
+        """🧹 检测相似图片，安全清理字节级重复文件"""
         if not as_json:
             console.print(f"\n{mini_logo} [bold]重复图片检测[/bold]\n")
 
@@ -434,18 +481,22 @@ def register_workflow_commands(
                 emit_json_and_exit({"command": "dedup", "ok": False, "error": result.error}, 1)
             else:
                 console.print(f"[red]❌ 分析失败: {result.error}[/red]\n")
+                raise click.exceptions.Exit(1)
             return
         if result.duplicate_groups == 0:
             if as_json:
-                emit_json({
-                    "command": "dedup",
-                    "ok": True,
-                    "total_files": result.total_files,
-                    "duplicate_groups": 0,
-                    "duplicate_files": 0,
-                    "recoverable_bytes": result.recoverable_size,
-                    "duration_sec": round(result.duration, 4),
-                })
+                emit_json(
+                    {
+                        "command": "dedup",
+                        "ok": True,
+                        "total_files": result.total_files,
+                        "duplicate_groups": 0,
+                        "duplicate_files": 0,
+                        "deletable_files": 0,
+                        "recoverable_bytes": result.recoverable_size,
+                        "duration_sec": round(result.duration, 4),
+                    }
+                )
             else:
                 console.print("[green]✅ 未发现重复/相似图片[/green]\n")
             return
@@ -454,11 +505,11 @@ def register_workflow_commands(
             table = Table(title="🧹 重复组预览", box=box.ROUNDED)
             table.add_column("#", style="dim", width=5)
             table.add_column("保留文件", style="green")
-            table.add_column("重复数量", style="yellow", width=10)
+            table.add_column("相似数量", style="yellow", width=10)
             table.add_column("可回收", style="cyan", width=12)
             for idx, group in enumerate(result.groups[:30], 1):
                 reclaim = 0
-                for file_path, size in zip(group.files, group.sizes):
+                for file_path, size in zip(group.files, group.sizes, strict=True):
                     if file_path != group.keep:
                         reclaim += size
                 table.add_row(
@@ -472,60 +523,93 @@ def register_workflow_commands(
             console.print(table)
             console.print()
 
-            console.print(Panel(
-                f"  📁 扫描文件: [bold]{result.total_files}[/bold]\n"
-                f"  🔁 重复组: [bold yellow]{result.duplicate_groups}[/bold yellow]\n"
-                f"  🗑️  可删文件: [bold]{result.duplicate_files}[/bold]\n"
-                f"  💾 可回收空间: [bold green]{result.recoverable_size_human}[/bold green]\n"
-                f"  ⏱️  耗时: [bold]{result.duration:.2f}s[/bold]",
-                title="[bold]📊 去重分析[/bold]",
-                border_style="yellow",
-                box=box.ROUNDED,
-            ))
+            console.print(
+                Panel(
+                    f"  📁 扫描文件: [bold]{result.total_files}[/bold]\n"
+                    f"  🔁 重复组: [bold yellow]{result.duplicate_groups}[/bold yellow]\n"
+                    f"  👀 相似候选: [bold]{result.duplicate_files}[/bold]\n"
+                    f"  🗑️  字节级相同可删: [bold]{result.deletable_files}[/bold]\n"
+                    f"  💾 可回收空间: [bold green]{result.recoverable_size_human}[/bold green]\n"
+                    f"  ⏱️  耗时: [bold]{result.duration:.2f}s[/bold]",
+                    title="[bold]📊 去重分析[/bold]",
+                    border_style="yellow",
+                    box=box.ROUNDED,
+                )
+            )
 
         if not apply_delete:
             if as_json:
-                emit_json({
-                    "command": "dedup",
-                    "ok": True,
-                    "mode": "analyze",
-                    "total_files": result.total_files,
-                    "duplicate_groups": result.duplicate_groups,
-                    "duplicate_files": result.duplicate_files,
-                    "recoverable_bytes": result.recoverable_size,
-                    "duration_sec": round(result.duration, 4),
-                    "preview": [
-                        {
-                            "keep": group.keep,
-                            "duplicates": group.duplicates,
-                        }
-                        for group in result.groups[:30]
-                    ],
-                })
+                emit_json(
+                    {
+                        "command": "dedup",
+                        "ok": True,
+                        "mode": "analyze",
+                        "total_files": result.total_files,
+                        "duplicate_groups": result.duplicate_groups,
+                        "duplicate_files": result.duplicate_files,
+                        "deletable_files": result.deletable_files,
+                        "recoverable_bytes": result.recoverable_size,
+                        "duration_sec": round(result.duration, 4),
+                        "preview": [
+                            {
+                                "keep": group.keep,
+                                "duplicates": group.duplicates,
+                            }
+                            for group in result.groups[:30]
+                        ],
+                    }
+                )
             else:
                 console.print("\n  [dim]使用 --delete 执行删除; 默认仅预览，确保安全[/dim]\n")
             return
 
         if dry_run:
-            delete_result = dedup_ops.delete(result.groups, dry_run=True)
+            delete_result = dedup_ops.delete(result.delete_candidates, dry_run=True)
             if as_json:
-                emit_json({
-                    "command": "dedup",
-                    "ok": True,
-                    "mode": "delete_dry_run",
-                    "would_delete": len(delete_result["deleted"]),
-                    "keep": len(delete_result["kept"]),
-                })
+                emit_json(
+                    {
+                        "command": "dedup",
+                        "ok": True,
+                        "mode": "delete_dry_run",
+                        "would_delete": len(delete_result["deleted"]),
+                        "keep": len(delete_result["kept"]),
+                        "deletable_files": result.deletable_files,
+                    }
+                )
             else:
-                console.print(Panel(
-                    f"  🧪 预览删除: [bold yellow]{len(delete_result['deleted'])}[/bold yellow]\n"
-                    f"  📌 保留文件: [bold]{len(delete_result['kept'])}[/bold]\n"
-                    f"  [dim]去掉 --dry-run 才会实际删除[/dim]",
-                    title="[bold]🧹 删除预览[/bold]",
-                    border_style="yellow",
-                    box=box.ROUNDED,
-                ))
+                console.print(
+                    Panel(
+                        f"  🧪 预览删除: [bold yellow]{len(delete_result['deleted'])}[/bold yellow]\n"
+                        f"  📌 保留文件: [bold]{len(delete_result['kept'])}[/bold]\n"
+                        f"  [dim]去掉 --dry-run 才会实际删除[/dim]",
+                        title="[bold]🧹 删除预览[/bold]",
+                        border_style="yellow",
+                        box=box.ROUNDED,
+                    )
+                )
                 console.print()
+            return
+
+        if result.deletable_files == 0:
+            if as_json:
+                emit_json(
+                    {
+                        "command": "dedup",
+                        "ok": True,
+                        "mode": "delete",
+                        "deleted": 0,
+                        "kept": 0,
+                        "deletable_files": 0,
+                        "skipped_similar": result.duplicate_files,
+                        "skipped": [],
+                        "errors": [],
+                        "message": "no_exact_duplicates",
+                    }
+                )
+            else:
+                console.print(
+                    "[yellow]未发现字节级完全相同的文件；相似图片仅供人工审查。[/yellow]\n"
+                )
             return
 
         if not yes:
@@ -540,38 +624,45 @@ def register_workflow_commands(
                     1,
                 )
             confirmed = click.confirm(
-                f"确认删除 {result.duplicate_files} 个文件并回收约 {result.recoverable_size_human}?",
+                f"确认删除 {result.deletable_files} 个字节级相同文件并回收约 {result.recoverable_size_human}?",
                 default=False,
             )
             if not confirmed:
                 if as_json:
-                    emit_json_and_exit({"command": "dedup", "ok": False, "message": "delete_cancelled"}, 1)
+                    emit_json_and_exit(
+                        {"command": "dedup", "ok": False, "message": "delete_cancelled"}, 1
+                    )
                 else:
                     console.print("  [yellow]已取消删除[/yellow]\n")
                 return
 
-        delete_result = dedup_ops.delete(result.groups, dry_run=False)
+        delete_result = dedup_ops.delete(result.delete_candidates, dry_run=False)
         if as_json:
             payload = {
                 "command": "dedup",
-                "ok": len(delete_result["errors"]) == 0,
+                "ok": not delete_result["errors"] and not delete_result["skipped"],
                 "mode": "delete",
                 "deleted": len(delete_result["deleted"]),
                 "kept": len(delete_result["kept"]),
+                "deletable_files": result.deletable_files,
+                "skipped": delete_result["skipped"],
                 "errors": delete_result["errors"],
             }
-            if delete_result["errors"]:
+            if delete_result["errors"] or delete_result["skipped"]:
                 emit_json_and_exit(payload, 1)
             emit_json(payload)
         else:
-            console.print(Panel(
-                f"  ✅ 删除成功: [bold green]{len(delete_result['deleted'])}[/bold green]\n"
-                f"  📌 保留文件: [bold]{len(delete_result['kept'])}[/bold]\n"
-                f"  ❌ 删除失败: [bold red]{len(delete_result['errors'])}[/bold red]",
-                title="[bold]🧹 删除完成[/bold]",
-                border_style="green" if not delete_result["errors"] else "yellow",
-                box=box.ROUNDED,
-            ))
+            console.print(
+                Panel(
+                    f"  ✅ 删除成功: [bold green]{len(delete_result['deleted'])}[/bold green]\n"
+                    f"  📌 保留文件: [bold]{len(delete_result['kept'])}[/bold]\n"
+                    f"  ⚠️  安全跳过: [bold yellow]{len(delete_result['skipped'])}[/bold yellow]\n"
+                    f"  ❌ 删除失败: [bold red]{len(delete_result['errors'])}[/bold red]",
+                    title="[bold]🧹 删除完成[/bold]",
+                    border_style="green" if not delete_result["errors"] else "yellow",
+                    box=box.ROUNDED,
+                )
+            )
             if delete_result["errors"]:
                 console.print("[bold red]失败详情:[/bold red]")
                 for err in delete_result["errors"][:10]:
@@ -579,17 +670,19 @@ def register_workflow_commands(
                 if len(delete_result["errors"]) > 10:
                     console.print(f"   ... 还有 {len(delete_result['errors']) - 10} 个错误")
             console.print()
+            if delete_result["errors"] or delete_result["skipped"]:
+                raise click.exceptions.Exit(1)
 
 
 def _build_derivative_tasks(
-    files: List[str],
-    output_dir: Optional[str],
+    files: list[str],
+    output_dir: str | None,
     suffix: str,
     flatten: bool,
-    source_paths: List[str],
-) -> List[Tuple[str, str]]:
+    source_paths: list[str],
+) -> list[tuple[str, str]]:
     """Build input/output path pairs for derivative operations."""
-    tasks: List[Tuple[str, str]] = []
+    tasks: list[tuple[str, str]] = []
     for file_path in files:
         out_name = derivative_output_name(file_path, suffix)
         out_path = plan_output_path(
@@ -603,7 +696,7 @@ def _build_derivative_tasks(
     return tasks
 
 
-def _resolve_strip_mode(mode: str) -> Tuple[bool, bool, bool, bool, bool]:
+def _resolve_strip_mode(mode: str) -> tuple[bool, bool, bool, bool, bool]:
     """Resolve strip mode to (strip_exif, strip_gps, strip_device, strip_personal, strip_time)."""
     strip_exif = mode == "all"
     strip_gps = mode in {"privacy", "gps"}
@@ -611,6 +704,3 @@ def _resolve_strip_mode(mode: str) -> Tuple[bool, bool, bool, bool, bool]:
     strip_personal = mode in {"privacy", "personal"}
     strip_time = mode == "time"
     return strip_exif, strip_gps, strip_device, strip_personal, strip_time
-
-
-

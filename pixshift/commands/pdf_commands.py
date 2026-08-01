@@ -1,22 +1,31 @@
 """Registration for PDF command group."""
 
 import os
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable, Optional
 
 import click
 from rich import box
 from rich.console import Console
 from rich.panel import Panel
-from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from rich.table import Table
 
+from ..ops import pdf as pdf_ops
 from ..pdf_engine import (
     PAGE_SIZES,
     PDF_COMPRESS_PRESETS,
 )
-from ..ops import pdf as pdf_ops
 from ..presenters.json_presenters import emit_json, emit_json_and_exit
+from .common import validate_affixes_or_exit
+
+
+def _require_pdf(command: str, as_json: bool) -> None:
+    """Fail consistently when the optional PDF runtime is unavailable."""
+    if pdf_ops.is_available():
+        return
+    if as_json:
+        emit_json_and_exit({"command": command, "ok": False, "error": "pymupdf_missing"}, 1)
+    raise click.ClickException("PDF 功能需要 PyMuPDF。请安装: pip install PyMuPDF")
 
 
 def register_pdf_commands(
@@ -33,31 +42,56 @@ def register_pdf_commands(
 
     @pdf.command("merge")
     @click.argument("inputs", nargs=-1, required=True, type=click.Path(exists=True))
-    @click.option("-o", "--output", "output_path", required=True, type=click.Path(),
-                  help="[必填] 输出 PDF 文件路径")
-    @click.option("--page", "page_size", default="a4",
-                  type=click.Choice(list(PAGE_SIZES.keys()), case_sensitive=False),
-                  help="页面大小. 可选: a4|a3|a5|letter|legal|b5|fit. 默认: a4")
-    @click.option("-q", "--quality", default=95, type=click.IntRange(1, 100),
-                  help="图片嵌入质量 (1-100). 默认: 95")
-    @click.option("--margin", default=20, type=int,
-                  help="页边距 (点, 1点≈0.35mm). 默认: 20")
-    @click.option("--landscape", is_flag=True, default=False,
-                  help="横向页面. 默认: 纵向")
-    @click.option("-r", "--recursive", is_flag=True, default=False,
-                  help="递归扫描子目录中的图片. 默认: 仅当前目录")
-    @click.option("--overwrite", is_flag=True, default=False,
-                  help="覆盖已存在的输出文件. 默认: 不覆盖")
-    @click.option("--json", "as_json", is_flag=True, default=False,
-                  help="以 JSON 输出结果（适合脚本调用）")
-    def pdf_merge_cmd(inputs, output_path, page_size, quality, margin, landscape, recursive, overwrite, as_json):
+    @click.option(
+        "-o",
+        "--output",
+        "output_path",
+        required=True,
+        type=click.Path(),
+        help="[必填] 输出 PDF 文件路径",
+    )
+    @click.option(
+        "--page",
+        "page_size",
+        default="a4",
+        type=click.Choice(list(PAGE_SIZES.keys()), case_sensitive=False),
+        help="页面大小. 可选: a4|a3|a5|letter|legal|b5|fit. 默认: a4",
+    )
+    @click.option(
+        "-q",
+        "--quality",
+        default=95,
+        type=click.IntRange(1, 100),
+        help="图片嵌入质量 (1-100). 默认: 95",
+    )
+    @click.option("--margin", default=20, type=int, help="页边距 (点, 1点≈0.35mm). 默认: 20")
+    @click.option("--landscape", is_flag=True, default=False, help="横向页面. 默认: 纵向")
+    @click.option(
+        "-r",
+        "--recursive",
+        is_flag=True,
+        default=False,
+        help="递归扫描子目录中的图片. 默认: 仅当前目录",
+    )
+    @click.option(
+        "--overwrite", is_flag=True, default=False, help="覆盖已存在的输出文件. 默认: 不覆盖"
+    )
+    @click.option(
+        "--json", "as_json", is_flag=True, default=False, help="以 JSON 输出结果（适合脚本调用）"
+    )
+    def pdf_merge_cmd(
+        inputs: tuple[str, ...],
+        output_path: str,
+        page_size: str,
+        quality: int,
+        margin: int,
+        landscape: bool,
+        recursive: bool,
+        overwrite: bool,
+        as_json: bool,
+    ) -> None:
         """📑 多图合并成 PDF"""
-        if not pdf_ops.is_available():
-            if as_json:
-                emit_json_and_exit({"command": "pdf.merge", "ok": False, "error": "pymupdf_missing"}, 1)
-            else:
-                console.print("[red]❌ PDF 功能需要 PyMuPDF。请安装: pip install PyMuPDF[/red]")
-            return
+        _require_pdf("pdf.merge", as_json)
 
         image_files = pdf_ops.collect_images(list(inputs), recursive)
         if not image_files:
@@ -70,7 +104,10 @@ def register_pdf_commands(
         if not as_json:
             console.print(f"\n{mini_logo} [bold]PDF 合并 — 多图 → PDF[/bold]\n")
             console.print(f"  📁 找到 [bold green]{len(image_files)}[/bold green] 张图片")
-            console.print(f"  📄 页面大小: [bold cyan]{page_size.upper()}[/bold cyan]" + (" [横向]" if landscape else " [纵向]"))
+            console.print(
+                f"  📄 页面大小: [bold cyan]{page_size.upper()}[/bold cyan]"
+                + (" [横向]" if landscape else " [纵向]")
+            )
             console.print(f"  💎 图片质量: [bold]{quality}[/bold]")
             console.print(f"  📐 页边距: [bold]{margin}[/bold] pt")
             console.print(f"  📤 输出: [bold]{output_path}[/bold]\n")
@@ -103,41 +140,59 @@ def register_pdf_commands(
             return
 
         if result.success:
-            console.print(Panel(
-                f"  ✅ 合并成功！\n"
-                f"  📄 页数: [bold green]{result.page_count}[/bold green] 页\n"
-                f"  📦 输入: {human_size(result.input_size)}"
-                f"  →  输出: [bold]{human_size(result.output_size)}[/bold]\n"
-                f"  📁 文件: {output_path}\n"
-                f"  ⏱️  耗时: [bold]{result.duration:.2f}s[/bold]",
-                title="[bold]📑 PDF 合并完成[/bold]",
-                border_style="green",
-                box=box.ROUNDED,
-            ))
+            console.print(
+                Panel(
+                    f"  ✅ 合并成功！\n"
+                    f"  📄 页数: [bold green]{result.page_count}[/bold green] 页\n"
+                    f"  📦 输入: {human_size(result.input_size)}"
+                    f"  →  输出: [bold]{human_size(result.output_size)}[/bold]\n"
+                    f"  📁 文件: {output_path}\n"
+                    f"  ⏱️  耗时: [bold]{result.duration:.2f}s[/bold]",
+                    title="[bold]📑 PDF 合并完成[/bold]",
+                    border_style="green",
+                    box=box.ROUNDED,
+                )
+            )
         else:
             console.print(f"[red]❌ 合并失败: {result.error}[/red]")
+            raise click.exceptions.Exit(1)
         console.print()
 
     @pdf.command("extract")
     @click.argument("pdf_file", type=click.Path(exists=True))
-    @click.option("-o", "--output", "output_dir", required=True, type=click.Path(),
-                  help="[必填] 输出目录路径")
-    @click.option("-t", "--format", "output_format", default="png",
-                  type=click.Choice(["png", "jpg", "webp", "tiff"], case_sensitive=False),
-                  help="输出图片格式")
+    @click.option(
+        "-o", "--output", "output_dir", required=True, type=click.Path(), help="[必填] 输出目录路径"
+    )
+    @click.option(
+        "-t",
+        "--format",
+        "output_format",
+        default="png",
+        type=click.Choice(["png", "jpg", "webp", "tiff"], case_sensitive=False),
+        help="输出图片格式",
+    )
     @click.option("--dpi", default=300, type=click.IntRange(72, 1200), help="渲染 DPI")
     @click.option("--pages", default=None, type=str, help="指定页码, 如 '1-5,8,10-12'")
     @click.option("--prefix", default="", type=str, help="输出文件名前缀")
     @click.option("--overwrite", is_flag=True, default=False, help="覆盖已存在输出文件")
     @click.option("--json", "as_json", is_flag=True, default=False, help="以 JSON 输出结果")
-    def pdf_extract_cmd(pdf_file, output_dir, output_format, dpi, pages, prefix, overwrite, as_json):
+    def pdf_extract_cmd(
+        pdf_file: str,
+        output_dir: str,
+        output_format: str,
+        dpi: int,
+        pages: str | None,
+        prefix: str,
+        overwrite: bool,
+        as_json: bool,
+    ) -> None:
         """📤 PDF 拆分为图片"""
-        if not pdf_ops.is_available():
-            if as_json:
-                emit_json_and_exit({"command": "pdf.extract", "ok": False, "error": "pymupdf_missing"}, 1)
-            else:
-                console.print("[red]❌ PDF 功能需要 PyMuPDF。请安装: pip install PyMuPDF[/red]")
-            return
+        validate_affixes_or_exit(
+            command="pdf.extract",
+            as_json=as_json,
+            values=(("prefix", prefix),),
+        )
+        _require_pdf("pdf.extract", as_json)
 
         result = pdf_ops.extract_pages(
             pdf_path=pdf_file,
@@ -169,40 +224,56 @@ def register_pdf_commands(
 
         console.print(f"\n{mini_logo} [bold]PDF 拆分 — PDF → 图片[/bold]\n")
         if result.success:
-            console.print(Panel(
-                f"  ✅ 拆分成功！\n"
-                f"  📄 PDF 总页数: [bold]{result.details.get('total_pages', '?')}[/bold]\n"
-                f"  📤 导出页数: [bold green]{result.page_count}[/bold green] 页\n"
-                f"  📦 输入: {human_size(result.input_size)}"
-                f"  →  输出: [bold]{human_size(result.output_size)}[/bold]\n"
-                f"  📂 目录: {output_dir}\n"
-                f"  ⏱️  耗时: [bold]{result.duration:.2f}s[/bold]",
-                title="[bold]📤 PDF 拆分完成[/bold]",
-                border_style="green",
-                box=box.ROUNDED,
-            ))
+            console.print(
+                Panel(
+                    f"  ✅ 拆分成功！\n"
+                    f"  📄 PDF 总页数: [bold]{result.details.get('total_pages', '?')}[/bold]\n"
+                    f"  📤 导出页数: [bold green]{result.page_count}[/bold green] 页\n"
+                    f"  📦 输入: {human_size(result.input_size)}"
+                    f"  →  输出: [bold]{human_size(result.output_size)}[/bold]\n"
+                    f"  📂 目录: {output_dir}\n"
+                    f"  ⏱️  耗时: [bold]{result.duration:.2f}s[/bold]",
+                    title="[bold]📤 PDF 拆分完成[/bold]",
+                    border_style="green",
+                    box=box.ROUNDED,
+                )
+            )
         else:
             console.print(f"[red]❌ 拆分失败: {result.error}[/red]")
+            raise click.exceptions.Exit(1)
         console.print()
 
     @pdf.command("compress")
     @click.argument("pdf_file", type=click.Path(exists=True))
-    @click.option("-o", "--output", "output_path", default=None, type=click.Path(), help="输出 PDF 路径")
-    @click.option("-p", "--preset", default="medium",
-                  type=click.Choice(list(PDF_COMPRESS_PRESETS.keys()), case_sensitive=False),
-                  help="压缩预设")
-    @click.option("--image-quality", default=None, type=click.IntRange(1, 100), help="自定义图片质量")
-    @click.option("--max-dpi", default=None, type=click.IntRange(72, 1200), help="自定义最大图片 DPI")
+    @click.option(
+        "-o", "--output", "output_path", default=None, type=click.Path(), help="输出 PDF 路径"
+    )
+    @click.option(
+        "-p",
+        "--preset",
+        default="medium",
+        type=click.Choice(list(PDF_COMPRESS_PRESETS.keys()), case_sensitive=False),
+        help="压缩预设",
+    )
+    @click.option(
+        "--image-quality", default=None, type=click.IntRange(1, 100), help="自定义图片质量"
+    )
+    @click.option(
+        "--max-dpi", default=None, type=click.IntRange(72, 1200), help="自定义最大图片 DPI"
+    )
     @click.option("--overwrite", is_flag=True, default=False, help="覆盖已存在输出文件")
     @click.option("--json", "as_json", is_flag=True, default=False, help="以 JSON 输出结果")
-    def pdf_compress_cmd(pdf_file, output_path, preset, image_quality, max_dpi, overwrite, as_json):
+    def pdf_compress_cmd(
+        pdf_file: str,
+        output_path: str | None,
+        preset: str,
+        image_quality: int | None,
+        max_dpi: int | None,
+        overwrite: bool,
+        as_json: bool,
+    ) -> None:
         """🗜️  PDF 压缩优化"""
-        if not pdf_ops.is_available():
-            if as_json:
-                emit_json_and_exit({"command": "pdf.compress", "ok": False, "error": "pymupdf_missing"}, 1)
-            else:
-                console.print("[red]❌ PDF 功能需要 PyMuPDF。请安装: pip install PyMuPDF[/red]")
-            return
+        _require_pdf("pdf.compress", as_json)
 
         if output_path is None:
             p = Path(pdf_file)
@@ -244,36 +315,47 @@ def register_pdf_commands(
                     ratio_text = f"  📉 压缩率: [bold green]{ratio:.1f}%[/bold green] (节省 {human_size(saved)})"
                 else:
                     ratio_text = f"  📈 体积变化: [bold yellow]{ratio:.1f}%[/bold yellow] (增加 {human_size(-saved)})"
-            console.print(Panel(
-                f"  ✅ 压缩成功！\n"
-                f"  📄 页数: [bold]{result.page_count}[/bold] 页\n"
-                f"  📦 输入: {human_size(result.input_size)}"
-                f"  →  输出: [bold]{human_size(result.output_size)}[/bold]\n"
-                f"{ratio_text}\n"
-                f"  📁 文件: {output_path}\n"
-                f"  ⏱️  耗时: [bold]{result.duration:.2f}s[/bold]",
-                title="[bold]🗜️  PDF 压缩完成[/bold]",
-                border_style="green",
-                box=box.ROUNDED,
-            ))
+            console.print(
+                Panel(
+                    f"  ✅ 压缩成功！\n"
+                    f"  📄 页数: [bold]{result.page_count}[/bold] 页\n"
+                    f"  📦 输入: {human_size(result.input_size)}"
+                    f"  →  输出: [bold]{human_size(result.output_size)}[/bold]\n"
+                    f"{ratio_text}\n"
+                    f"  📁 文件: {output_path}\n"
+                    f"  ⏱️  耗时: [bold]{result.duration:.2f}s[/bold]",
+                    title="[bold]🗜️  PDF 压缩完成[/bold]",
+                    border_style="green",
+                    box=box.ROUNDED,
+                )
+            )
         else:
             console.print(f"[red]❌ 压缩失败: {result.error}[/red]")
+            raise click.exceptions.Exit(1)
         console.print()
 
     @pdf.command("concat")
     @click.argument("inputs", nargs=-1, required=True, type=click.Path(exists=True))
-    @click.option("-o", "--output", "output_path", required=True, type=click.Path(), help="[必填] 输出 PDF 文件路径")
+    @click.option(
+        "-o",
+        "--output",
+        "output_path",
+        required=True,
+        type=click.Path(),
+        help="[必填] 输出 PDF 文件路径",
+    )
     @click.option("-r", "--recursive", is_flag=True, default=False, help="递归扫描子目录中的 PDF")
     @click.option("--overwrite", is_flag=True, default=False, help="覆盖已存在输出文件")
     @click.option("--json", "as_json", is_flag=True, default=False, help="以 JSON 输出结果")
-    def pdf_concat_cmd(inputs, output_path, recursive, overwrite, as_json):
+    def pdf_concat_cmd(
+        inputs: tuple[str, ...],
+        output_path: str,
+        recursive: bool,
+        overwrite: bool,
+        as_json: bool,
+    ) -> None:
         """📎 多个 PDF 合并成一个"""
-        if not pdf_ops.is_available():
-            if as_json:
-                emit_json_and_exit({"command": "pdf.concat", "ok": False, "error": "pymupdf_missing"}, 1)
-            else:
-                console.print("[red]❌ PDF 功能需要 PyMuPDF。请安装: pip install PyMuPDF[/red]")
-            return
+        _require_pdf("pdf.concat", as_json)
 
         pdf_files = pdf_ops.collect_pdfs(list(inputs), recursive)
         if not pdf_files:
@@ -284,9 +366,12 @@ def register_pdf_commands(
             return
         if len(pdf_files) < 2:
             if as_json:
-                emit_json_and_exit({"command": "pdf.concat", "ok": False, "error": "need_at_least_two"}, 1)
+                emit_json_and_exit(
+                    {"command": "pdf.concat", "ok": False, "error": "need_at_least_two"}, 1
+                )
             else:
                 console.print("[yellow]⚠️  至少需要 2 个 PDF 文件才能合并[/yellow]")
+                raise click.exceptions.Exit(2)
             return
 
         result = pdf_ops.concat(pdf_paths=pdf_files, output_path=output_path, overwrite=overwrite)
@@ -309,40 +394,38 @@ def register_pdf_commands(
 
         console.print(f"\n{mini_logo} [bold]PDF 拼接 — 多PDF → 一个PDF[/bold]\n")
         if result.success:
-            console.print(Panel(
-                f"  ✅ 合并成功！\n"
-                f"  📄 总页数: [bold green]{result.page_count}[/bold green] 页\n"
-                f"  📁 文件数: [bold]{result.details.get('file_count', '?')}[/bold] 个\n"
-                f"  📦 输入: {human_size(result.input_size)}"
-                f"  →  输出: [bold]{human_size(result.output_size)}[/bold]\n"
-                f"  📁 文件: {output_path}\n"
-                f"  ⏱️  耗时: [bold]{result.duration:.2f}s[/bold]",
-                title="[bold]📎 PDF 合并完成[/bold]",
-                border_style="green",
-                box=box.ROUNDED,
-            ))
+            console.print(
+                Panel(
+                    f"  ✅ 合并成功！\n"
+                    f"  📄 总页数: [bold green]{result.page_count}[/bold green] 页\n"
+                    f"  📁 文件数: [bold]{result.details.get('file_count', '?')}[/bold] 个\n"
+                    f"  📦 输入: {human_size(result.input_size)}"
+                    f"  →  输出: [bold]{human_size(result.output_size)}[/bold]\n"
+                    f"  📁 文件: {output_path}\n"
+                    f"  ⏱️  耗时: [bold]{result.duration:.2f}s[/bold]",
+                    title="[bold]📎 PDF 合并完成[/bold]",
+                    border_style="green",
+                    box=box.ROUNDED,
+                )
+            )
         else:
             console.print(f"[red]❌ 合并失败: {result.error}[/red]")
+            raise click.exceptions.Exit(1)
         console.print()
 
     @pdf.command("info")
     @click.argument("pdf_file", type=click.Path(exists=True))
     @click.option("--pages", is_flag=True, default=False, help="显示每页详细信息")
     @click.option("--json", "as_json", is_flag=True, default=False, help="以 JSON 输出结果")
-    def pdf_info_cmd(pdf_file, pages, as_json):
+    def pdf_info_cmd(pdf_file: str, pages: bool, as_json: bool) -> None:
         """📊 查看 PDF 详细信息"""
-        if not pdf_ops.is_available():
-            if as_json:
-                emit_json_and_exit({"command": "pdf.info", "ok": False, "error": "pymupdf_missing"}, 1)
-            else:
-                console.print("[red]❌ PDF 功能需要 PyMuPDF。请安装: pip install PyMuPDF[/red]")
-            return
+        _require_pdf("pdf.info", as_json)
 
         info = pdf_ops.info(pdf_file)
         if as_json:
-            emit_json({
+            payload = {
                 "command": "pdf.info",
-                "ok": True,
+                "ok": not bool(info.error),
                 "path": pdf_file,
                 "size_bytes": info.size_bytes,
                 "page_count": info.page_count,
@@ -359,8 +442,15 @@ def register_pdf_commands(
                     "mod_date": info.mod_date,
                 },
                 "pages": info.pages if pages else None,
-            })
+                "error": info.error,
+            }
+            if info.error:
+                emit_json_and_exit(payload, 1)
+            emit_json(payload)
             return
+
+        if info.error:
+            raise click.ClickException(f"PDF 信息读取失败: {info.error}")
 
         console.print(f"\n{mini_logo} [bold]PDF 信息[/bold]\n")
         table = Table(
@@ -415,4 +505,3 @@ def register_pdf_commands(
                 page_table.add_row("...", "", "", "", f"(还有 {len(info.pages) - 100} 页)", "")
             console.print(page_table)
         console.print()
-

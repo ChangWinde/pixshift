@@ -16,4 +16,3 @@ def test_preview_items_truncates_long_lists():
     text = system_commands._preview_items(data, limit=5)
     assert text.startswith("v0, v1, v2, v3, v4")
     assert "(+" in text
-

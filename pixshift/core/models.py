@@ -22,4 +22,3 @@ class OperationSummary:
             self.total_output_size += int(output_size or 0)
         else:
             self.failed += 1
-

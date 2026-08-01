@@ -13,7 +13,8 @@ It is designed for both direct terminal usage and automation-first pipelines.
 ## Why PixShift
 
 - Fast batch operations with practical defaults
-- Safe behavior for destructive actions
+- Safe destructive behavior: similarity is advisory; only revalidated,
+  byte-identical duplicates can be deleted
 - Human-readable output and script-friendly JSON mode
 - Modular architecture for long-term maintainability
 
@@ -71,6 +72,7 @@ pixshift pdf merge ./photos/ -o album.pdf
 
 JSON mode is intended for CI and scripts.
 In JSON mode, failures return non-zero exit codes.
+Every document includes `"schema_version": "1.0"`, `command`, and `ok`.
 
 ```bash
 pixshift convert ./photos/ -t webp --json
@@ -99,9 +101,11 @@ Script templates:
 ## Documentation
 
 - Architecture: `docs/ARCHITECTURE.md`
+- Safety boundary ADR: `docs/adr/0001-safe-operation-boundaries.md`
 - Command reference: `docs/COMMANDS.md`
 - Phase checklist: `docs/PHASE1_CHECKLIST.md`
 - JSON output contract: `docs/JSON_OUTPUT.md`
+- Performance evidence: `docs/PERFORMANCE.md`
 - First release PR pack: `docs/RELEASE_PR_FIRST.md`
 - Label strategy: `docs/LABEL_STRATEGY.md`
 - Automation examples: `examples/automation/README.md`

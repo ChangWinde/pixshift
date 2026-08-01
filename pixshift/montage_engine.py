@@ -10,43 +10,46 @@ PixShift Montage Engine — 拼图/网格拼接
 
 import os
 import time
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, List, Tuple
-from dataclasses import dataclass, field
 
 from PIL import Image, ImageDraw, ImageFont
 
-from .converter import SUPPORTED_INPUT_FORMATS, _human_size
-
+from .converter import SUPPORTED_INPUT_FORMATS
+from .core.files import atomic_output_path
+from .core.metadata import normalize_orientation
 
 # ============================================================
 #  数据结构
 # ============================================================
 
+
 @dataclass
 class MontageResult:
     """拼图结果"""
+
     output_path: str = ""
     success: bool = False
     output_size: int = 0
     duration: float = 0.0
     error: str = ""
     total_images: int = 0
-    grid_size: Tuple[int, int] = (0, 0)  # (cols, rows)
-    canvas_size: Tuple[int, int] = (0, 0)  # (width, height)
+    grid_size: tuple[int, int] = (0, 0)  # (cols, rows)
+    canvas_size: tuple[int, int] = (0, 0)  # (width, height)
 
 
 # ============================================================
 #  核心拼图函数
 # ============================================================
 
+
 def create_montage(
-    input_paths: List[str],
+    input_paths: list[str],
     output_path: str,
     cols: int = 3,
     gap: int = 10,
-    cell_width: Optional[int] = None,
-    cell_height: Optional[int] = None,
+    cell_width: int | None = None,
+    cell_height: int | None = None,
     background: str = "255,255,255",
     border: int = 0,
     border_color: str = "200,200,200",
@@ -81,6 +84,17 @@ def create_montage(
             result.error = "没有输入图片"
             return result
 
+        output_extension = Path(output_path).suffix.lower()
+        if output_extension not in {".png", ".jpg", ".jpeg", ".webp"}:
+            raise ValueError(f"unsupported_output_format: {output_extension or '<none>'}")
+
+        if cols <= 0 or gap < 0 or border < 0:
+            raise ValueError("列数必须为正数，间距和边框不能为负数")
+        if cell_width is not None and cell_width <= 0:
+            raise ValueError("单元格宽度必须为正数")
+        if cell_height is not None and cell_height <= 0:
+            raise ValueError("单元格高度必须为正数")
+
         if os.path.exists(output_path) and not overwrite:
             result.error = "输出文件已存在（使用 --overwrite 覆盖）"
             return result
@@ -92,8 +106,8 @@ def create_montage(
         labels_text = []
         for p in input_paths:
             try:
-                img = Image.open(p)
-                images.append(img)
+                with Image.open(p) as source:
+                    images.append(normalize_orientation(source).copy())
                 labels_text.append(Path(p).name)
             except Exception:
                 continue
@@ -165,9 +179,12 @@ def create_montage(
             # 边框
             if border > 0:
                 draw.rectangle(
-                    [offset_x - border, offset_y - border,
-                     offset_x + resized.width + border - 1,
-                     offset_y + resized.height + border - 1],
+                    [
+                        offset_x - border,
+                        offset_y - border,
+                        offset_x + resized.width + border - 1,
+                        offset_y + resized.height + border - 1,
+                    ],
                     outline=bd_color,
                     width=border,
                 )
@@ -196,13 +213,14 @@ def create_montage(
                 )
 
         # 保存
-        ext = Path(output_path).suffix.lower()
-        if ext in (".jpg", ".jpeg"):
-            canvas.save(output_path, format="JPEG", quality=95, optimize=True)
-        elif ext == ".webp":
-            canvas.save(output_path, format="WEBP", quality=95)
-        else:
-            canvas.save(output_path, format="PNG", optimize=True)
+        ext = output_extension
+        with atomic_output_path(output_path) as temporary:
+            if ext in (".jpg", ".jpeg"):
+                canvas.save(temporary, format="JPEG", quality=95, optimize=True)
+            elif ext == ".webp":
+                canvas.save(temporary, format="WEBP", quality=95)
+            else:
+                canvas.save(temporary, format="PNG", optimize=True)
 
         result.output_size = os.path.getsize(output_path)
         result.success = True
@@ -218,6 +236,7 @@ def create_montage(
 #  工具函数
 # ============================================================
 
+
 def _fit_image(
     img: Image.Image,
     max_width: int,
@@ -225,23 +244,33 @@ def _fit_image(
 ) -> Image.Image:
     """缩放图片以适应指定大小（保持比例）"""
     img_copy = img.copy()
-    img_copy.thumbnail((max_width, max_height), Image.LANCZOS)
+    img_copy.thumbnail((max_width, max_height), Image.Resampling.LANCZOS)
     return img_copy
 
 
-def _parse_rgb(color_str: str) -> Tuple[int, int, int]:
+def _parse_rgb(color_str: str) -> tuple[int, int, int]:
     """解析 RGB 颜色字符串"""
     if color_str.startswith("#"):
         hex_str = color_str[1:]
-        return (int(hex_str[0:2], 16), int(hex_str[2:4], 16), int(hex_str[4:6], 16))
+        if len(hex_str) != 6:
+            raise ValueError("十六进制颜色必须使用 #RRGGBB")
+        result = (
+            int(hex_str[0:2], 16),
+            int(hex_str[2:4], 16),
+            int(hex_str[4:6], 16),
+        )
+    else:
+        parts = [int(x.strip()) for x in color_str.split(",")]
+        if len(parts) != 3:
+            raise ValueError("颜色必须使用 R,G,B 或 #RRGGBB")
+        result = (parts[0], parts[1], parts[2])
 
-    parts = [int(x.strip()) for x in color_str.split(",")]
-    if len(parts) >= 3:
-        return (parts[0], parts[1], parts[2])
-    return (255, 255, 255)
+    if any(not 0 <= channel <= 255 for channel in result):
+        raise ValueError("颜色通道必须在 0 到 255 之间")
+    return result
 
 
-def _get_simple_font(size: int):
+def _get_simple_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
     """获取简单字体"""
     system_fonts = [
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
@@ -259,9 +288,9 @@ def _get_simple_font(size: int):
 
 
 def collect_montage_files(
-    input_paths: List[str],
+    input_paths: list[str],
     recursive: bool = False,
-) -> List[str]:
+) -> list[str]:
     """收集所有可拼接的图片文件"""
     files = []
     for path_str in input_paths:

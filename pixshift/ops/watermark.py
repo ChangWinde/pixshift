@@ -1,11 +1,14 @@
 """Operation wrappers for watermark workflows."""
 
-from typing import List, Optional
+from ..watermark_engine import (
+    WatermarkResult,
+    add_image_watermark,
+    add_text_watermark,
+    collect_watermark_files,
+)
 
-from ..watermark_engine import add_image_watermark, add_text_watermark, collect_watermark_files
 
-
-def collect_files(input_paths: List[str], recursive: bool) -> List[str]:
+def collect_files(input_paths: list[str], recursive: bool) -> list[str]:
     """Collect candidate files for watermark operations."""
     return collect_watermark_files(input_paths, recursive)
 
@@ -14,7 +17,7 @@ def text_one(
     input_path: str,
     output_path: str,
     text: str,
-    font_path: Optional[str],
+    font_path: str | None,
     font_size: int,
     color: str,
     opacity: int,
@@ -24,7 +27,7 @@ def text_one(
     tile_spacing: int,
     margin: int,
     overwrite: bool,
-):
+) -> WatermarkResult:
     """Apply text watermark to one image."""
     return add_text_watermark(
         input_path=input_path,
@@ -54,7 +57,7 @@ def image_one(
     tile: bool,
     tile_spacing: int,
     overwrite: bool,
-):
+) -> WatermarkResult:
     """Apply image watermark to one image."""
     return add_image_watermark(
         input_path=input_path,
@@ -68,4 +71,3 @@ def image_one(
         tile_spacing=tile_spacing,
         overwrite=overwrite,
     )
-

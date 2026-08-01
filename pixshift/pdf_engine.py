@@ -9,21 +9,24 @@ PixShift PDF Engine — 基于 PyMuPDF 的 PDF 处理引擎
   5. info     — PDF 信息查看
 """
 
-import os
 import io
+import os
 import time
-from pathlib import Path
-from typing import Optional, Tuple, List, Dict
 from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
 
 try:
     import fitz  # PyMuPDF
+
     PYMUPDF_AVAILABLE = True
 except ImportError:
     PYMUPDF_AVAILABLE = False
 
 from PIL import Image
 
+from .core.files import atomic_output_path, safe_output_path
+from .core.metadata import normalize_orientation
 
 # ============================================================
 #  常量定义
@@ -31,19 +34,31 @@ from PIL import Image
 
 # 支持的图片输入格式（用于 merge）
 PDF_IMAGE_FORMATS = {
-    ".png", ".jpg", ".jpeg", ".bmp", ".gif", ".tiff", ".tif",
-    ".webp", ".heic", ".heif", ".avif", ".ppm", ".tga", ".ico",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".bmp",
+    ".gif",
+    ".tiff",
+    ".tif",
+    ".webp",
+    ".heic",
+    ".heif",
+    ".avif",
+    ".ppm",
+    ".tga",
+    ".ico",
 }
 
 # 标准纸张尺寸 (宽, 高) 单位: 点 (1点 = 1/72英寸)
-PAGE_SIZES = {
-    "a4":       (595.28, 841.89),
-    "a3":       (841.89, 1190.55),
-    "a5":       (419.53, 595.28),
-    "letter":   (612, 792),
-    "legal":    (612, 1008),
-    "b5":       (498.90, 708.66),
-    "fit":      None,  # 自适应图片大小
+PAGE_SIZES: dict[str, tuple[float, float] | None] = {
+    "a4": (595.28, 841.89),
+    "a3": (841.89, 1190.55),
+    "a5": (419.53, 595.28),
+    "letter": (612, 792),
+    "legal": (612, 1008),
+    "b5": (498.90, 708.66),
+    "fit": None,  # 自适应图片大小
 }
 
 # PDF 压缩预设
@@ -53,14 +68,14 @@ PAGE_SIZES = {
 #   - medium:   中度压缩，图片质量 80，肉眼难辨
 #   - heavy:    重度压缩，图片质量 60，明显缩小
 #   - extreme:  极限压缩，图片质量 40 + 缩小分辨率，最小体积
-PDF_COMPRESS_PRESETS = {
+PDF_COMPRESS_PRESETS: dict[str, dict[str, Any]] = {
     "lossless": {
         "description": "无损 — 仅优化 PDF 结构，不重压缩图片",
-        "image_quality": None,   # None = 不重压缩图片
-        "max_image_dpi": None,   # None = 不缩小分辨率
-        "deflate": True,         # 对流数据使用 deflate 压缩
-        "clean": True,           # 清理无用对象
-        "garbage": 4,            # 垃圾回收等级 (0-4, 4最彻底)
+        "image_quality": None,  # None = 不重压缩图片
+        "max_image_dpi": None,  # None = 不缩小分辨率
+        "deflate": True,  # 对流数据使用 deflate 压缩
+        "clean": True,  # 清理无用对象
+        "garbage": 4,  # 垃圾回收等级 (0-4, 4最彻底)
     },
     "light": {
         "description": "轻度 — 图片质量95，几乎无视觉损失",
@@ -101,9 +116,11 @@ PDF_COMPRESS_PRESETS = {
 #  数据结构
 # ============================================================
 
+
 @dataclass
 class PDFResult:
     """PDF 操作结果"""
+
     success: bool = False
     output_path: str = ""
     input_size: int = 0
@@ -111,12 +128,13 @@ class PDFResult:
     duration: float = 0.0
     page_count: int = 0
     error: str = ""
-    details: Dict = field(default_factory=dict)
+    details: dict = field(default_factory=dict)
 
 
 @dataclass
 class PDFInfo:
     """PDF 文件信息"""
+
     path: str = ""
     size_bytes: int = 0
     page_count: int = 0
@@ -129,33 +147,34 @@ class PDFInfo:
     mod_date: str = ""
     encrypted: bool = False
     pdf_version: str = ""
-    pages: List[Dict] = field(default_factory=list)
+    pages: list[dict] = field(default_factory=list)
     image_count: int = 0
     total_image_size: int = 0
+    error: str = ""
 
 
 # ============================================================
 #  工具函数
 # ============================================================
 
+
 def _human_size(size_bytes: int) -> str:
     """将字节数转换为人类可读的大小"""
+    size = float(size_bytes)
     for unit in ("B", "KB", "MB", "GB"):
-        if size_bytes < 1024:
-            return f"{size_bytes:.1f} {unit}"
-        size_bytes /= 1024
-    return f"{size_bytes:.1f} TB"
+        if size < 1024:
+            return f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} TB"
 
 
-def _check_pymupdf():
+def _check_pymupdf() -> None:
     """检查 PyMuPDF 是否可用"""
     if not PYMUPDF_AVAILABLE:
-        raise ImportError(
-            "PDF 功能需要 PyMuPDF。请安装: pip install PyMuPDF"
-        )
+        raise ImportError("PDF 功能需要 PyMuPDF。请安装: pip install PyMuPDF")
 
 
-def _collect_images(input_paths: List[str], recursive: bool = False) -> List[str]:
+def _collect_images(input_paths: list[str], recursive: bool = False) -> list[str]:
     """收集所有图片文件（用于 merge）"""
     files = []
     for path_str in input_paths:
@@ -171,7 +190,7 @@ def _collect_images(input_paths: List[str], recursive: bool = False) -> List[str
     return files
 
 
-def _collect_pdfs(input_paths: List[str], recursive: bool = False) -> List[str]:
+def _collect_pdfs(input_paths: list[str], recursive: bool = False) -> list[str]:
     """收集所有 PDF 文件（用于 concat）"""
     files = []
     for path_str in input_paths:
@@ -187,28 +206,10 @@ def _collect_pdfs(input_paths: List[str], recursive: bool = False) -> List[str]:
     return files
 
 
-def _image_to_bytes(image_path: str, quality: int = 95) -> bytes:
+def _image_to_bytes(image_path: str, quality: int = 95) -> tuple[bytes, tuple[int, int]]:
     """将图片转为 JPEG/PNG bytes，供 PyMuPDF 插入"""
-    img = Image.open(image_path)
-
-    # 自动旋转
-    try:
-        from PIL import ExifTags
-        exif = img.getexif()
-        for key, val in ExifTags.TAGS.items():
-            if val == "Orientation":
-                orientation = exif.get(key)
-                if orientation:
-                    rotations = {
-                        3: Image.ROTATE_180,
-                        6: Image.ROTATE_270,
-                        8: Image.ROTATE_90,
-                    }
-                    if orientation in rotations:
-                        img = img.transpose(rotations[orientation])
-                break
-    except Exception:
-        pass
+    with Image.open(image_path) as source:
+        img = normalize_orientation(source).copy()
 
     # 有透明通道用 PNG，否则用 JPEG
     buf = io.BytesIO()
@@ -226,8 +227,9 @@ def _image_to_bytes(image_path: str, quality: int = 95) -> bytes:
 #  1. merge — 多图合并成 PDF
 # ============================================================
 
+
 def pdf_merge_images(
-    image_paths: List[str],
+    image_paths: list[str],
     output_path: str,
     page_size: str = "a4",
     quality: int = 95,
@@ -270,6 +272,8 @@ def pdf_merge_images(
                 pw, ph = float(img_w), float(img_h)
             else:
                 size = PAGE_SIZES.get(page_size.lower(), PAGE_SIZES["a4"])
+                if size is None:
+                    raise ValueError(f"无效页面尺寸: {page_size}")
                 pw, ph = size
 
             # 横向
@@ -298,7 +302,8 @@ def pdf_merge_images(
 
         # 保存
         os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
-        doc.save(output_path, deflate=True, garbage=4)
+        with atomic_output_path(output_path) as temporary:
+            doc.save(temporary, deflate=True, garbage=4)
         doc.close()
 
         result.output_size = os.path.getsize(output_path)
@@ -316,12 +321,13 @@ def pdf_merge_images(
 #  2. extract — PDF 拆分为图片
 # ============================================================
 
+
 def pdf_extract_pages(
     pdf_path: str,
     output_dir: str,
     output_format: str = "png",
     dpi: int = 300,
-    pages: Optional[str] = None,
+    pages: str | None = None,
     prefix: str = "",
     overwrite: bool = False,
 ) -> PDFResult:
@@ -374,7 +380,7 @@ def pdf_extract_pages(
             page_num = page_idx + 1
 
             out_name = f"{prefix}page_{page_num:04d}{ext}"
-            out_path = os.path.join(output_dir, out_name)
+            out_path = safe_output_path(output_dir, out_name)
 
             if os.path.exists(out_path) and not overwrite:
                 continue
@@ -384,17 +390,18 @@ def pdf_extract_pages(
             mat = fitz.Matrix(zoom, zoom)
             pix = page.get_pixmap(matrix=mat, alpha=False)
 
-            if fmt in ("webp", "tiff"):
-                # 通过 Pillow 转换
-                img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-                if fmt == "webp":
-                    img.save(out_path, format="WEBP", quality=95)
+            with atomic_output_path(out_path) as temporary:
+                if fmt in ("webp", "tiff"):
+                    # 通过 Pillow 转换
+                    img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+                    if fmt == "webp":
+                        img.save(temporary, format="WEBP", quality=95)
+                    else:
+                        img.save(temporary, format="TIFF")
+                elif pix_format == "jpeg":
+                    pix.save(temporary, output=pix_format)
                 else:
-                    img.save(out_path, format="TIFF")
-            elif pix_format == "jpeg":
-                pix.save(out_path, output=pix_format)
-            else:
-                pix.save(out_path)
+                    pix.save(temporary)
 
             output_total_size += os.path.getsize(out_path)
             extracted_count += 1
@@ -414,7 +421,7 @@ def pdf_extract_pages(
     return result
 
 
-def _parse_page_range(pages_str: Optional[str], total: int) -> List[int]:
+def _parse_page_range(pages_str: str | None, total: int) -> list[int]:
     """
     解析页码范围字符串
 
@@ -428,9 +435,9 @@ def _parse_page_range(pages_str: Optional[str], total: int) -> List[int]:
     for part in pages_str.split(","):
         part = part.strip()
         if "-" in part:
-            start, end = part.split("-", 1)
-            start = max(1, int(start.strip()))
-            end = min(total, int(end.strip()))
+            start_text, end_text = part.split("-", 1)
+            start = max(1, int(start_text.strip()))
+            end = min(total, int(end_text.strip()))
             for i in range(start, end + 1):
                 indices.add(i - 1)
         else:
@@ -445,12 +452,13 @@ def _parse_page_range(pages_str: Optional[str], total: int) -> List[int]:
 #  3. compress — PDF 压缩优化
 # ============================================================
 
+
 def pdf_compress(
     input_path: str,
     output_path: str,
     preset: str = "medium",
-    image_quality: Optional[int] = None,
-    max_image_dpi: Optional[int] = None,
+    image_quality: int | None = None,
+    max_image_dpi: int | None = None,
     overwrite: bool = False,
 ) -> PDFResult:
     """
@@ -513,10 +521,12 @@ def pdf_compress(
 
         if img_quality is not None:
             # 有损压缩：重压缩图片 + 结构优化
-            stats = _compress_rebuild(doc, output_path, img_quality, max_dpi, save_opts)
+            with atomic_output_path(output_path) as temporary:
+                stats = _compress_rebuild(doc, temporary, img_quality, max_dpi, save_opts)
         else:
             # 无损压缩：仅结构优化（去重、清理、deflate）
-            doc.save(output_path, **save_opts)
+            with atomic_output_path(output_path) as temporary:
+                doc.save(temporary, **save_opts)
             stats = {"images_processed": 0, "images_skipped": 0, "images_replaced": 0}
 
         doc.close()
@@ -539,9 +549,9 @@ def _compress_rebuild(
     doc: "fitz.Document",
     output_path: str,
     image_quality: int,
-    max_dpi: Optional[int],
+    max_dpi: int | None,
     save_opts: dict,
-) -> Dict:
+) -> dict:
     """
     通过重建方式压缩 PDF：
     遍历每页，提取所有图片并用指定质量重新编码，然后替换。
@@ -588,7 +598,7 @@ def _compress_rebuild(
                 img_width = base_image.get("width", 0)
                 img_height = base_image.get("height", 0)
 
-                pil_img = Image.open(io.BytesIO(img_bytes))
+                pil_img: Image.Image = Image.open(io.BytesIO(img_bytes))
 
                 # 降低分辨率
                 if max_dpi and img_width > 0 and img_height > 0:
@@ -608,7 +618,7 @@ def _compress_rebuild(
                                     new_w = max(1, int(img_width * scale))
                                     new_h = max(1, int(img_height * scale))
                                     pil_img = pil_img.resize(
-                                        (new_w, new_h), Image.LANCZOS
+                                        (new_w, new_h), Image.Resampling.LANCZOS
                                     )
                     except Exception:
                         pass
@@ -621,7 +631,8 @@ def _compress_rebuild(
                     if pil_img.mode != "RGB":
                         pil_img = pil_img.convert("RGB")
                     pil_img.save(
-                        buf, format="JPEG",
+                        buf,
+                        format="JPEG",
                         quality=image_quality,
                         optimize=True,
                     )
@@ -655,8 +666,9 @@ def _compress_rebuild(
 #  4. concat — 多个 PDF 合并
 # ============================================================
 
+
 def pdf_concat(
-    pdf_paths: List[str],
+    pdf_paths: list[str],
     output_path: str,
     overwrite: bool = False,
 ) -> PDFResult:
@@ -689,7 +701,8 @@ def pdf_concat(
             src.close()
 
         os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
-        merged.save(output_path, deflate=True, garbage=4)
+        with atomic_output_path(output_path) as temporary:
+            merged.save(temporary, deflate=True, garbage=4)
         merged.close()
 
         result.output_size = os.path.getsize(output_path)
@@ -707,6 +720,7 @@ def pdf_concat(
 # ============================================================
 #  5. info — PDF 信息查看
 # ============================================================
+
 
 def pdf_get_info(pdf_path: str) -> PDFInfo:
     """
@@ -766,6 +780,6 @@ def pdf_get_info(pdf_path: str) -> PDFInfo:
         doc.close()
 
     except Exception as e:
-        info.title = f"错误: {e}"
+        info.error = str(e)
 
     return info

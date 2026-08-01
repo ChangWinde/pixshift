@@ -4,8 +4,9 @@ import multiprocessing
 import os
 import sys
 import time
+from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from typing import Dict, List, Optional, Tuple
+from typing import Any
 
 import click
 from rich import box
@@ -22,15 +23,18 @@ from rich.progress import (
 )
 
 from ..converter import (
-    BatchResult,
     SUPPORTED_INPUT_FORMATS,
+    SUPPORTED_OUTPUT_FORMATS,
+    BatchResult,
+    ConvertResult,
 )
 from ..ops import convert as convert_ops
 from ..presenters.cli_presenters import print_failures, show_dry_run_table
 from ..presenters.json_presenters import emit_json, emit_json_and_exit
+from .common import validate_affixes_or_exit, validate_tasks_or_exit
 
 
-def _convert_worker(args: Tuple[str, str, Dict]) -> object:
+def _convert_worker(args: tuple[str, str, dict[str, Any]]) -> ConvertResult:
     """Multiprocessing worker for conversion."""
     input_path, output_path, converter_kwargs = args
     return convert_ops.convert_one(input_path, output_path, converter_kwargs)
@@ -40,60 +44,120 @@ def register_convert_command(
     cli_group: click.Group,
     console: Console,
     mini_logo: str,
-    human_size,
+    human_size: Callable[[int], str],
 ) -> None:
     """Register convert command on root CLI group."""
 
     @cli_group.command("convert")
     @click.argument("inputs", nargs=-1, required=True, type=click.Path(exists=True))
-    @click.option("-t", "--to", "output_format", required=True,
-                  help="[必填] 目标格式. 可选: png|jpg|webp|tiff|bmp|gif|heic|avif|pdf|ico|tga")
-    @click.option("-f", "--from", "input_format", default=None,
-                  help="只转换指定输入格式, 如 -f heic. 默认: 自动识别所有支持格式")
-    @click.option("-o", "--output", "output_dir", default=None, type=click.Path(),
-                  help="输出目录路径. 默认: 与输入文件同目录")
-    @click.option("-q", "--quality", default="max",
-                  type=click.Choice(["max", "high", "medium", "low", "web"], case_sensitive=False),
-                  help="质量等级. 可选: max|high|medium|low|web. 默认: max(最高质量)")
-    @click.option("-r", "--recursive", is_flag=True, default=False,
-                  help="递归处理子目录中的所有图片. 默认: 仅当前目录")
-    @click.option("--resize", default=None, type=str,
-                  help="调整尺寸. 格式: WxH(如 1920x1080) 或 N%%(如 50%%). 默认: 不调整")
-    @click.option("--max-size", default=None, type=int,
-                  help="最大边长限制(px), 保持宽高比缩放, 如 2048. 默认: 不限制")
-    @click.option("--overwrite", is_flag=True, default=False,
-                  help="覆盖已存在的输出文件. 默认: 跳过已存在文件")
-    @click.option("--prefix", default="",
-                  help="输出文件名添加前缀, 如 --prefix thumb_. 默认: 无")
-    @click.option("--suffix", default="",
-                  help="输出文件名添加后缀, 如 --suffix _hd. 默认: 无")
-    @click.option("--strip-alpha", is_flag=True, default=False,
-                  help="移除透明通道, 用 --bg-color 指定的颜色填充. 默认: 保留透明通道")
-    @click.option("--no-exif", is_flag=True, default=False,
-                  help="不保留 EXIF 元数据(拍摄参数等). 默认: 保留")
-    @click.option("--no-icc", is_flag=True, default=False,
-                  help="不保留 ICC 颜色配置文件. 默认: 保留")
-    @click.option("--no-orient", is_flag=True, default=False,
-                  help="不根据 EXIF Orientation 自动旋转. 默认: 自动旋转")
-    @click.option("-j", "--jobs", default=0, type=int,
-                  help="并行进程数. 默认: 0(自动=CPU核心数)")
-    @click.option("--flatten", is_flag=True, default=False,
-                  help="所有输出文件放同一目录, 不保持子目录结构. 默认: 保持结构")
-    @click.option("--dry-run", is_flag=True, default=False,
-                  help="预览模式, 只列出将执行的操作, 不实际转换")
-    @click.option("--bg-color", default="255,255,255",
-                  help="透明通道替换背景色, 格式 R,G,B. 默认: 255,255,255(白色)")
-    @click.option("--json", "as_json", is_flag=True, default=False,
-                  help="以 JSON 输出结果（适合脚本调用）")
+    @click.option(
+        "-t",
+        "--to",
+        "output_format",
+        required=True,
+        type=click.Choice(sorted(SUPPORTED_OUTPUT_FORMATS), case_sensitive=False),
+        help="目标格式；选项按当前运行环境探测",
+    )
+    @click.option(
+        "-f",
+        "--from",
+        "input_format",
+        default=None,
+        help="只转换指定输入格式, 如 -f heic. 默认: 自动识别所有支持格式",
+    )
+    @click.option(
+        "-o",
+        "--output",
+        "output_dir",
+        default=None,
+        type=click.Path(),
+        help="输出目录路径. 默认: 与输入文件同目录",
+    )
+    @click.option(
+        "-q",
+        "--quality",
+        default="max",
+        type=click.Choice(["max", "high", "medium", "low", "web"], case_sensitive=False),
+        help="质量等级. 可选: max|high|medium|low|web. 默认: max(最高质量)",
+    )
+    @click.option(
+        "-r",
+        "--recursive",
+        is_flag=True,
+        default=False,
+        help="递归处理子目录中的所有图片. 默认: 仅当前目录",
+    )
+    @click.option(
+        "--resize",
+        default=None,
+        type=str,
+        help="调整尺寸. 格式: WxH(如 1920x1080) 或 N%%(如 50%%). 默认: 不调整",
+    )
+    @click.option(
+        "--max-size",
+        default=None,
+        type=click.IntRange(1),
+        help="最大边长限制(px), 保持宽高比缩放, 如 2048. 默认: 不限制",
+    )
+    @click.option(
+        "--overwrite",
+        is_flag=True,
+        default=False,
+        help="覆盖已存在的输出文件. 默认: 跳过已存在文件",
+    )
+    @click.option("--prefix", default="", help="输出文件名添加前缀, 如 --prefix thumb_. 默认: 无")
+    @click.option("--suffix", default="", help="输出文件名添加后缀, 如 --suffix _hd. 默认: 无")
+    @click.option(
+        "--strip-alpha",
+        is_flag=True,
+        default=False,
+        help="移除透明通道, 用 --bg-color 指定的颜色填充. 默认: 保留透明通道",
+    )
+    @click.option(
+        "--no-exif", is_flag=True, default=False, help="不保留 EXIF 元数据(拍摄参数等). 默认: 保留"
+    )
+    @click.option(
+        "--no-icc", is_flag=True, default=False, help="不保留 ICC 颜色配置文件. 默认: 保留"
+    )
+    @click.option(
+        "--no-orient",
+        is_flag=True,
+        default=False,
+        help="不根据 EXIF Orientation 自动旋转. 默认: 自动旋转",
+    )
+    @click.option(
+        "-j",
+        "--jobs",
+        default=0,
+        type=click.IntRange(0),
+        help="并行进程数. 默认: 0(自动, 最多 8 个进程)",
+    )
+    @click.option(
+        "--flatten",
+        is_flag=True,
+        default=False,
+        help="所有输出文件放同一目录, 不保持子目录结构. 默认: 保持结构",
+    )
+    @click.option(
+        "--dry-run", is_flag=True, default=False, help="预览模式, 只列出将执行的操作, 不实际转换"
+    )
+    @click.option(
+        "--bg-color",
+        default="255,255,255",
+        help="透明通道替换背景色, 格式 R,G,B. 默认: 255,255,255(白色)",
+    )
+    @click.option(
+        "--json", "as_json", is_flag=True, default=False, help="以 JSON 输出结果（适合脚本调用）"
+    )
     def convert(
         inputs: tuple,
         output_format: str,
-        input_format: Optional[str],
-        output_dir: Optional[str],
+        input_format: str | None,
+        output_dir: str | None,
         quality: str,
         recursive: bool,
-        resize: Optional[str],
-        max_size: Optional[int],
+        resize: str | None,
+        max_size: int | None,
         overwrite: bool,
         prefix: str,
         suffix: str,
@@ -108,6 +172,11 @@ def register_convert_command(
         as_json: bool,
     ) -> None:
         """🔄 转换图片格式 (支持单文件/目录/批量, 自动多核并行)"""
+        validate_affixes_or_exit(
+            command="convert",
+            as_json=as_json,
+            values=(("prefix", prefix), ("suffix", suffix)),
+        )
         if not as_json:
             console.print(f"\n{mini_logo} [bold]图片格式转换[/bold]\n")
 
@@ -115,17 +184,21 @@ def register_convert_command(
             resize_tuple, resize_percent = _parse_resize(resize)
         except ValueError:
             if as_json:
-                emit_json_and_exit({"command": "convert", "ok": False, "error": "invalid_resize"}, 1)
+                emit_json_and_exit(
+                    {"command": "convert", "ok": False, "error": "invalid_resize"}, 1
+                )
             console.print("[red]❌ resize 格式错误, 请使用 WxH 或 百分比%[/red]")
             sys.exit(1)
 
         try:
             bg_rgb = tuple(int(x.strip()) for x in bg_color.split(","))
-            if len(bg_rgb) != 3:
+            if len(bg_rgb) != 3 or any(not 0 <= channel <= 255 for channel in bg_rgb):
                 raise ValueError("bg-color requires 3 channels")
         except Exception:
             if as_json:
-                emit_json_and_exit({"command": "convert", "ok": False, "error": "invalid_bg_color"}, 1)
+                emit_json_and_exit(
+                    {"command": "convert", "ok": False, "error": "invalid_bg_color"}, 1
+                )
             console.print("[red]❌ bg-color 格式错误, 请使用 R,G,B[/red]")
             sys.exit(1)
 
@@ -137,12 +210,14 @@ def register_convert_command(
 
         if not files:
             if as_json:
-                emit_json({
-                    "command": "convert",
-                    "ok": True,
-                    "total": 0,
-                    "message": "no_files",
-                })
+                emit_json(
+                    {
+                        "command": "convert",
+                        "ok": True,
+                        "total": 0,
+                        "message": "no_files",
+                    }
+                )
             else:
                 console.print("[yellow]⚠️  未找到可转换的图片文件[/yellow]")
                 if input_format:
@@ -159,18 +234,21 @@ def register_convert_command(
             flatten=flatten,
             source_paths=list(inputs),
         )
+        validate_tasks_or_exit(command="convert", as_json=as_json, tasks=tasks)
 
         if dry_run:
             if as_json:
-                emit_json({
-                    "command": "convert",
-                    "mode": "dry_run",
-                    "ok": True,
-                    "total": len(tasks),
-                    "output_format": output_format.lower(),
-                    "quality": quality,
-                    "preview": [{"input": inp, "output": out} for inp, out in tasks[:50]],
-                })
+                emit_json(
+                    {
+                        "command": "convert",
+                        "mode": "dry_run",
+                        "ok": True,
+                        "total": len(tasks),
+                        "output_format": output_format.lower(),
+                        "quality": quality,
+                        "preview": [{"input": inp, "output": out} for inp, out in tasks[:50]],
+                    }
+                )
             else:
                 show_dry_run_table(console, tasks, output_format.upper(), quality)
             return
@@ -188,7 +266,7 @@ def register_convert_command(
                 console.print(f"  📐 调整大小: [bold]{resize}[/bold]")
             console.print()
 
-        converter_kwargs: Dict = {
+        converter_kwargs: dict = {
             "quality": quality,
             "resize": resize_tuple,
             "resize_percent": resize_percent,
@@ -202,7 +280,9 @@ def register_convert_command(
         }
 
         if jobs <= 0:
-            jobs = min(multiprocessing.cpu_count(), len(tasks))
+            # Image decoders are memory-heavy; an unbounded CPU-count default can
+            # make large batches slower through memory pressure and process setup.
+            jobs = min(multiprocessing.cpu_count(), len(tasks), 8)
         jobs = min(jobs, len(tasks))
 
         batch_result = BatchResult(total=len(tasks))
@@ -220,10 +300,7 @@ def register_convert_command(
                         batch_result.failed += 1
             else:
                 with ProcessPoolExecutor(max_workers=jobs) as executor:
-                    futures = {
-                        executor.submit(_convert_worker, arg): arg
-                        for arg in worker_args
-                    }
+                    futures = {executor.submit(_convert_worker, arg): arg for arg in worker_args}
                     for future in as_completed(futures):
                         result = future.result()
                         batch_result.results.append(result)
@@ -257,8 +334,7 @@ def register_convert_command(
                 else:
                     with ProcessPoolExecutor(max_workers=jobs) as executor:
                         futures = {
-                            executor.submit(_convert_worker, arg): arg
-                            for arg in worker_args
+                            executor.submit(_convert_worker, arg): arg for arg in worker_args
                         }
                         for future in as_completed(futures):
                             result = future.result()
@@ -271,7 +347,9 @@ def register_convert_command(
 
         batch_result.total_duration = time.time() - start_time
         batch_result.total_input_size = sum(r.input_size for r in batch_result.results)
-        batch_result.total_output_size = sum(r.output_size for r in batch_result.results if r.success)
+        batch_result.total_output_size = sum(
+            r.output_size for r in batch_result.results if r.success
+        )
         if as_json:
             errors = [
                 {"input": r.input_path, "output": r.output_path, "error": r.error}
@@ -296,21 +374,36 @@ def register_convert_command(
             emit_json(payload)
         else:
             _show_convert_summary(console, batch_result, jobs, human_size)
+            if batch_result.failed:
+                raise click.exceptions.Exit(1)
 
 
-def _parse_resize(resize: Optional[str]) -> Tuple[Optional[Tuple[int, int]], Optional[float]]:
+def _parse_resize(resize: str | None) -> tuple[tuple[int, int] | None, float | None]:
     """Parse resize expression into tuple or percent."""
     if not resize:
         return None, None
     if "%" in resize:
-        return None, float(resize.replace("%", ""))
+        percent = float(resize.replace("%", ""))
+        if percent <= 0:
+            raise ValueError("resize percent must be positive")
+        return None, percent
     if "x" in resize.lower():
         parts = resize.lower().split("x")
-        return (int(parts[0]), int(parts[1])), None
+        if len(parts) != 2:
+            raise ValueError("resize requires width and height")
+        dimensions = (int(parts[0]), int(parts[1]))
+        if dimensions[0] <= 0 or dimensions[1] <= 0:
+            raise ValueError("resize dimensions must be positive")
+        return dimensions, None
     raise ValueError("invalid resize expression")
 
 
-def _show_convert_summary(console: Console, batch: BatchResult, jobs: int, human_size) -> None:
+def _show_convert_summary(
+    console: Console,
+    batch: BatchResult,
+    jobs: int,
+    human_size: Callable[[int], str],
+) -> None:
     """Render convert command summary panel."""
     console.print()
     failed = [r for r in batch.results if not r.success]
@@ -345,11 +438,12 @@ def _show_convert_summary(console: Console, batch: BatchResult, jobs: int, human
         f"  ⏱️  耗时: [bold]{batch.total_duration:.2f}s[/bold]"
     )
 
-    console.print(Panel(
-        summary,
-        title="[bold]📊 转换完成[/bold]",
-        border_style="green" if batch.failed == 0 else "yellow",
-        box=box.ROUNDED,
-    ))
+    console.print(
+        Panel(
+            summary,
+            title="[bold]📊 转换完成[/bold]",
+            border_style="green" if batch.failed == 0 else "yellow",
+            box=box.ROUNDED,
+        )
+    )
     console.print()
-

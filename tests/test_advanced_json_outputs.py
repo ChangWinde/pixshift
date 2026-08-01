@@ -86,4 +86,3 @@ def test_watch_json_once_output(tmp_path):
     assert payload["command"] == "watch"
     assert payload["mode"] == "once"
     assert payload["ok"] is True
-

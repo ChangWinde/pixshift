@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from pixshift.commands.workflow_commands import _resolve_strip_mode
-from pixshift.dedup_engine import DuplicateGroup, delete_duplicates
+from pixshift.dedup_engine import DeleteCandidate, delete_duplicates
 
 
 def test_resolve_strip_mode_privacy():
@@ -19,21 +19,21 @@ def test_resolve_strip_mode_all():
 def test_delete_duplicates_dry_run_and_real_delete(tmp_path):
     keep = tmp_path / "keep.jpg"
     dup = tmp_path / "dup.jpg"
-    keep.write_bytes(b"keep")
-    dup.write_bytes(b"dup")
+    keep.write_bytes(b"same")
+    dup.write_bytes(b"same")
 
-    group = DuplicateGroup(
-        files=[str(keep), str(dup)],
-        sizes=[keep.stat().st_size, dup.stat().st_size],
+    candidate = DeleteCandidate(
         keep=str(keep),
-        duplicates=[str(dup)],
+        duplicate=str(dup),
+        sha256="0967115f2813a3541eaef77de9d9d5773f1c0c04314b0bbfe4ff3b3b1c55b5d5",
+        size=4,
     )
 
-    dry_result = delete_duplicates([group], dry_run=True)
+    dry_result = delete_duplicates([candidate], dry_run=True)
     assert len(dry_result["deleted"]) == 1
     assert Path(dup).exists()
 
-    real_result = delete_duplicates([group], dry_run=False)
+    real_result = delete_duplicates([candidate], dry_run=False)
     assert len(real_result["deleted"]) == 1
     assert not Path(dup).exists()
 
@@ -50,4 +50,3 @@ def test_dedup_wrapper_delete_supports_dry_run(monkeypatch):
     monkeypatch.setattr("pixshift.ops.dedup.delete_duplicates", fake_delete_duplicates)
     dedup_ops.delete(["g"], dry_run=True)
     assert called["dry_run"] is True
-

@@ -1,17 +1,27 @@
-"""Shared file collection and output path planning helpers."""
+"""Shared file collection and safe output planning helpers."""
 
+import os
+import shutil
+import uuid
+from collections.abc import Iterable, Iterator, Sequence
+from contextlib import contextmanager, suppress
 from pathlib import Path
-from typing import Iterable, List, Optional, Sequence, Set
+
+from .errors import (
+    InvalidFilenameComponentError,
+    OutputBoundaryError,
+    OutputCollisionError,
+)
 
 
 def collect_supported_files(
     input_paths: Sequence[str],
-    supported_exts: Set[str],
-    input_format: Optional[str] = None,
+    supported_exts: set[str],
+    input_format: str | None = None,
     recursive: bool = False,
-) -> List[str]:
+) -> list[str]:
     """Collect unique files that match a supported extension."""
-    files: List[str] = []
+    files: list[str] = []
     normalized_filter = _normalize_ext(input_format) if input_format else None
 
     for path_str in input_paths:
@@ -45,21 +55,21 @@ def collect_supported_files(
 def plan_output_path(
     input_path: str,
     output_name: str,
-    output_dir: Optional[str] = None,
+    output_dir: str | None = None,
     flatten: bool = False,
-    source_paths: Optional[Iterable[str]] = None,
+    source_paths: Iterable[str] | None = None,
 ) -> str:
     """Plan destination path with optional structure preservation."""
     inp = Path(input_path).resolve()
     if not output_dir:
         return str(inp.parent / output_name)
 
-    target_base = Path(output_dir)
+    target_base = Path(output_dir).resolve()
     if flatten:
-        return str(target_base / output_name)
+        return safe_output_path(target_base, output_name)
 
     rel_parent = _resolve_relative_parent(inp, source_paths or [])
-    return str(target_base / rel_parent / output_name)
+    return safe_output_path(target_base, rel_parent / output_name)
 
 
 def conversion_output_name(
@@ -69,8 +79,12 @@ def conversion_output_name(
     suffix: str = "",
 ) -> str:
     """Build output filename for format conversion."""
+    validate_filename_affix(prefix, "prefix")
+    validate_filename_affix(suffix, "suffix")
+    normalized_format = output_format.lower().lstrip(".")
+    validate_filename_component(normalized_format, "output format")
     inp = Path(input_path)
-    out_ext = f".{output_format.lower().lstrip('.')}"
+    out_ext = f".{normalized_format}"
     return f"{prefix}{inp.stem}{suffix}{out_ext}"
 
 
@@ -83,7 +97,104 @@ def derivative_output_name(
     return f"{inp.stem}{suffix}{inp.suffix.lower()}"
 
 
-def _normalize_ext(ext_or_format: Optional[str]) -> str:
+def validate_filename_affix(value: str, label: str) -> None:
+    """Validate a user-controlled filename prefix or suffix.
+
+    Args:
+        value: Prefix or suffix supplied by a caller.
+        label: Human-readable field name for errors.
+
+    Raises:
+        InvalidFilenameComponentError: If path syntax is present.
+    """
+    if not value:
+        return
+    validate_filename_component(value, label)
+
+
+def validate_filename_component(value: str, label: str = "filename") -> None:
+    """Reject path syntax in a value that must be one filename component."""
+    if (
+        not value
+        or "\x00" in value
+        or "/" in value
+        or "\\" in value
+        or value in {".", ".."}
+        or Path(value).is_absolute()
+        or Path(value).name != value
+    ):
+        raise InvalidFilenameComponentError(f"{label} must be a plain filename component")
+
+
+def safe_output_path(output_root: Path | str, relative_path: Path | str) -> str:
+    """Resolve an output below an approved root and reject traversal.
+
+    Args:
+        output_root: Directory the caller explicitly selected.
+        relative_path: Relative destination within that directory.
+
+    Returns:
+        Absolute validated output path.
+
+    Raises:
+        InvalidFilenameComponentError: If the final filename is invalid.
+        OutputBoundaryError: If the destination escapes ``output_root``.
+    """
+    root = Path(output_root).resolve()
+    relative = Path(relative_path)
+    if relative.is_absolute():
+        raise OutputBoundaryError("output path must be relative to its output root")
+    validate_filename_component(relative.name)
+    candidate = (root / relative).resolve(strict=False)
+    if not _is_relative_to(candidate, root):
+        raise OutputBoundaryError("planned output escapes its output root")
+    return str(candidate)
+
+
+def validate_unique_output_paths(tasks: Sequence[tuple[str, str]]) -> None:
+    """Fail a batch when two sources resolve to the same destination."""
+    destinations: dict[str, str] = {}
+    for source, output in tasks:
+        key = os.path.normcase(str(Path(output).resolve(strict=False)))
+        previous = destinations.get(key)
+        if previous is not None and Path(previous).resolve() != Path(source).resolve():
+            raise OutputCollisionError(
+                f"multiple inputs map to the same output: {previous}, {source} -> {output}"
+            )
+        destinations[key] = source
+
+
+@contextmanager
+def atomic_output_path(output_path: str) -> Iterator[str]:
+    """Yield a same-directory temporary path and atomically replace on success."""
+    target = Path(output_path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.parent / (f".{target.stem}.{uuid.uuid4().hex}.tmp{target.suffix}")
+    try:
+        yield str(temporary)
+        if not temporary.is_file():
+            raise OSError("encoder did not create its planned output")
+        with temporary.open("rb") as stream:
+            os.fsync(stream.fileno())
+        os.replace(temporary, target)
+    finally:
+        with suppress(OSError):
+            temporary.unlink(missing_ok=True)
+
+
+def atomic_write_bytes(output_path: str, data: bytes) -> None:
+    """Write bytes through the shared atomic replacement boundary."""
+    with atomic_output_path(output_path) as temporary:
+        Path(temporary).write_bytes(data)
+
+
+def atomic_copy_file(input_path: str, output_path: str) -> None:
+    """Copy a file through the shared atomic replacement boundary."""
+    with atomic_output_path(output_path) as temporary:
+        shutil.copyfile(input_path, temporary)
+
+
+def _normalize_ext(ext_or_format: str | None) -> str:
     """Normalize user extension input to '.ext' format."""
     if not ext_or_format:
         return ""
@@ -96,11 +207,12 @@ def _resolve_relative_parent(input_file: Path, source_paths: Iterable[str]) -> P
     if not dir_roots:
         return Path()
 
-    matched_root: Optional[Path] = None
+    matched_root: Path | None = None
     for root in dir_roots:
-        if _is_relative_to(input_file, root):
-            if matched_root is None or len(str(root)) > len(str(matched_root)):
-                matched_root = root
+        if _is_relative_to(input_file, root) and (
+            matched_root is None or len(str(root)) > len(str(matched_root))
+        ):
+            matched_root = root
 
     if matched_root is None:
         return Path()
@@ -108,9 +220,9 @@ def _resolve_relative_parent(input_file: Path, source_paths: Iterable[str]) -> P
     return input_file.relative_to(matched_root).parent
 
 
-def _resolved_dirs(source_paths: Iterable[str]) -> List[Path]:
+def _resolved_dirs(source_paths: Iterable[str]) -> list[Path]:
     """Resolve and return directory inputs only."""
-    dirs: List[Path] = []
+    dirs: list[Path] = []
     for source in source_paths:
         path = Path(source)
         if path.is_dir():
@@ -125,4 +237,3 @@ def _is_relative_to(path: Path, root: Path) -> bool:
         return True
     except ValueError:
         return False
-

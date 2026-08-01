@@ -1,22 +1,20 @@
 """Operation wrappers for montage workflows."""
 
-from typing import List, Optional
-
-from ..montage_engine import collect_montage_files, create_montage
+from ..montage_engine import MontageResult, collect_montage_files, create_montage
 
 
-def collect_files(input_paths: List[str], recursive: bool) -> List[str]:
+def collect_files(input_paths: list[str], recursive: bool) -> list[str]:
     """Collect candidate files for montage input."""
     return collect_montage_files(input_paths, recursive)
 
 
 def create(
-    input_paths: List[str],
+    input_paths: list[str],
     output_path: str,
     cols: int,
     gap: int,
-    cell_width: Optional[int],
-    cell_height: Optional[int],
+    cell_width: int | None,
+    cell_height: int | None,
     background: str,
     border: int,
     border_color: str,
@@ -24,7 +22,7 @@ def create(
     label_size: int,
     auto_size: bool,
     overwrite: bool,
-):
+) -> MontageResult:
     """Create one montage image from input files."""
     return create_montage(
         input_paths=input_paths,
@@ -41,4 +39,3 @@ def create(
         auto_size=auto_size,
         overwrite=overwrite,
     )
-

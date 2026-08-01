@@ -9,43 +9,58 @@ PixShift Dedup Engine — 图片哈希去重
   - 相似度阈值可调
 """
 
+import hashlib
 import os
+import stat
 import time
-from pathlib import Path
-from typing import Optional, List, Dict, Tuple, Set
-from dataclasses import dataclass, field
 from collections import defaultdict
+from dataclasses import dataclass, field
+from pathlib import Path
 
 from PIL import Image
 
 from .converter import SUPPORTED_INPUT_FORMATS, _human_size
 
-
 # ============================================================
 #  数据结构
 # ============================================================
 
+
 @dataclass
 class DuplicateGroup:
     """一组重复/相似图片"""
+
     hash_value: str = ""
-    files: List[str] = field(default_factory=list)
-    sizes: List[int] = field(default_factory=list)
+    files: list[str] = field(default_factory=list)
+    sizes: list[int] = field(default_factory=list)
     similarity: float = 1.0
     keep: str = ""  # 建议保留的文件
-    duplicates: List[str] = field(default_factory=list)  # 建议删除的文件
+    duplicates: list[str] = field(default_factory=list)  # 建议删除的文件
+
+
+@dataclass(frozen=True)
+class DeleteCandidate:
+    """A byte-identical duplicate that may be deleted after revalidation."""
+
+    keep: str
+    duplicate: str
+    sha256: str
+    size: int
 
 
 @dataclass
 class DedupResult:
     """去重分析结果"""
+
     total_files: int = 0
     total_size: int = 0
     duplicate_groups: int = 0
     duplicate_files: int = 0
+    deletable_files: int = 0
     recoverable_size: int = 0
     recoverable_size_human: str = ""
-    groups: List[DuplicateGroup] = field(default_factory=list)
+    groups: list[DuplicateGroup] = field(default_factory=list)
+    delete_candidates: list[DeleteCandidate] = field(default_factory=list)
     duration: float = 0.0
     error: str = ""
 
@@ -54,6 +69,7 @@ class DedupResult:
 #  感知哈希算法
 # ============================================================
 
+
 def _average_hash(img: Image.Image, hash_size: int = 8) -> int:
     """
     平均哈希 (aHash)
@@ -61,9 +77,9 @@ def _average_hash(img: Image.Image, hash_size: int = 8) -> int:
     将图片缩小到 hash_size x hash_size，转灰度，
     每个像素与均值比较，大于均值为 1，否则为 0。
     """
-    img = img.convert("L").resize((hash_size, hash_size), Image.LANCZOS)
+    img = img.convert("L").resize((hash_size, hash_size), Image.Resampling.LANCZOS)
     # Use tobytes() to avoid Pillow getdata() deprecation warnings.
-    pixels = list(img.tobytes())
+    pixels = img.tobytes()
     avg = sum(pixels) / len(pixels)
     bits = 0
     for pixel in pixels:
@@ -78,8 +94,8 @@ def _difference_hash(img: Image.Image, hash_size: int = 8) -> int:
     将图片缩小到 (hash_size+1) x hash_size，转灰度，
     比较相邻像素的亮度差异。
     """
-    img = img.convert("L").resize((hash_size + 1, hash_size), Image.LANCZOS)
-    pixels = list(img.tobytes())
+    img = img.convert("L").resize((hash_size + 1, hash_size), Image.Resampling.LANCZOS)
+    pixels = img.tobytes()
     bits = 0
     for row in range(hash_size):
         for col in range(hash_size):
@@ -96,8 +112,8 @@ def _perceptual_hash(img: Image.Image, hash_size: int = 8) -> int:
     将图片缩小到 32x32，转灰度，计算均值哈希的增强版。
     """
     # 缩小到较大尺寸以获取更多信息
-    img = img.convert("L").resize((32, 32), Image.LANCZOS)
-    pixels = list(img.tobytes())
+    img = img.convert("L").resize((32, 32), Image.Resampling.LANCZOS)
+    pixels = img.tobytes()
 
     # 计算 hash_size x hash_size 区域的均值
     block_size = 32 // hash_size
@@ -123,12 +139,7 @@ def _perceptual_hash(img: Image.Image, hash_size: int = 8) -> int:
 
 def _hamming_distance(hash1: int, hash2: int) -> int:
     """计算两个哈希值的汉明距离"""
-    xor = hash1 ^ hash2
-    distance = 0
-    while xor:
-        distance += xor & 1
-        xor >>= 1
-    return distance
+    return (hash1 ^ hash2).bit_count()
 
 
 def _hash_to_hex(hash_val: int, hash_size: int = 8) -> str:
@@ -141,8 +152,9 @@ def _hash_to_hex(hash_val: int, hash_size: int = 8) -> str:
 #  核心去重函数
 # ============================================================
 
+
 def find_duplicates(
-    input_paths: List[str],
+    input_paths: list[str],
     recursive: bool = False,
     hash_method: str = "phash",
     threshold: int = 5,
@@ -167,7 +179,7 @@ def find_duplicates(
         result.total_files = len(files)
 
         if not files:
-            result.error = "未找到图片文件"
+            result.duration = time.time() - start_time
             return result
 
         # 选择哈希函数
@@ -178,12 +190,12 @@ def find_duplicates(
         }.get(hash_method, _perceptual_hash)
 
         # 计算所有图片的哈希
-        file_hashes: List[Tuple[str, int, int]] = []  # (path, hash, size)
+        file_hashes: list[tuple[str, int, int]] = []  # (path, hash, size)
 
         for filepath in files:
             try:
-                img = Image.open(filepath)
-                h = hash_func(img, hash_size)
+                with Image.open(filepath) as img:
+                    h = hash_func(img, hash_size)
                 size = os.path.getsize(filepath)
                 file_hashes.append((filepath, h, size))
                 result.total_size += size
@@ -192,6 +204,11 @@ def find_duplicates(
 
         # 聚类：找出相似的图片组
         groups = _cluster_by_hash(file_hashes, threshold)
+
+        # 删除候选必须是字节级完全一致的文件，与感知相似分组解耦。
+        result.delete_candidates = _find_exact_duplicates(file_hashes)
+        result.deletable_files = len(result.delete_candidates)
+        result.recoverable_size = sum(candidate.size for candidate in result.delete_candidates)
 
         # 过滤：只保留有重复的组
         for group_files in groups:
@@ -208,10 +225,6 @@ def find_duplicates(
             group.keep = group.files[max_idx]
             group.duplicates = [f for i, f in enumerate(group.files) if i != max_idx]
 
-            # 可回收空间
-            recoverable = sum(s for i, s in enumerate(group.sizes) if i != max_idx)
-            result.recoverable_size += recoverable
-
             result.groups.append(group)
             result.duplicate_files += len(group.duplicates)
 
@@ -226,71 +239,170 @@ def find_duplicates(
 
 
 def _cluster_by_hash(
-    file_hashes: List[Tuple[str, int, int]],
+    file_hashes: list[tuple[str, int, int]],
     threshold: int,
-) -> List[List[Tuple[str, int, int]]]:
+) -> list[list[tuple[str, int, int]]]:
     """将相似哈希的文件聚类"""
     if not file_hashes:
         return []
 
-    used = set()
-    groups = []
+    if threshold < 0:
+        raise ValueError("threshold must be non-negative")
 
-    for i, (path_i, hash_i, size_i) in enumerate(file_hashes):
-        if i in used:
+    if threshold == 0:
+        exact_hash_groups: dict[int, list[tuple[str, int, int]]] = defaultdict(list)
+        for item in file_hashes:
+            exact_hash_groups[item[1]].append(item)
+        return list(exact_hash_groups.values())
+
+    parents = list(range(len(file_hashes)))
+
+    def find(index: int) -> int:
+        while parents[index] != index:
+            parents[index] = parents[parents[index]]
+            index = parents[index]
+        return index
+
+    def union(left: int, right: int) -> None:
+        left_root = find(left)
+        right_root = find(right)
+        if left_root != right_root:
+            parents[right_root] = left_root
+
+    bit_count = max(64, max(item[1].bit_length() for item in file_hashes))
+    if threshold >= bit_count:
+        return [file_hashes]
+
+    # Split the hash into threshold + 1 disjoint segments. If two hashes differ
+    # by at most threshold bits, at least one segment must match exactly. This
+    # gives a complete candidate set without scanning every prior hash.
+    segment_count = threshold + 1
+    base_width, wider_segments = divmod(bit_count, segment_count)
+    segments: list[tuple[int, int]] = []
+    shift = 0
+    for segment_index in range(segment_count):
+        width = base_width + (1 if segment_index < wider_segments else 0)
+        segments.append((shift, (1 << width) - 1))
+        shift += width
+
+    indexes: list[dict[int, list[int]]] = [defaultdict(list) for _ in segments]
+    for index, (_, image_hash, _) in enumerate(file_hashes):
+        candidates: set[int] = set()
+        values: list[int] = []
+        for segment_index, (segment_shift, mask) in enumerate(segments):
+            value = (image_hash >> segment_shift) & mask
+            values.append(value)
+            candidates.update(indexes[segment_index].get(value, []))
+        for match in candidates:
+            if _hamming_distance(image_hash, file_hashes[match][1]) <= threshold:
+                union(index, match)
+        for segment_index, value in enumerate(values):
+            indexes[segment_index][value].append(index)
+
+    components: dict[int, list[tuple[str, int, int]]] = defaultdict(list)
+    for index, item in enumerate(file_hashes):
+        components[find(index)].append(item)
+    return list(components.values())
+
+
+def _find_exact_duplicates(
+    file_hashes: list[tuple[str, int, int]],
+) -> list[DeleteCandidate]:
+    """Build safe delete candidates by hashing only equal-size files."""
+    by_size: dict[int, list[str]] = defaultdict(list)
+    for path, _, size in file_hashes:
+        by_size[size].append(path)
+
+    candidates: list[DeleteCandidate] = []
+    for size, paths in by_size.items():
+        if len(paths) < 2:
             continue
-
-        group = [(path_i, hash_i, size_i)]
-        used.add(i)
-
-        for j, (path_j, hash_j, size_j) in enumerate(file_hashes):
-            if j in used:
+        by_digest: dict[str, list[str]] = defaultdict(list)
+        for path in paths:
+            by_digest[_sha256_file(path)].append(path)
+        for digest, identical_paths in by_digest.items():
+            if len(identical_paths) < 2:
                 continue
-            if _hamming_distance(hash_i, hash_j) <= threshold:
-                group.append((path_j, hash_j, size_j))
-                used.add(j)
+            ordered = sorted(identical_paths)
+            keep = ordered[0]
+            candidates.extend(
+                DeleteCandidate(
+                    keep=keep,
+                    duplicate=duplicate,
+                    sha256=digest,
+                    size=size,
+                )
+                for duplicate in ordered[1:]
+            )
+    return candidates
 
-        groups.append(group)
 
-    return groups
+def _sha256_file(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def delete_duplicates(
-    groups: List[DuplicateGroup],
+    candidates: list[DeleteCandidate],
     dry_run: bool = True,
-) -> Dict[str, List[str]]:
+) -> dict[str, list[str]]:
     """
     删除重复文件
 
     Args:
-        groups: 重复组列表
+        candidates: 分析阶段生成的字节级相同候选
         dry_run: 仅预览不删除
 
     Returns:
-        {"deleted": [...], "kept": [...], "errors": [...]}
+        {"deleted": [...], "kept": [...], "skipped": [...], "errors": [...]}
     """
-    result = {"deleted": [], "kept": [], "errors": []}
+    result: dict[str, list[str]] = {
+        "deleted": [],
+        "kept": [],
+        "skipped": [],
+        "errors": [],
+    }
+    kept = set()
 
-    for group in groups:
-        result["kept"].append(group.keep)
+    for candidate in candidates:
+        kept.add(candidate.keep)
+        if dry_run:
+            result["deleted"].append(f"[DRY-RUN] {candidate.duplicate}")
+            continue
+        try:
+            if not _candidate_is_still_safe(candidate):
+                result["skipped"].append(
+                    f"{candidate.duplicate}: file changed or is no longer byte-identical"
+                )
+                continue
+            os.remove(candidate.duplicate)
+            result["deleted"].append(candidate.duplicate)
+        except Exception as e:
+            result["errors"].append(f"{candidate.duplicate}: {e}")
 
-        for dup_path in group.duplicates:
-            if dry_run:
-                result["deleted"].append(f"[DRY-RUN] {dup_path}")
-            else:
-                try:
-                    os.remove(dup_path)
-                    result["deleted"].append(dup_path)
-                except Exception as e:
-                    result["errors"].append(f"{dup_path}: {e}")
+    result["kept"] = sorted(kept)
 
     return result
 
 
+def _candidate_is_still_safe(candidate: DeleteCandidate) -> bool:
+    """Revalidate regular files, size, and digest immediately before deletion."""
+    for path in (candidate.keep, candidate.duplicate):
+        file_stat = os.stat(path, follow_symlinks=False)
+        if not stat.S_ISREG(file_stat.st_mode) or file_stat.st_size != candidate.size:
+            return False
+        if _sha256_file(path) != candidate.sha256:
+            return False
+    return True
+
+
 def _collect_image_files(
-    input_paths: List[str],
+    input_paths: list[str],
     recursive: bool,
-) -> List[str]:
+) -> list[str]:
     """收集所有图片文件"""
     files = []
     for path_str in input_paths:
