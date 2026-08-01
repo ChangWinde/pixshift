@@ -50,7 +50,9 @@ def test_strip_analyze_and_strip_delegate(monkeypatch):
 
 def test_dedup_wrappers_delegate(monkeypatch):
     monkeypatch.setattr("pixshift.ops.dedup.find_duplicates", lambda **_: "analysis")
-    monkeypatch.setattr("pixshift.ops.dedup.delete_duplicates", lambda groups, dry_run: {"deleted": groups})
+    monkeypatch.setattr(
+        "pixshift.ops.dedup.delete_duplicates", lambda groups, dry_run: {"deleted": groups}
+    )
     assert dedup_ops.analyze(["a"], False, "phash", 5) == "analysis"
     assert dedup_ops.delete(["g"]) == {"deleted": ["g"]}
 
@@ -64,4 +66,3 @@ def test_pdf_wrappers_delegate(monkeypatch):
     assert pdf_ops.collect_images(["/tmp"], False) == ["i1"]
     assert pdf_ops.collect_pdfs(["/tmp"], True) == ["p1"]
     assert pdf_ops.info("doc.pdf") == {"path": "doc.pdf"}
-

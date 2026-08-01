@@ -10,22 +10,25 @@ PixShift Crop Engine — 批量裁剪引擎
 
 import os
 import time
-from pathlib import Path
-from typing import Optional, Tuple, List
 from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
 
 from PIL import Image, ImageChops
 
-from .converter import SUPPORTED_INPUT_FORMATS, _human_size
-
+from .converter import SUPPORTED_INPUT_FORMATS
+from .core.files import atomic_output_path
+from .core.metadata import normalize_orientation, normalized_exif_bytes
 
 # ============================================================
 #  数据结构
 # ============================================================
 
+
 @dataclass
 class CropResult:
     """单个文件的裁剪结果"""
+
     input_path: str = ""
     output_path: str = ""
     success: bool = False
@@ -33,28 +36,30 @@ class CropResult:
     output_size: int = 0
     duration: float = 0.0
     error: str = ""
-    original_size: Tuple[int, int] = (0, 0)
-    cropped_size: Tuple[int, int] = (0, 0)
-    crop_box: Tuple[int, int, int, int] = (0, 0, 0, 0)
+    original_size: tuple[int, int] = (0, 0)
+    cropped_size: tuple[int, int] = (0, 0)
+    crop_box: tuple[int, int, int, int] = (0, 0, 0, 0)
 
 
 @dataclass
 class CropBatchResult:
     """批量裁剪汇总"""
+
     total: int = 0
     success: int = 0
     failed: int = 0
     total_input_size: int = 0
     total_output_size: int = 0
     total_duration: float = 0.0
-    results: List[CropResult] = field(default_factory=list)
+    results: list[CropResult] = field(default_factory=list)
 
 
 # ============================================================
 #  裁剪模式解析
 # ============================================================
 
-def parse_crop_box(crop_str: str) -> Tuple[int, int, int, int]:
+
+def parse_crop_box(crop_str: str) -> tuple[int, int, int, int]:
     """
     解析裁剪区域字符串
 
@@ -64,10 +69,10 @@ def parse_crop_box(crop_str: str) -> Tuple[int, int, int, int]:
     parts = [int(x.strip()) for x in crop_str.split(",")]
     if len(parts) != 4:
         raise ValueError(f"裁剪区域需要 4 个值 (left,top,right,bottom)，得到 {len(parts)} 个")
-    return tuple(parts)
+    return parts[0], parts[1], parts[2], parts[3]
 
 
-def parse_aspect_ratio(aspect_str: str) -> Tuple[int, int]:
+def parse_aspect_ratio(aspect_str: str) -> tuple[int, int]:
     """
     解析宽高比字符串
 
@@ -76,18 +81,22 @@ def parse_aspect_ratio(aspect_str: str) -> Tuple[int, int]:
     parts = aspect_str.strip().split(":")
     if len(parts) != 2:
         raise ValueError(f"宽高比格式错误: {aspect_str}，应为 W:H（如 16:9）")
-    return (int(parts[0]), int(parts[1]))
+    ratio = (int(parts[0]), int(parts[1]))
+    if ratio[0] <= 0 or ratio[1] <= 0:
+        raise ValueError("宽高比必须为正数")
+    return ratio
 
 
 # ============================================================
 #  核心裁剪函数
 # ============================================================
 
+
 def crop_single(
     input_path: str,
     output_path: str,
-    crop_box: Optional[str] = None,
-    aspect: Optional[str] = None,
+    crop_box: str | None = None,
+    aspect: str | None = None,
     trim: bool = False,
     trim_fuzz: int = 10,
     gravity: str = "center",
@@ -122,41 +131,36 @@ def crop_single(
 
         os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
 
-        img = Image.open(input_path)
-        result.original_size = img.size
+        with Image.open(input_path) as source:
+            original_format = source.format
+            img = normalize_orientation(source)
+            result.original_size = img.size
 
-        if crop_box:
-            # 区域裁剪
-            box = parse_crop_box(crop_box)
-            # 确保不超出图片范围
-            box = (
-                max(0, box[0]),
-                max(0, box[1]),
-                min(img.width, box[2]),
-                min(img.height, box[3]),
-            )
-            cropped = img.crop(box)
-            result.crop_box = box
+            if crop_box:
+                box = parse_crop_box(crop_box)
+                box = (
+                    max(0, box[0]),
+                    max(0, box[1]),
+                    min(img.width, box[2]),
+                    min(img.height, box[3]),
+                )
+                if box[2] <= box[0] or box[3] <= box[1]:
+                    raise ValueError("裁剪区域为空或超出图片边界")
+                cropped = img.crop(box)
+                result.crop_box = box
+            elif aspect:
+                ratio_w, ratio_h = parse_aspect_ratio(aspect)
+                cropped, box = _crop_to_aspect(img, ratio_w, ratio_h, gravity)
+                result.crop_box = box
+            elif trim:
+                cropped, box = _auto_trim(img, trim_fuzz)
+                result.crop_box = box
+            else:
+                result.error = "请指定裁剪模式: --crop / --aspect / --trim"
+                return result
 
-        elif aspect:
-            # 比例裁剪（居中）
-            ratio_w, ratio_h = parse_aspect_ratio(aspect)
-            cropped, box = _crop_to_aspect(img, ratio_w, ratio_h, gravity)
-            result.crop_box = box
-
-        elif trim:
-            # 自动裁剪白边
-            cropped, box = _auto_trim(img, trim_fuzz)
-            result.crop_box = box
-
-        else:
-            result.error = "请指定裁剪模式: --crop / --aspect / --trim"
-            return result
-
-        result.cropped_size = cropped.size
-
-        # 保存
-        _save_cropped(cropped, output_path, img)
+            result.cropped_size = cropped.size
+            _save_cropped(cropped, output_path, img, original_format)
 
         result.output_size = os.path.getsize(output_path)
         result.success = True
@@ -173,7 +177,7 @@ def _crop_to_aspect(
     ratio_w: int,
     ratio_h: int,
     gravity: str = "center",
-) -> Tuple[Image.Image, Tuple[int, int, int, int]]:
+) -> tuple[Image.Image, tuple[int, int, int, int]]:
     """
     按宽高比居中裁剪
 
@@ -214,7 +218,7 @@ def _crop_to_aspect(
 def _auto_trim(
     img: Image.Image,
     fuzz: int = 10,
-) -> Tuple[Image.Image, Tuple[int, int, int, int]]:
+) -> tuple[Image.Image, tuple[int, int, int, int]]:
     """
     自动裁剪白边/纯色边框
 
@@ -258,11 +262,16 @@ def _auto_trim(
     return img.crop(box), box
 
 
-def _save_cropped(cropped: Image.Image, output_path: str, original: Image.Image):
+def _save_cropped(
+    cropped: Image.Image,
+    output_path: str,
+    original: Image.Image,
+    original_format: str | None,
+) -> None:
     """保存裁剪后的图片，保持原格式和质量"""
     ext = Path(output_path).suffix.lower()
 
-    save_kwargs = {}
+    save_kwargs: dict[str, Any] = {}
 
     if ext in (".jpg", ".jpeg"):
         if cropped.mode in ("RGBA", "LA", "PA"):
@@ -279,12 +288,12 @@ def _save_cropped(cropped: Image.Image, output_path: str, original: Image.Image)
     elif ext in (".tiff", ".tif"):
         save_kwargs = {"format": "TIFF", "compression": "tiff_lzw"}
     else:
-        if original.format:
-            save_kwargs = {"format": original.format}
+        if original_format:
+            save_kwargs = {"format": original_format}
 
     # 保留 EXIF 和 ICC
     try:
-        exif_data = original.info.get("exif")
+        exif_data = normalized_exif_bytes(original)
         if exif_data:
             save_kwargs["exif"] = exif_data
     except Exception:
@@ -297,13 +306,14 @@ def _save_cropped(cropped: Image.Image, output_path: str, original: Image.Image)
     except Exception:
         pass
 
-    cropped.save(output_path, **save_kwargs)
+    with atomic_output_path(output_path) as temporary:
+        cropped.save(temporary, **save_kwargs)
 
 
 def collect_croppable_files(
-    input_paths: List[str],
+    input_paths: list[str],
     recursive: bool = False,
-) -> List[str]:
+) -> list[str]:
     """收集所有可裁剪的图片文件"""
     files = []
     for path_str in input_paths:

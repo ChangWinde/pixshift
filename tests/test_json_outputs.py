@@ -179,4 +179,3 @@ def test_doctor_json_output():
     assert payload["ok"] is True
     assert isinstance(payload["all_ready"], bool)
     assert isinstance(payload["checks"], list)
-

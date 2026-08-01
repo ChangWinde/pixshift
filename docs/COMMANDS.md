@@ -30,11 +30,14 @@ pixshift strip INPUTS... [--mode privacy] [-o OUT_DIR] [-r] [--json]
 
 ### `dedup`
 
-Analyze or delete duplicate/similar images.
+Analyze similar images and optionally delete byte-identical duplicates.
 
 ```bash
 pixshift dedup INPUTS... [-r] [--delete] [--dry-run] [--yes] [--json]
 ```
+
+`--delete` never removes a file based only on perceptual similarity. Candidates
+must be byte-identical and are revalidated immediately before deletion.
 
 ## Advanced Workflows
 
@@ -73,6 +76,7 @@ pixshift watermark image INPUTS... --watermark logo.png [-r] [--json]
 ### `montage`
 
 Build a grid montage from multiple images.
+Output must use `.png`, `.jpg`/`.jpeg`, or `.webp`.
 
 ```bash
 pixshift montage INPUTS... -o board.png [--cols 4] [-r] [--json]
@@ -130,4 +134,3 @@ pixshift pdf compress input.pdf [-o out.pdf] [--json]
 pixshift pdf concat INPUTS... -o out.pdf [--json]
 pixshift pdf info input.pdf [--pages] [--json]
 ```
-

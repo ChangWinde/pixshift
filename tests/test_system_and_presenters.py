@@ -2,7 +2,6 @@
 
 from io import StringIO
 
-import pytest
 from click.testing import CliRunner
 from rich.console import Console
 
@@ -94,7 +93,9 @@ def test_check_heif_handles_import_error(monkeypatch):
 
 
 def test_size_ratio_text_saved_and_expanded():
-    to_human = lambda n: f"{n}B"
+    def to_human(n):
+        return f"{n}B"
+
     text_saved = size_ratio_text(1000, 600, to_human)
     text_expanded = size_ratio_text(1000, 1200, to_human)
     text_empty = size_ratio_text(0, 10, to_human)
@@ -132,4 +133,3 @@ def test_show_dry_run_table_limits_rows_to_fifty():
     assert "预览模式" in rendered
     assert "还有 5 个文件" in rendered
     assert "WebP" in rendered
-

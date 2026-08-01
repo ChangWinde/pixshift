@@ -58,4 +58,3 @@ def test_advanced_commands_help_available():
     ]:
         result = runner.invoke(cli, args)
         assert result.exit_code == 0
-

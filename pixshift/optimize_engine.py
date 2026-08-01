@@ -8,25 +8,27 @@ PixShift Optimize Engine — 格式智能推荐 + 体积对比
   - 显示压缩率和质量评估
 """
 
-import os
 import io
+import os
 import time
-from pathlib import Path
-from typing import Optional, List, Dict, Tuple
 from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
 
 from PIL import Image, ImageStat
 
-from .converter import SUPPORTED_INPUT_FORMATS, _human_size
-
+from .converter import _human_size
+from .core.metadata import normalize_orientation
 
 # ============================================================
 #  数据结构
 # ============================================================
 
+
 @dataclass
 class FormatEstimate:
     """单个格式的预估结果"""
+
     format_name: str = ""
     estimated_size: int = 0
     estimated_size_human: str = ""
@@ -40,6 +42,7 @@ class FormatEstimate:
 @dataclass
 class OptimizeResult:
     """图片优化分析结果"""
+
     input_path: str = ""
     input_size: int = 0
     input_size_human: str = ""
@@ -50,7 +53,7 @@ class OptimizeResult:
     image_type: str = ""  # photo / screenshot / graphic / text
     recommended_format: str = ""
     recommended_reason: str = ""
-    estimates: List[FormatEstimate] = field(default_factory=list)
+    estimates: list[FormatEstimate] = field(default_factory=list)
     duration: float = 0.0
     error: str = ""
 
@@ -59,7 +62,8 @@ class OptimizeResult:
 #  图片类型检测
 # ============================================================
 
-def _detect_image_type(img: Image.Image) -> Tuple[str, str]:
+
+def _detect_image_type(img: Image.Image) -> tuple[str, str]:
     """
     检测图片类型
 
@@ -67,30 +71,21 @@ def _detect_image_type(img: Image.Image) -> Tuple[str, str]:
     类型: photo / screenshot / graphic / text
     """
     # 转为 RGB 分析
-    if img.mode in ("RGBA", "LA", "PA"):
-        analyze_img = img.convert("RGB")
-    elif img.mode == "L":
-        analyze_img = img.convert("RGB")
-    else:
-        analyze_img = img
+    analyze_img = img.convert("RGB") if img.mode in ("RGBA", "LA", "PA") or img.mode == "L" else img
 
     stat = ImageStat.Stat(analyze_img)
 
     # 颜色统计
-    means = stat.mean  # 各通道均值
     stddevs = stat.stddev  # 各通道标准差
 
     avg_stddev = sum(stddevs) / len(stddevs)
 
     # 采样分析颜色数量
     small = analyze_img.copy()
-    small.thumbnail((200, 200), Image.NEAREST)
+    small.thumbnail((200, 200), Image.Resampling.NEAREST)
     colors = small.getcolors(maxcolors=10000)
 
-    if colors is None:
-        unique_colors = 10000
-    else:
-        unique_colors = len(colors)
+    unique_colors = 10000 if colors is None else len(colors)
 
     # 判断逻辑
     if unique_colors < 50:
@@ -109,7 +104,7 @@ def _detect_image_type(img: Image.Image) -> Tuple[str, str]:
 #  格式推荐
 # ============================================================
 
-FORMAT_CONFIGS = {
+FORMAT_CONFIGS: dict[str, dict[str, Any]] = {
     "webp": {
         "quality": 85,
         "method": 4,
@@ -169,7 +164,8 @@ def analyze_image(input_path: str) -> OptimizeResult:
         result.input_size_human = _human_size(result.input_size)
         result.input_format = Path(input_path).suffix.lower().lstrip(".")
 
-        img = Image.open(input_path)
+        with Image.open(input_path) as source:
+            img = normalize_orientation(source).copy()
         result.width, result.height = img.size
         result.has_alpha = img.mode in ("RGBA", "LA", "PA")
 
@@ -185,47 +181,57 @@ def analyze_image(input_path: str) -> OptimizeResult:
             for label, q in [("jpg_high", 92), ("jpg_medium", 80)]:
                 est = _estimate_format(img, "JPEG", {"quality": q, "optimize": True})
                 est.format_name = f"JPEG (q={q})"
-                est.compression_ratio = est.estimated_size / result.input_size if result.input_size > 0 else 0
+                est.compression_ratio = (
+                    est.estimated_size / result.input_size if result.input_size > 0 else 0
+                )
                 est.supports_alpha = False
                 est.is_lossless = False
-                est.quality_note = FORMAT_CONFIGS[label]["note"]
+                est.quality_note = str(FORMAT_CONFIGS[label]["note"])
                 estimates.append(est)
 
         # PNG
         est = _estimate_format(img, "PNG", {"compress_level": 9, "optimize": True})
         est.format_name = "PNG"
-        est.compression_ratio = est.estimated_size / result.input_size if result.input_size > 0 else 0
+        est.compression_ratio = (
+            est.estimated_size / result.input_size if result.input_size > 0 else 0
+        )
         est.supports_alpha = True
         est.is_lossless = True
-        est.quality_note = FORMAT_CONFIGS["png"]["note"]
+        est.quality_note = str(FORMAT_CONFIGS["png"]["note"])
         estimates.append(est)
 
         # WebP
         est = _estimate_format(img, "WEBP", {"quality": 85, "method": 4})
         est.format_name = "WebP (q=85)"
-        est.compression_ratio = est.estimated_size / result.input_size if result.input_size > 0 else 0
+        est.compression_ratio = (
+            est.estimated_size / result.input_size if result.input_size > 0 else 0
+        )
         est.supports_alpha = True
         est.is_lossless = False
-        est.quality_note = FORMAT_CONFIGS["webp"]["note"]
+        est.quality_note = str(FORMAT_CONFIGS["webp"]["note"])
         estimates.append(est)
 
         # WebP Lossless
         est = _estimate_format(img, "WEBP", {"lossless": True})
         est.format_name = "WebP (无损)"
-        est.compression_ratio = est.estimated_size / result.input_size if result.input_size > 0 else 0
+        est.compression_ratio = (
+            est.estimated_size / result.input_size if result.input_size > 0 else 0
+        )
         est.supports_alpha = True
         est.is_lossless = True
-        est.quality_note = FORMAT_CONFIGS["webp_lossless"]["note"]
+        est.quality_note = str(FORMAT_CONFIGS["webp_lossless"]["note"])
         estimates.append(est)
 
         # AVIF (如果支持)
         try:
             est = _estimate_format(img, "AVIF", {"quality": 80})
             est.format_name = "AVIF (q=80)"
-            est.compression_ratio = est.estimated_size / result.input_size if result.input_size > 0 else 0
+            est.compression_ratio = (
+                est.estimated_size / result.input_size if result.input_size > 0 else 0
+            )
             est.supports_alpha = True
             est.is_lossless = False
-            est.quality_note = FORMAT_CONFIGS["avif"]["note"]
+            est.quality_note = str(FORMAT_CONFIGS["avif"]["note"])
             estimates.append(est)
         except Exception:
             pass  # AVIF 可能不可用
@@ -277,7 +283,7 @@ def _estimate_format(
 def _recommend_format(
     img_type: str,
     has_alpha: bool,
-    estimates: List[FormatEstimate],
+    estimates: list[FormatEstimate],
 ) -> str:
     """根据图片类型推荐最佳格式"""
     if img_type == "photo":

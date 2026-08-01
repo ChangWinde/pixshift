@@ -9,24 +9,27 @@ PixShift Watermark Engine — 批量水印引擎
 """
 
 import os
-import math
 import time
-from pathlib import Path
-from typing import Optional, Tuple, List
+from contextlib import suppress
 from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
 
-from PIL import Image, ImageDraw, ImageFont, ImageEnhance
+from PIL import Image, ImageDraw, ImageFont
 
-from .converter import SUPPORTED_INPUT_FORMATS, _human_size
-
+from .converter import SUPPORTED_INPUT_FORMATS
+from .core.files import atomic_output_path
+from .core.metadata import normalize_orientation, normalized_exif_bytes
 
 # ============================================================
 #  数据结构
 # ============================================================
 
+
 @dataclass
 class WatermarkResult:
     """单个文件的水印结果"""
+
     input_path: str = ""
     output_path: str = ""
     success: bool = False
@@ -39,13 +42,14 @@ class WatermarkResult:
 @dataclass
 class WatermarkBatchResult:
     """批量水印汇总"""
+
     total: int = 0
     success: int = 0
     failed: int = 0
     total_input_size: int = 0
     total_output_size: int = 0
     total_duration: float = 0.0
-    results: List[WatermarkResult] = field(default_factory=list)
+    results: list[WatermarkResult] = field(default_factory=list)
 
 
 # ============================================================
@@ -53,15 +57,15 @@ class WatermarkBatchResult:
 # ============================================================
 
 POSITION_MAP = {
-    "top-left":      (0.02, 0.02),
-    "top-center":    (0.5, 0.02),
-    "top-right":     (0.98, 0.02),
-    "center-left":   (0.02, 0.5),
-    "center":        (0.5, 0.5),
-    "center-right":  (0.98, 0.5),
-    "bottom-left":   (0.02, 0.98),
+    "top-left": (0.02, 0.02),
+    "top-center": (0.5, 0.02),
+    "top-right": (0.98, 0.02),
+    "center-left": (0.02, 0.5),
+    "center": (0.5, 0.5),
+    "center-right": (0.98, 0.5),
+    "bottom-left": (0.02, 0.98),
     "bottom-center": (0.5, 0.98),
-    "bottom-right":  (0.98, 0.98),
+    "bottom-right": (0.98, 0.98),
 }
 
 
@@ -69,7 +73,10 @@ POSITION_MAP = {
 #  文字水印
 # ============================================================
 
-def _get_font(font_path: Optional[str], font_size: int) -> ImageFont.FreeTypeFont:
+
+def _get_font(
+    font_path: str | None, font_size: int
+) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
     """获取字体对象"""
     if font_path and os.path.exists(font_path):
         return ImageFont.truetype(font_path, font_size)
@@ -99,7 +106,7 @@ def _get_font(font_path: Optional[str], font_size: int) -> ImageFont.FreeTypeFon
         return ImageFont.load_default()
 
 
-def _parse_color(color_str: str) -> Tuple[int, int, int, int]:
+def _parse_color(color_str: str) -> tuple[int, int, int, int]:
     """
     解析颜色字符串
 
@@ -129,24 +136,33 @@ def _parse_color(color_str: str) -> Tuple[int, int, int, int]:
             r, g, b = int(hex_str[0:2], 16), int(hex_str[2:4], 16), int(hex_str[4:6], 16)
             return (r, g, b, 255)
         elif len(hex_str) == 8:
-            r, g, b, a = int(hex_str[0:2], 16), int(hex_str[2:4], 16), int(hex_str[4:6], 16), int(hex_str[6:8], 16)
+            r, g, b, a = (
+                int(hex_str[0:2], 16),
+                int(hex_str[2:4], 16),
+                int(hex_str[4:6], 16),
+                int(hex_str[6:8], 16),
+            )
             return (r, g, b, a)
 
     # R,G,B 或 R,G,B,A 格式
     parts = [int(x.strip()) for x in color_str.split(",")]
     if len(parts) == 3:
-        return (parts[0], parts[1], parts[2], 255)
+        result = (parts[0], parts[1], parts[2], 255)
     elif len(parts) == 4:
-        return (parts[0], parts[1], parts[2], parts[3])
+        result = (parts[0], parts[1], parts[2], parts[3])
+    else:
+        raise ValueError("颜色必须是名称、#RRGGBB、#RRGGBBAA 或 R,G,B[,A]")
 
-    return (255, 255, 255, 255)
+    if any(not 0 <= channel <= 255 for channel in result):
+        raise ValueError("颜色通道必须在 0 到 255 之间")
+    return result
 
 
 def add_text_watermark(
     input_path: str,
     output_path: str,
     text: str,
-    font_path: Optional[str] = None,
+    font_path: str | None = None,
     font_size: int = 36,
     color: str = "255,255,255",
     opacity: int = 128,
@@ -191,46 +207,46 @@ def add_text_watermark(
 
         os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
 
-        img = Image.open(input_path).convert("RGBA")
-        font = _get_font(font_path, font_size)
-        r, g, b, _ = _parse_color(color)
-        fill_color = (r, g, b, opacity)
+        if not 0 <= opacity <= 255:
+            raise ValueError("透明度必须在 0 到 255 之间")
+        if font_size <= 0 or tile_spacing < 0 or margin < 0:
+            raise ValueError("字体大小必须为正数，间距和边距不能为负数")
 
-        if tile:
-            # 平铺水印
-            watermark_layer = _create_tiled_text_layer(
-                img.size, text, font, fill_color, rotation, tile_spacing
-            )
-        else:
-            # 单个水印
-            watermark_layer = Image.new("RGBA", img.size, (0, 0, 0, 0))
-            draw = ImageDraw.Draw(watermark_layer)
+        with Image.open(input_path) as source:
+            original_format = source.format
+            original = normalize_orientation(source)
+            img = original.convert("RGBA")
+            font = _get_font(font_path, font_size)
+            r, g, b, _ = _parse_color(color)
+            fill_color = (r, g, b, opacity)
 
-            # 获取文字尺寸
-            bbox = draw.textbbox((0, 0), text, font=font)
-            text_w = bbox[2] - bbox[0]
-            text_h = bbox[3] - bbox[1]
-
-            # 计算位置
-            x, y = _calc_position(
-                img.size, (text_w, text_h), position, margin
-            )
-
-            if rotation != 0:
-                # 创建旋转文字
-                txt_img = Image.new("RGBA", (text_w + 20, text_h + 20), (0, 0, 0, 0))
-                txt_draw = ImageDraw.Draw(txt_img)
-                txt_draw.text((10, 10), text, font=font, fill=fill_color)
-                txt_img = txt_img.rotate(rotation, expand=True, resample=Image.BICUBIC)
-                watermark_layer.paste(txt_img, (int(x), int(y)), txt_img)
+            if tile:
+                watermark_layer = _create_tiled_text_layer(
+                    img.size, text, font, fill_color, rotation, tile_spacing
+                )
             else:
-                draw.text((x, y), text, font=font, fill=fill_color)
+                watermark_layer = Image.new("RGBA", img.size, (0, 0, 0, 0))
+                draw = ImageDraw.Draw(watermark_layer)
 
-        # 合成
-        result_img = Image.alpha_composite(img, watermark_layer)
+                bbox = draw.textbbox((0, 0), text, font=font)
+                text_w = max(1, int(bbox[2] - bbox[0]))
+                text_h = max(1, int(bbox[3] - bbox[1]))
 
-        # 保存（保持原格式）
-        _save_watermarked(result_img, output_path, input_path)
+                x, y = _calc_position(img.size, (text_w, text_h), position, margin)
+
+                if rotation != 0:
+                    txt_img = Image.new("RGBA", (text_w + 20, text_h + 20), (0, 0, 0, 0))
+                    txt_draw = ImageDraw.Draw(txt_img)
+                    txt_draw.text((10, 10), text, font=font, fill=fill_color)
+                    txt_img = txt_img.rotate(
+                        rotation, expand=True, resample=Image.Resampling.BICUBIC
+                    )
+                    watermark_layer.paste(txt_img, (int(x), int(y)), txt_img)
+                else:
+                    draw.text((x, y), text, font=font, fill=fill_color)
+
+            result_img = Image.alpha_composite(img, watermark_layer)
+            _save_watermarked(result_img, output_path, original, original_format)
 
         result.output_size = os.path.getsize(output_path)
         result.success = True
@@ -243,10 +259,10 @@ def add_text_watermark(
 
 
 def _create_tiled_text_layer(
-    img_size: Tuple[int, int],
+    img_size: tuple[int, int],
     text: str,
-    font: ImageFont.FreeTypeFont,
-    fill_color: Tuple[int, int, int, int],
+    font: ImageFont.FreeTypeFont | ImageFont.ImageFont,
+    fill_color: tuple[int, int, int, int],
     rotation: int,
     spacing: int,
 ) -> Image.Image:
@@ -256,15 +272,15 @@ def _create_tiled_text_layer(
     # 创建单个水印文字
     tmp_draw = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
     bbox = tmp_draw.textbbox((0, 0), text, font=font)
-    text_w = bbox[2] - bbox[0] + 20
-    text_h = bbox[3] - bbox[1] + 20
+    text_w = max(1, int(bbox[2] - bbox[0]) + 20)
+    text_h = max(1, int(bbox[3] - bbox[1]) + 20)
 
     txt_img = Image.new("RGBA", (text_w, text_h), (0, 0, 0, 0))
     txt_draw = ImageDraw.Draw(txt_img)
     txt_draw.text((10, 10), text, font=font, fill=fill_color)
 
     if rotation != 0:
-        txt_img = txt_img.rotate(rotation, expand=True, resample=Image.BICUBIC)
+        txt_img = txt_img.rotate(rotation, expand=True, resample=Image.Resampling.BICUBIC)
 
     tile_w, tile_h = txt_img.size
 
@@ -276,10 +292,8 @@ def _create_tiled_text_layer(
 
     for y_pos in range(-tile_h, h + tile_h, step_y):
         for x_pos in range(-tile_w, w + tile_w, step_x):
-            try:
+            with suppress(Exception):
                 layer.paste(txt_img, (x_pos, y_pos), txt_img)
-            except Exception:
-                pass
 
     return layer
 
@@ -287,6 +301,7 @@ def _create_tiled_text_layer(
 # ============================================================
 #  图片水印
 # ============================================================
+
 
 def add_image_watermark(
     input_path: str,
@@ -334,40 +349,44 @@ def add_image_watermark(
 
         os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
 
-        img = Image.open(input_path).convert("RGBA")
-        wm = Image.open(watermark_path).convert("RGBA")
+        if not 0 < scale <= 1:
+            raise ValueError("水印缩放比例必须大于 0 且不超过 1")
+        if not 0 <= opacity <= 255:
+            raise ValueError("透明度必须在 0 到 255 之间")
+        if tile_spacing < 0 or margin < 0:
+            raise ValueError("间距和边距不能为负数")
 
-        # 缩放水印
-        target_w = max(1, int(img.width * scale))
-        ratio = target_w / wm.width
-        target_h = max(1, int(wm.height * ratio))
-        wm = wm.resize((target_w, target_h), Image.LANCZOS)
+        with Image.open(input_path) as source, Image.open(watermark_path) as wm_source:
+            original_format = source.format
+            original = normalize_orientation(source)
+            img = original.convert("RGBA")
+            wm = normalize_orientation(wm_source).convert("RGBA")
 
-        # 调整透明度
-        if opacity < 255:
-            alpha = wm.split()[3]
-            alpha = alpha.point(lambda p: int(p * opacity / 255))
-            wm.putalpha(alpha)
+            target_w = max(1, int(img.width * scale))
+            ratio = target_w / wm.width
+            target_h = max(1, int(wm.height * ratio))
+            wm = wm.resize((target_w, target_h), Image.Resampling.LANCZOS)
 
-        if tile:
-            # 平铺
-            layer = Image.new("RGBA", img.size, (0, 0, 0, 0))
-            step_x = target_w + tile_spacing
-            step_y = target_h + tile_spacing
-            for y_pos in range(0, img.height, step_y):
-                for x_pos in range(0, img.width, step_x):
-                    layer.paste(wm, (x_pos, y_pos), wm)
-            result_img = Image.alpha_composite(img, layer)
-        else:
-            # 单个水印
-            x, y = _calc_position(
-                img.size, wm.size, position, margin
-            )
-            layer = Image.new("RGBA", img.size, (0, 0, 0, 0))
-            layer.paste(wm, (int(x), int(y)), wm)
-            result_img = Image.alpha_composite(img, layer)
+            if opacity < 255:
+                alpha = wm.split()[3]
+                alpha = alpha.point(lambda p: int(p * opacity / 255))
+                wm.putalpha(alpha)
 
-        _save_watermarked(result_img, output_path, input_path)
+            if tile:
+                layer = Image.new("RGBA", img.size, (0, 0, 0, 0))
+                step_x = target_w + tile_spacing
+                step_y = target_h + tile_spacing
+                for y_pos in range(0, img.height, step_y):
+                    for x_pos in range(0, img.width, step_x):
+                        layer.paste(wm, (x_pos, y_pos), wm)
+                result_img = Image.alpha_composite(img, layer)
+            else:
+                x, y = _calc_position(img.size, wm.size, position, margin)
+                layer = Image.new("RGBA", img.size, (0, 0, 0, 0))
+                layer.paste(wm, (int(x), int(y)), wm)
+                result_img = Image.alpha_composite(img, layer)
+
+            _save_watermarked(result_img, output_path, original, original_format)
 
         result.output_size = os.path.getsize(output_path)
         result.success = True
@@ -383,12 +402,13 @@ def add_image_watermark(
 #  工具函数
 # ============================================================
 
+
 def _calc_position(
-    img_size: Tuple[int, int],
-    wm_size: Tuple[int, int],
+    img_size: tuple[int, int],
+    wm_size: tuple[int, int],
     position: str,
     margin: int,
-) -> Tuple[int, int]:
+) -> tuple[int, int]:
     """计算水印位置"""
     img_w, img_h = img_size
     wm_w, wm_h = wm_size
@@ -413,41 +433,48 @@ def _calc_position(
     return int(x), int(y)
 
 
-def _save_watermarked(result_img: Image.Image, output_path: str, input_path: str):
+def _save_watermarked(
+    result_img: Image.Image,
+    output_path: str,
+    original: Image.Image,
+    original_format: str | None,
+) -> None:
     """保存水印后的图片，保持原格式"""
     ext = Path(output_path).suffix.lower()
-    no_alpha = {".jpg", ".jpeg", ".bmp", ".pdf", ".ico"}
+    no_alpha = {".jpg", ".jpeg", ".bmp", ".pdf"}
 
     if ext in no_alpha:
-        # 不支持 Alpha 的格式，合成到白色背景
         bg = Image.new("RGB", result_img.size, (255, 255, 255))
         bg.paste(result_img, mask=result_img.split()[3])
         result_img = bg
 
-        if ext in (".jpg", ".jpeg"):
-            result_img.save(output_path, format="JPEG", quality=95, optimize=True)
-        else:
-            result_img.save(output_path)
+    save_kwargs: dict[str, Any] = {}
+    if ext in (".jpg", ".jpeg"):
+        save_kwargs = {"format": "JPEG", "quality": 95, "optimize": True}
     elif ext == ".png":
-        result_img.save(output_path, format="PNG", optimize=True)
+        save_kwargs = {"format": "PNG", "optimize": True}
     elif ext == ".webp":
-        result_img.save(output_path, format="WEBP", quality=95)
+        save_kwargs = {"format": "WEBP", "quality": 95}
+    elif original_format:
+        save_kwargs = {"format": original_format}
     else:
-        # 尝试保持原格式
-        try:
-            orig_format = Image.open(input_path).format
-            if orig_format:
-                result_img.save(output_path, format=orig_format)
-            else:
-                result_img.save(output_path)
-        except Exception:
-            result_img.save(output_path, format="PNG")
+        save_kwargs = {"format": "PNG"}
+
+    exif_data = normalized_exif_bytes(original)
+    if exif_data and ext in {".jpg", ".jpeg", ".webp", ".tif", ".tiff"}:
+        save_kwargs["exif"] = exif_data
+    icc_profile = original.info.get("icc_profile")
+    if icc_profile:
+        save_kwargs["icc_profile"] = icc_profile
+
+    with atomic_output_path(output_path) as temporary:
+        result_img.save(temporary, **save_kwargs)
 
 
 def collect_watermark_files(
-    input_paths: List[str],
+    input_paths: list[str],
     recursive: bool = False,
-) -> List[str]:
+) -> list[str]:
     """收集所有可添加水印的图片文件"""
     files = []
     for path_str in input_paths:

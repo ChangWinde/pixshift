@@ -1,7 +1,7 @@
 """Shared CLI presenter utilities."""
 
 import os
-from typing import Callable, List, Tuple
+from collections.abc import Callable
 
 from rich import box
 from rich.console import Console
@@ -10,7 +10,7 @@ from rich.table import Table
 
 def show_dry_run_table(
     console: Console,
-    tasks: List[Tuple[str, str]],
+    tasks: list[tuple[str, str]],
     target_label: str,
     quality_label: str,
 ) -> None:
@@ -35,7 +35,7 @@ def show_dry_run_table(
     console.print("  [dim]去掉 --dry-run 执行实际处理[/dim]\n")
 
 
-def print_failures(console: Console, errors: List[str]) -> None:
+def print_failures(console: Console, errors: list[str]) -> None:
     """Render top failed files with truncation."""
     if not errors:
         return
@@ -56,4 +56,3 @@ def size_ratio_text(total_in: int, total_out: int, human_size: Callable[[int], s
     if saved >= 0:
         return f"  📉 体积比: [green]{pct:.1f}%[/green] (节省 {human_size(saved)})"
     return f"  📈 体积比: [yellow]{pct:.1f}%[/yellow] (增加 {human_size(-saved)})"
-

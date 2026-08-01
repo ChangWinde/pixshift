@@ -1,16 +1,16 @@
 """Operation wrappers for metadata stripping workflows."""
 
-from typing import List
+from typing import Any
 
-from ..strip_engine import analyze_metadata, collect_strippable_files, strip_metadata
+from ..strip_engine import StripResult, analyze_metadata, collect_strippable_files, strip_metadata
 
 
-def collect_files(input_paths: List[str], recursive: bool) -> List[str]:
+def collect_files(input_paths: list[str], recursive: bool) -> list[str]:
     """Collect candidate files for metadata stripping."""
     return collect_strippable_files(input_paths, recursive)
 
 
-def analyze_one(file_path: str) -> dict:
+def analyze_one(file_path: str) -> dict[str, Any]:
     """Analyze metadata of a single file."""
     return analyze_metadata(file_path)
 
@@ -26,7 +26,7 @@ def strip_one(
     strip_time: bool,
     keep_orientation: bool,
     overwrite: bool,
-):
+) -> StripResult:
     """Strip metadata from one file with selected policy."""
     return strip_metadata(
         input_path=input_path,
@@ -40,4 +40,3 @@ def strip_one(
         keep_orientation=keep_orientation,
         overwrite=overwrite,
     )
-

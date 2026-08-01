@@ -1,26 +1,28 @@
 """Operation wrappers for image conversion workflows."""
 
-from typing import Dict, List, Optional, Tuple
+from typing import Any
 
-from ..converter import PixShiftConverter, collect_files, generate_output_path
+from ..converter import ConvertResult, PixShiftConverter, collect_files, generate_output_path
 
 
-def collect_convert_files(input_paths: List[str], input_format: Optional[str], recursive: bool) -> List[str]:
+def collect_convert_files(
+    input_paths: list[str], input_format: str | None, recursive: bool
+) -> list[str]:
     """Collect candidate files for convert command."""
     return collect_files(input_paths, input_format, recursive)
 
 
 def build_convert_tasks(
-    files: List[str],
+    files: list[str],
     output_format: str,
-    output_dir: Optional[str],
+    output_dir: str | None,
     prefix: str,
     suffix: str,
     flatten: bool,
-    source_paths: List[str],
-) -> List[Tuple[str, str]]:
+    source_paths: list[str],
+) -> list[tuple[str, str]]:
     """Build input/output pairs for conversion."""
-    tasks: List[Tuple[str, str]] = []
+    tasks: list[tuple[str, str]] = []
     for file_path in files:
         out_path = generate_output_path(
             file_path,
@@ -35,8 +37,9 @@ def build_convert_tasks(
     return tasks
 
 
-def convert_one(input_path: str, output_path: str, converter_kwargs: Dict) -> object:
+def convert_one(
+    input_path: str, output_path: str, converter_kwargs: dict[str, Any]
+) -> ConvertResult:
     """Convert one file with provided converter options."""
     converter = PixShiftConverter(**converter_kwargs)
     return converter.convert_single(input_path, output_path)
-
