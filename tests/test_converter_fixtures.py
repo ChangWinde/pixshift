@@ -4,6 +4,7 @@ from pathlib import Path
 
 from PIL import Image
 
+from pixshift.commands.convert_command import _parse_resize
 from pixshift.converter import PixShiftConverter
 
 
@@ -29,6 +30,24 @@ def test_process_image_auto_orient_hook_is_used(monkeypatch):
     result = converter._process_image(source, "png")
     assert called["ok"] is True
     assert result.size == (20, 10)
+
+
+def test_percent_resize_never_produces_zero_dimension():
+    converter = PixShiftConverter(resize_percent=1)
+
+    result = converter._process_image(Image.new("RGB", (1, 1)), "png")
+
+    assert result.size == (1, 1)
+
+
+def test_resize_rejects_non_finite_percentages():
+    for expression in ("nan%", "inf%", "-inf%"):
+        try:
+            _parse_resize(expression)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"expected {expression} to be rejected")
 
 
 def test_convert_single_includes_exif_and_icc_when_enabled(tmp_path, monkeypatch):

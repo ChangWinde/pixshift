@@ -20,6 +20,8 @@ from PIL import Image, ImageStat
 from .converter import _human_size
 from .core.metadata import normalize_orientation
 
+ANALYSIS_MAX_SIDE = 1600
+
 # ============================================================
 #  数据结构
 # ============================================================
@@ -51,8 +53,13 @@ class OptimizeResult:
     height: int = 0
     has_alpha: bool = False
     image_type: str = ""  # photo / screenshot / graphic / text
+    image_type_reason: str = ""
     recommended_format: str = ""
     recommended_reason: str = ""
+    analysis_size: tuple[int, int] = (0, 0)
+    sampled: bool = False
+    estimate_scale: float = 1.0
+    plan: dict[str, Any] = field(default_factory=dict)
     estimates: list[FormatEstimate] = field(default_factory=list)
     duration: float = 0.0
     error: str = ""
@@ -86,10 +93,13 @@ def _detect_image_type(img: Image.Image) -> tuple[str, str]:
     colors = small.getcolors(maxcolors=10000)
 
     unique_colors = 10000 if colors is None else len(colors)
+    entropy = analyze_img.entropy()
 
     # 判断逻辑
     if unique_colors < 50:
         return "graphic", f"仅 {unique_colors} 种颜色，适合无损压缩"
+    elif unique_colors >= 128 and entropy >= 7:
+        return "photo", f"高图像熵 ({entropy:.1f})，像照片"
     elif unique_colors < 256 and avg_stddev < 40:
         return "screenshot", f"{unique_colors} 种颜色，低复杂度，像截图/UI"
     elif avg_stddev > 50:
@@ -106,7 +116,7 @@ def _detect_image_type(img: Image.Image) -> tuple[str, str]:
 
 FORMAT_CONFIGS: dict[str, dict[str, Any]] = {
     "webp": {
-        "quality": 85,
+        "quality": 90,
         "method": 4,
         "supports_alpha": True,
         "is_lossless": False,
@@ -120,19 +130,19 @@ FORMAT_CONFIGS: dict[str, dict[str, Any]] = {
         "note": "WebP 无损模式",
     },
     "avif": {
-        "quality": 80,
+        "quality": 90,
         "supports_alpha": True,
         "is_lossless": False,
         "note": "最新格式，极高压缩率，支持逐渐增加",
     },
     "jpg_high": {
-        "quality": 92,
+        "quality": 95,
         "supports_alpha": False,
         "is_lossless": False,
         "note": "JPEG 高质量，兼容性最好",
     },
     "jpg_medium": {
-        "quality": 80,
+        "quality": 85,
         "supports_alpha": False,
         "is_lossless": False,
         "note": "JPEG 中等质量，体积更小",
@@ -169,17 +179,34 @@ def analyze_image(input_path: str) -> OptimizeResult:
         result.width, result.height = img.size
         result.has_alpha = img.mode in ("RGBA", "LA", "PA")
 
+        analysis_img = img.copy()
+        analysis_img.thumbnail(
+            (ANALYSIS_MAX_SIDE, ANALYSIS_MAX_SIDE),
+            Image.Resampling.LANCZOS,
+        )
+        result.analysis_size = analysis_img.size
+        result.sampled = analysis_img.size != img.size
+        source_pixels = max(1, img.width * img.height)
+        analysis_pixels = max(1, analysis_img.width * analysis_img.height)
+        result.estimate_scale = source_pixels / analysis_pixels
+
         # 检测图片类型
-        img_type, reason = _detect_image_type(img)
+        img_type, reason = _detect_image_type(analysis_img)
         result.image_type = img_type
+        result.image_type_reason = reason
 
         # 预估各格式大小
         estimates = []
 
         # JPEG (仅无 Alpha)
         if not result.has_alpha:
-            for label, q in [("jpg_high", 92), ("jpg_medium", 80)]:
-                est = _estimate_format(img, "JPEG", {"quality": q, "optimize": True})
+            for label, q in [("jpg_high", 95), ("jpg_medium", 85)]:
+                est = _estimate_format(
+                    analysis_img,
+                    "JPEG",
+                    {"quality": q, "optimize": True},
+                    result.estimate_scale,
+                )
                 est.format_name = f"JPEG (q={q})"
                 est.compression_ratio = (
                     est.estimated_size / result.input_size if result.input_size > 0 else 0
@@ -190,7 +217,12 @@ def analyze_image(input_path: str) -> OptimizeResult:
                 estimates.append(est)
 
         # PNG
-        est = _estimate_format(img, "PNG", {"compress_level": 9, "optimize": True})
+        est = _estimate_format(
+            analysis_img,
+            "PNG",
+            {"compress_level": 9, "optimize": True},
+            result.estimate_scale,
+        )
         est.format_name = "PNG"
         est.compression_ratio = (
             est.estimated_size / result.input_size if result.input_size > 0 else 0
@@ -201,8 +233,13 @@ def analyze_image(input_path: str) -> OptimizeResult:
         estimates.append(est)
 
         # WebP
-        est = _estimate_format(img, "WEBP", {"quality": 85, "method": 4})
-        est.format_name = "WebP (q=85)"
+        est = _estimate_format(
+            analysis_img,
+            "WEBP",
+            {"quality": 90, "method": 4},
+            result.estimate_scale,
+        )
+        est.format_name = "WebP (q=90)"
         est.compression_ratio = (
             est.estimated_size / result.input_size if result.input_size > 0 else 0
         )
@@ -212,7 +249,12 @@ def analyze_image(input_path: str) -> OptimizeResult:
         estimates.append(est)
 
         # WebP Lossless
-        est = _estimate_format(img, "WEBP", {"lossless": True})
+        est = _estimate_format(
+            analysis_img,
+            "WEBP",
+            {"lossless": True},
+            result.estimate_scale,
+        )
         est.format_name = "WebP (无损)"
         est.compression_ratio = (
             est.estimated_size / result.input_size if result.input_size > 0 else 0
@@ -224,8 +266,13 @@ def analyze_image(input_path: str) -> OptimizeResult:
 
         # AVIF (如果支持)
         try:
-            est = _estimate_format(img, "AVIF", {"quality": 80})
-            est.format_name = "AVIF (q=80)"
+            est = _estimate_format(
+                analysis_img,
+                "AVIF",
+                {"quality": 90},
+                result.estimate_scale,
+            )
+            est.format_name = "AVIF (q=90)"
             est.compression_ratio = (
                 est.estimated_size / result.input_size if result.input_size > 0 else 0
             )
@@ -240,7 +287,7 @@ def analyze_image(input_path: str) -> OptimizeResult:
         estimates.sort(key=lambda e: e.estimated_size)
 
         # 推荐逻辑
-        recommended = _recommend_format(img_type, result.has_alpha, estimates)
+        recommended = _recommend_format(img_type, estimates)
         for est in estimates:
             if est.format_name == recommended:
                 est.is_recommended = True
@@ -248,6 +295,7 @@ def analyze_image(input_path: str) -> OptimizeResult:
         result.estimates = estimates
         result.recommended_format = recommended
         result.recommended_reason = _get_recommendation_reason(img_type, recommended)
+        result.plan = _build_plan(result.input_format, recommended)
 
     except Exception as e:
         result.error = str(e)
@@ -260,6 +308,7 @@ def _estimate_format(
     img: Image.Image,
     format_name: str,
     save_kwargs: dict,
+    size_scale: float = 1.0,
 ) -> FormatEstimate:
     """预估指定格式的文件大小"""
     est = FormatEstimate()
@@ -274,7 +323,7 @@ def _estimate_format(
 
     buf = io.BytesIO()
     save_img.save(buf, format=format_name, **save_kwargs)
-    est.estimated_size = buf.tell()
+    est.estimated_size = max(1, round(buf.tell() * size_scale))
     est.estimated_size_human = _human_size(est.estimated_size)
 
     return est
@@ -282,7 +331,6 @@ def _estimate_format(
 
 def _recommend_format(
     img_type: str,
-    has_alpha: bool,
     estimates: list[FormatEstimate],
 ) -> str:
     """根据图片类型推荐最佳格式"""
@@ -299,31 +347,61 @@ def _recommend_format(
                 return est.format_name
 
     elif img_type == "screenshot":
-        # 截图：优先 WebP 无损 > PNG
-        for est in estimates:
-            if "WebP (无损)" in est.format_name:
-                return est.format_name
+        # 截图：优先可直接执行的 PNG 无损工作流。
         for est in estimates:
             if est.format_name == "PNG":
+                return est.format_name
+        for est in estimates:
+            if "WebP (无损)" in est.format_name:
                 return est.format_name
 
     elif img_type == "graphic":
-        # 图形：优先 PNG > WebP 无损
-        if has_alpha:
-            for est in estimates:
-                if est.format_name == "PNG":
-                    return est.format_name
-        for est in estimates:
-            if "WebP (无损)" in est.format_name:
-                return est.format_name
+        # 图形：PNG 无损、兼容，并能由现有 CLI 精确执行。
         for est in estimates:
             if est.format_name == "PNG":
+                return est.format_name
+        for est in estimates:
+            if "WebP (无损)" in est.format_name:
                 return est.format_name
 
     # 默认：最小的
     if estimates:
         return estimates[0].format_name
     return "PNG"
+
+
+def _build_plan(input_format: str, recommended: str) -> dict[str, Any]:
+    """Translate a display recommendation into stable CLI arguments."""
+    normalized_input = input_format.lower().lstrip(".")
+    if recommended == "PNG":
+        if normalized_input == "png":
+            return {"command": "compress", "arguments": {"preset": "lossless"}}
+        return {
+            "command": "convert",
+            "arguments": {"to": "png", "quality": "web"},
+        }
+    if recommended.startswith("WebP"):
+        if normalized_input == "webp":
+            return {"command": "compress", "arguments": {"quality": 90}}
+        return {
+            "command": "convert",
+            "arguments": {"to": "webp", "quality": "high"},
+        }
+    if recommended.startswith("AVIF"):
+        if normalized_input == "avif":
+            return {"command": "compress", "arguments": {"quality": 90}}
+        return {
+            "command": "convert",
+            "arguments": {"to": "avif", "quality": "high"},
+        }
+    if recommended.startswith("JPEG"):
+        if normalized_input in {"jpg", "jpeg"}:
+            return {"command": "compress", "arguments": {"quality": 95}}
+        return {
+            "command": "convert",
+            "arguments": {"to": "jpg", "quality": "high"},
+        }
+    return {"command": "convert", "arguments": {"to": "png", "quality": "web"}}
 
 
 def _get_recommendation_reason(img_type: str, recommended: str) -> str:

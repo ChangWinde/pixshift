@@ -8,24 +8,31 @@ PixShift follows semantic versioning (`MAJOR.MINOR.PATCH`).
 
 1. Ensure tests pass locally:
    ```bash
-   python -m pip install -e ".[dev]"
-   python -m pytest -q --cov=pixshift --cov-report=term-missing --cov-fail-under=50
+   uv sync --frozen --extra dev
+   uv run ruff check .
+   uv run ruff format --check .
+   uv run mypy . --ignore-missing-imports
+   uv run pytest -q --cov=pixshift --cov-report=term-missing --cov-fail-under=60
+   uv build
+   uv run twine check dist/*
    ```
-2. Update `CHANGELOG.md`.
-3. Create and push a version tag:
+2. Update `CHANGELOG.md`, set the same version in `pyproject.toml`, and run
+   `uv lock`. Confirm that neither the tag nor package version already exists.
+3. Merge the reviewed release commit, then create and push a version tag:
    ```bash
    git tag vX.Y.Z
    git push origin vX.Y.Z
    ```
-4. The `release.yml` workflow builds and validates package artifacts.
+4. The tag-only `release.yml` workflow tests, builds, validates, and uploads package artifacts.
 5. Download and verify artifacts from GitHub Actions.
 
 ## Optional: Publish to PyPI
 
-After validating artifacts, publish with trusted publishing or twine from CI.
+The current workflow does **not** publish to PyPI. After validating artifacts, publish
+with trusted publishing or add an explicitly reviewed publish job. Never assume a green
+artifact build means PyPI was updated.
 
 ## Coverage Policy
 
-The current repository-wide gate is a baseline (`50%`) to enforce trend safety.
+The current repository-wide gate is a baseline (`60%`) to enforce trend safety.
 Increase this threshold gradually as module coverage improves.
-

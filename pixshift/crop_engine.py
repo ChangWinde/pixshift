@@ -63,7 +63,7 @@ def parse_crop_box(crop_str: str) -> tuple[int, int, int, int]:
     """
     解析裁剪区域字符串
 
-    格式: "left,top,right,bottom" 或 "left,top,width,height" (带 w 前缀)
+    格式: "left,top,right,bottom"
     示例: "100,100,800,600" → (100, 100, 800, 600)
     """
     parts = [int(x.strip()) for x in crop_str.split(",")]

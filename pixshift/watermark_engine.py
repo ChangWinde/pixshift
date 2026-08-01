@@ -78,7 +78,9 @@ def _get_font(
     font_path: str | None, font_size: int
 ) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
     """获取字体对象"""
-    if font_path and os.path.exists(font_path):
+    if font_path:
+        if not os.path.isfile(font_path):
+            raise ValueError("font_file_not_found")
         return ImageFont.truetype(font_path, font_size)
 
     # 尝试系统字体
@@ -104,6 +106,26 @@ def _get_font(
         return ImageFont.truetype("DejaVuSans.ttf", font_size)
     except Exception:
         return ImageFont.load_default()
+
+
+def resolve_font_size(font_size: int | None, image_size: tuple[int, int]) -> int:
+    """Resolve an explicit or image-relative text watermark size.
+
+    Args:
+        font_size: Explicit size, or ``None`` for an adaptive default.
+        image_size: Source image width and height.
+
+    Returns:
+        A bounded positive font size in pixels.
+
+    Raises:
+        ValueError: If an explicit size is outside the supported range.
+    """
+    if font_size is not None:
+        if not 1 <= font_size <= 4096:
+            raise ValueError("font_size_must_be_between_1_and_4096")
+        return font_size
+    return max(12, min(256, round(min(image_size) * 0.04)))
 
 
 def _parse_color(color_str: str) -> tuple[int, int, int, int]:
@@ -163,7 +185,7 @@ def add_text_watermark(
     output_path: str,
     text: str,
     font_path: str | None = None,
-    font_size: int = 36,
+    font_size: int | None = None,
     color: str = "255,255,255",
     opacity: int = 128,
     position: str = "bottom-right",
@@ -181,7 +203,7 @@ def add_text_watermark(
         output_path: 输出图片路径
         text: 水印文字
         font_path: 字体文件路径（可选）
-        font_size: 字体大小
+        font_size: 字体大小；None 时按图片短边自动计算
         color: 颜色 (R,G,B 或 #HEX 或 颜色名)
         opacity: 透明度 (0-255, 0=完全透明, 255=不透明)
         position: 位置 (top-left/center/bottom-right 等)
@@ -209,14 +231,17 @@ def add_text_watermark(
 
         if not 0 <= opacity <= 255:
             raise ValueError("透明度必须在 0 到 255 之间")
-        if font_size <= 0 or tile_spacing < 0 or margin < 0:
-            raise ValueError("字体大小必须为正数，间距和边距不能为负数")
+        if not text.strip():
+            raise ValueError("watermark_text_must_not_be_empty")
+        if tile_spacing < 0 or margin < 0:
+            raise ValueError("间距和边距不能为负数")
 
         with Image.open(input_path) as source:
             original_format = source.format
             original = normalize_orientation(source)
             img = original.convert("RGBA")
-            font = _get_font(font_path, font_size)
+            resolved_font_size = resolve_font_size(font_size, img.size)
+            font = _get_font(font_path, resolved_font_size)
             r, g, b, _ = _parse_color(color)
             fill_color = (r, g, b, opacity)
 

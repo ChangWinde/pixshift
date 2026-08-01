@@ -31,6 +31,10 @@ PixShift provides stable JSON output for automation with the `--json` flag.
 - `ok`: boolean success state
 - `error`: error string when `ok` is false (if available)
 
+Batch workflow payloads additionally use integer `skipped` and
+`ignored_generated` counts. Deduplication's operation-specific `skipped` field remains
+an array of safety reasons.
+
 ## Workflow Command Payloads
 
 ### `convert --json`
@@ -40,6 +44,7 @@ PixShift provides stable JSON output for automation with the `--json` flag.
 - `input_bytes`, `output_bytes`
 - `duration_sec`
 - `errors` (array)
+- `skipped`, `ignored_generated`
 
 ### `compress --json`
 
@@ -47,6 +52,8 @@ PixShift provides stable JSON output for automation with the `--json` flag.
 - `input_bytes`, `output_bytes`
 - `duration_sec`
 - `errors` (array)
+- `skipped`, `ignored_generated`
+- `warnings` (array; for example `quality_ignored_for_lossless`)
 
 ### `strip --json`
 
@@ -91,6 +98,7 @@ Delete dry-run mode (`--delete --dry-run`):
 - `output_formats` (array)
 - `features.heif`
 - `features.avif_encode`
+- `defaults` (canonical common workflow defaults for clients)
 
 ### `doctor --json`
 
@@ -105,6 +113,7 @@ Delete dry-run mode (`--delete --dry-run`):
 - `image_a`, `image_b`
 - `mse`, `psnr`, `ssim`
 - `quality_rating`, `quality_detail`
+- `comparison_size`, `resized_for_comparison`
 
 ### `crop --json`
 
@@ -131,11 +140,16 @@ Delete dry-run mode (`--delete --dry-run`):
 - `results[*].input`
 - `results[*].recommended_format`
 - `results[*].recommended_reason`
+- `results[*].analysis` (dimensions, sampling basis, alpha and classification reason)
+- `results[*].estimates` (format, estimated bytes, ratio and quality properties)
+- `results[*].plan.command`
+- `results[*].plan.arguments` (structured CLI option values)
 
 ### `watch --once --json`
 
 - `mode: "once"`
-- `total`, `success`, `failed`
+- `total`, `success`, `failed`, `skipped`
+- `output_format`, `quality`
 - `errors` (array)
 
 ## PDF Command Payloads
@@ -150,6 +164,7 @@ Delete dry-run mode (`--delete --dry-run`):
 
 - `input`, `output_dir`
 - `total_pages`, `exported_pages`
+- `requested_pages`, `skipped_existing`, `output_format`, `dpi`
 - `input_bytes`, `output_bytes`
 - `duration_sec`
 

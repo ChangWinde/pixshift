@@ -10,6 +10,8 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from ..core.defaults import DEFAULT_PDF_EXTRACT_DPI, DEFAULT_PDF_MERGE_MARGIN
+from ..core.files import filter_generated_inputs
 from ..ops import pdf as pdf_ops
 from ..pdf_engine import (
     PAGE_SIZES,
@@ -64,7 +66,12 @@ def register_pdf_commands(
         type=click.IntRange(1, 100),
         help="图片嵌入质量 (1-100). 默认: 95",
     )
-    @click.option("--margin", default=20, type=int, help="页边距 (点, 1点≈0.35mm). 默认: 20")
+    @click.option(
+        "--margin",
+        default=DEFAULT_PDF_MERGE_MARGIN,
+        type=click.IntRange(0),
+        help="页边距 (点, 1点≈0.35mm). 默认: 20",
+    )
     @click.option("--landscape", is_flag=True, default=False, help="横向页面. 默认: 纵向")
     @click.option(
         "-r",
@@ -159,7 +166,9 @@ def register_pdf_commands(
         console.print()
 
     @pdf.command("extract")
-    @click.argument("pdf_file", type=click.Path(exists=True))
+    @click.argument(
+        "pdf_file", type=click.Path(exists=True, file_okay=True, dir_okay=False, readable=True)
+    )
     @click.option(
         "-o", "--output", "output_dir", required=True, type=click.Path(), help="[必填] 输出目录路径"
     )
@@ -171,7 +180,12 @@ def register_pdf_commands(
         type=click.Choice(["png", "jpg", "webp", "tiff"], case_sensitive=False),
         help="输出图片格式",
     )
-    @click.option("--dpi", default=300, type=click.IntRange(72, 1200), help="渲染 DPI")
+    @click.option(
+        "--dpi",
+        default=DEFAULT_PDF_EXTRACT_DPI,
+        type=click.IntRange(72, 1200),
+        help="渲染 DPI；默认 150（屏幕查看与速度平衡）",
+    )
     @click.option("--pages", default=None, type=str, help="指定页码, 如 '1-5,8,10-12'")
     @click.option("--prefix", default="", type=str, help="输出文件名前缀")
     @click.option("--overwrite", is_flag=True, default=False, help="覆盖已存在输出文件")
@@ -210,7 +224,11 @@ def register_pdf_commands(
                 "ok": result.success,
                 "input": pdf_file,
                 "output_dir": output_dir,
+                "output_format": output_format.lower(),
+                "dpi": dpi,
                 "exported_pages": result.page_count,
+                "requested_pages": result.details.get("requested_pages"),
+                "skipped_existing": result.details.get("skipped_existing", 0),
                 "total_pages": result.details.get("total_pages"),
                 "input_bytes": result.input_size,
                 "output_bytes": result.output_size,
@@ -229,6 +247,8 @@ def register_pdf_commands(
                     f"  ✅ 拆分成功！\n"
                     f"  📄 PDF 总页数: [bold]{result.details.get('total_pages', '?')}[/bold]\n"
                     f"  📤 导出页数: [bold green]{result.page_count}[/bold green] 页\n"
+                    f"  ⏭️  已存在跳过: [bold yellow]"
+                    f"{result.details.get('skipped_existing', 0)}[/bold yellow] 页\n"
                     f"  📦 输入: {human_size(result.input_size)}"
                     f"  →  输出: [bold]{human_size(result.output_size)}[/bold]\n"
                     f"  📂 目录: {output_dir}\n"
@@ -244,7 +264,9 @@ def register_pdf_commands(
         console.print()
 
     @pdf.command("compress")
-    @click.argument("pdf_file", type=click.Path(exists=True))
+    @click.argument(
+        "pdf_file", type=click.Path(exists=True, file_okay=True, dir_okay=False, readable=True)
+    )
     @click.option(
         "-o", "--output", "output_path", default=None, type=click.Path(), help="输出 PDF 路径"
     )
@@ -358,12 +380,27 @@ def register_pdf_commands(
         _require_pdf("pdf.concat", as_json)
 
         pdf_files = pdf_ops.collect_pdfs(list(inputs), recursive)
+        pdf_files, ignored_generated = filter_generated_inputs(
+            pdf_files,
+            list(inputs),
+            excluded_files=(output_path,),
+        )
         if not pdf_files:
             if as_json:
-                emit_json({"command": "pdf.concat", "ok": True, "total": 0, "message": "no_pdfs"})
+                emit_json(
+                    {
+                        "command": "pdf.concat",
+                        "ok": True,
+                        "total": 0,
+                        "message": "no_pdfs",
+                        "ignored_generated": ignored_generated,
+                    }
+                )
             else:
                 console.print("[yellow]⚠️  未找到 PDF 文件[/yellow]")
             return
+        if ignored_generated and not as_json:
+            console.print(f"[dim]已忽略 {ignored_generated} 个既有拼接输出[/dim]")
         if len(pdf_files) < 2:
             if as_json:
                 emit_json_and_exit(
@@ -386,6 +423,7 @@ def register_pdf_commands(
                 "output_bytes": result.output_size,
                 "duration_sec": round(result.duration, 4),
                 "error": result.error or "",
+                "ignored_generated": ignored_generated,
             }
             if not result.success:
                 emit_json_and_exit(payload, 1)
@@ -414,7 +452,9 @@ def register_pdf_commands(
         console.print()
 
     @pdf.command("info")
-    @click.argument("pdf_file", type=click.Path(exists=True))
+    @click.argument(
+        "pdf_file", type=click.Path(exists=True, file_okay=True, dir_okay=False, readable=True)
+    )
     @click.option("--pages", is_flag=True, default=False, help="显示每页详细信息")
     @click.option("--json", "as_json", is_flag=True, default=False, help="以 JSON 输出结果")
     def pdf_info_cmd(pdf_file: str, pages: bool, as_json: bool) -> None:

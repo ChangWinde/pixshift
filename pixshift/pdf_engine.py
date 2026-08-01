@@ -25,6 +25,7 @@ except ImportError:
 
 from PIL import Image
 
+from .core.defaults import DEFAULT_PDF_EXTRACT_DPI, DEFAULT_PDF_MERGE_MARGIN
 from .core.files import atomic_output_path, safe_output_path
 from .core.metadata import normalize_orientation
 
@@ -187,7 +188,7 @@ def _collect_images(input_paths: list[str], recursive: bool = False) -> list[str
             for item in sorted(path.glob(pattern)):
                 if item.is_file() and item.suffix.lower() in PDF_IMAGE_FORMATS:
                     files.append(str(item.resolve()))
-    return files
+    return list(dict.fromkeys(files))
 
 
 def _collect_pdfs(input_paths: list[str], recursive: bool = False) -> list[str]:
@@ -203,7 +204,7 @@ def _collect_pdfs(input_paths: list[str], recursive: bool = False) -> list[str]:
             for item in sorted(path.glob(pattern)):
                 if item.is_file():
                     files.append(str(item.resolve()))
-    return files
+    return list(dict.fromkeys(files))
 
 
 def _image_to_bytes(image_path: str, quality: int = 95) -> tuple[bytes, tuple[int, int]]:
@@ -233,7 +234,7 @@ def pdf_merge_images(
     output_path: str,
     page_size: str = "a4",
     quality: int = 95,
-    margin: int = 0,
+    margin: int = DEFAULT_PDF_MERGE_MARGIN,
     landscape: bool = False,
     overwrite: bool = False,
 ) -> PDFResult:
@@ -254,24 +255,32 @@ def pdf_merge_images(
     start_time = time.time()
 
     try:
+        normalized_page_size = page_size.lower()
+        if not image_paths:
+            raise ValueError("no_input_images")
+        if normalized_page_size not in PAGE_SIZES:
+            raise ValueError(f"unsupported_page_size:{page_size}")
+        if not 1 <= quality <= 100:
+            raise ValueError("quality_must_be_between_1_and_100")
+        if margin < 0:
+            raise ValueError("margin_must_not_be_negative")
         if os.path.exists(output_path) and not overwrite:
             result.error = "输出文件已存在（使用 --overwrite 覆盖）"
             return result
 
         # 计算总输入大小
         result.input_size = sum(os.path.getsize(p) for p in image_paths)
-
         doc = fitz.open()
 
         for img_path in image_paths:
             img_data, (img_w, img_h) = _image_to_bytes(img_path, quality)
 
             # 确定页面大小
-            if page_size.lower() == "fit":
+            if normalized_page_size == "fit":
                 # 自适应：页面大小 = 图片大小 (像素→点, 假设 72 DPI)
                 pw, ph = float(img_w), float(img_h)
             else:
-                size = PAGE_SIZES.get(page_size.lower(), PAGE_SIZES["a4"])
+                size = PAGE_SIZES[normalized_page_size]
                 if size is None:
                     raise ValueError(f"无效页面尺寸: {page_size}")
                 pw, ph = size
@@ -286,6 +295,8 @@ def pdf_merge_images(
             # 计算图片在页面中的位置（居中，保持比例）
             avail_w = pw - 2 * margin
             avail_h = ph - 2 * margin
+            if avail_w <= 0 or avail_h <= 0:
+                raise ValueError("margin_too_large_for_page")
 
             scale_w = avail_w / img_w
             scale_h = avail_h / img_h
@@ -326,7 +337,7 @@ def pdf_extract_pages(
     pdf_path: str,
     output_dir: str,
     output_format: str = "png",
-    dpi: int = 300,
+    dpi: int = DEFAULT_PDF_EXTRACT_DPI,
     pages: str | None = None,
     prefix: str = "",
     overwrite: bool = False,
@@ -338,7 +349,7 @@ def pdf_extract_pages(
         pdf_path: 输入 PDF 路径
         output_dir: 输出目录
         output_format: 输出图片格式 (png/jpg/webp/tiff)
-        dpi: 渲染 DPI (越高越清晰，默认 300)
+        dpi: 渲染 DPI (越高越清晰，默认 150)
         pages: 指定页码，如 "1-5,8,10-12"，None 表示全部
         prefix: 输出文件名前缀
         overwrite: 是否覆盖
@@ -348,6 +359,11 @@ def pdf_extract_pages(
     start_time = time.time()
 
     try:
+        fmt = output_format.lower().lstrip(".")
+        if fmt not in {"png", "jpg", "jpeg", "webp", "tiff"}:
+            raise ValueError(f"unsupported_output_format:{output_format}")
+        if not 72 <= dpi <= 1200:
+            raise ValueError("dpi_must_be_between_72_and_1200")
         result.input_size = os.path.getsize(pdf_path)
         doc = fitz.open(pdf_path)
         total_pages = doc.page_count
@@ -357,7 +373,6 @@ def pdf_extract_pages(
 
         os.makedirs(output_dir, exist_ok=True)
 
-        fmt = output_format.lower().lstrip(".")
         if fmt in ("jpg", "jpeg"):
             pix_format = "jpeg"
             ext = ".jpg"
@@ -374,6 +389,7 @@ def pdf_extract_pages(
 
         output_total_size = 0
         extracted_count = 0
+        skipped_existing = 0
 
         for page_idx in page_indices:
             page = doc[page_idx]
@@ -383,6 +399,7 @@ def pdf_extract_pages(
             out_path = safe_output_path(output_dir, out_name)
 
             if os.path.exists(out_path) and not overwrite:
+                skipped_existing += 1
                 continue
 
             # 渲染页面
@@ -412,7 +429,9 @@ def pdf_extract_pages(
         result.page_count = extracted_count
         result.success = True
         result.details["total_pages"] = total_pages
+        result.details["requested_pages"] = len(page_indices)
         result.details["extracted_pages"] = extracted_count
+        result.details["skipped_existing"] = skipped_existing
 
     except Exception as e:
         result.error = str(e)
@@ -431,19 +450,32 @@ def _parse_page_range(pages_str: str | None, total: int) -> list[int]:
     if pages_str is None:
         return list(range(total))
 
+    if total <= 0 or not pages_str.strip():
+        raise ValueError("invalid_page_range")
+
     indices = set()
-    for part in pages_str.split(","):
-        part = part.strip()
-        if "-" in part:
-            start_text, end_text = part.split("-", 1)
-            start = max(1, int(start_text.strip()))
-            end = min(total, int(end_text.strip()))
-            for i in range(start, end + 1):
-                indices.add(i - 1)
-        else:
-            idx = int(part.strip()) - 1
-            if 0 <= idx < total:
-                indices.add(idx)
+    try:
+        for part in pages_str.split(","):
+            part = part.strip()
+            if not part:
+                raise ValueError
+            if "-" in part:
+                if part.count("-") != 1:
+                    raise ValueError
+                start_text, end_text = part.split("-", 1)
+                start = int(start_text.strip())
+                end = int(end_text.strip())
+                if start < 1 or end > total or start > end:
+                    raise ValueError
+                for page_number in range(start, end + 1):
+                    indices.add(page_number - 1)
+            else:
+                page_number = int(part)
+                if not 1 <= page_number <= total:
+                    raise ValueError
+                indices.add(page_number - 1)
+    except (TypeError, ValueError) as error:
+        raise ValueError("invalid_page_range") from error
 
     return sorted(indices)
 
@@ -486,6 +518,13 @@ def pdf_compress(
     start_time = time.time()
 
     try:
+        normalized_preset = preset.lower()
+        if normalized_preset not in PDF_COMPRESS_PRESETS:
+            raise ValueError(f"unsupported_pdf_compress_preset:{preset}")
+        if image_quality is not None and not 1 <= image_quality <= 100:
+            raise ValueError("image_quality_must_be_between_1_and_100")
+        if max_image_dpi is not None and not 72 <= max_image_dpi <= 1200:
+            raise ValueError("max_image_dpi_must_be_between_72_and_1200")
         if os.path.exists(output_path) and not overwrite:
             result.error = "输出文件已存在（使用 --overwrite 覆盖）"
             return result
@@ -493,7 +532,7 @@ def pdf_compress(
         result.input_size = os.path.getsize(input_path)
 
         # 获取压缩参数
-        config = PDF_COMPRESS_PRESETS.get(preset, PDF_COMPRESS_PRESETS["medium"]).copy()
+        config = PDF_COMPRESS_PRESETS[normalized_preset].copy()
 
         # 自定义参数覆盖预设
         if image_quality is not None:
@@ -536,7 +575,7 @@ def pdf_compress(
         result.details["images_processed"] = stats["images_processed"]
         result.details["images_skipped"] = stats["images_skipped"]
         result.details["images_replaced"] = stats["images_replaced"]
-        result.details["preset"] = preset
+        result.details["preset"] = normalized_preset
 
     except Exception as e:
         result.error = str(e)
@@ -685,6 +724,8 @@ def pdf_concat(
     start_time = time.time()
 
     try:
+        if len(pdf_paths) < 2:
+            raise ValueError("need_at_least_two")
         if os.path.exists(output_path) and not overwrite:
             result.error = "输出文件已存在（使用 --overwrite 覆盖）"
             return result

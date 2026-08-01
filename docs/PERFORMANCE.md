@@ -24,3 +24,9 @@ Other bounded-performance decisions:
 - automatic batch conversion uses at most eight worker processes;
 - exact duplicate SHA-256 runs only within equal-size buckets;
 - encoders atomically publish the exact payload already tested for a target size.
+- optimization analysis trial-encodes at most a 1600 px sample and reports the
+  sampling scale in JSON. A 4000×3000 benchmark improved from 7.055s to 1.542s
+  (4.6×) while retaining original dimensions in the result.
+- montage performs a lightweight dimension pass and then decodes one image at a
+  time. A 24-image 2000×1500 benchmark reduced peak RSS from about 450 MB to
+  191 MB (58%) with comparable runtime.

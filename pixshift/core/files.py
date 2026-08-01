@@ -52,6 +52,100 @@ def collect_supported_files(
     return sorted(set(files))
 
 
+def filter_generated_inputs(
+    files: Sequence[str],
+    source_paths: Sequence[str],
+    *,
+    output_root: str | None = None,
+    generated_suffix: str | None = None,
+    excluded_extension: str | None = None,
+    excluded_files: Sequence[str] = (),
+) -> tuple[list[str], int]:
+    """Remove generated artifacts discovered through directory scans.
+
+    Explicit file arguments remain authoritative. Exact operation assets and outputs in
+    ``excluded_files`` are always excluded so a watermark or prior aggregate output cannot
+    accidentally consume itself.
+
+    Args:
+        files: Collected candidate files.
+        source_paths: Original user-supplied file and directory arguments.
+        output_root: Generated output directory, when one exists.
+        generated_suffix: Derivative stem suffix such as ``_compressed``.
+        excluded_extension: Target extension to skip for discovered conversion inputs.
+        excluded_files: Exact assets or aggregate outputs that must never be inputs.
+
+    Returns:
+        A tuple of retained files and the number of ignored generated candidates.
+    """
+    explicit_files = {Path(source).resolve() for source in source_paths if Path(source).is_file()}
+    source_dirs = [Path(source).resolve() for source in source_paths if Path(source).is_dir()]
+    exact_exclusions = {Path(path).resolve(strict=False) for path in excluded_files}
+    normalized_extension = _normalize_ext(excluded_extension) if excluded_extension else None
+
+    generated_root: Path | None = None
+    if output_root:
+        candidate_root = Path(output_root).resolve(strict=False)
+        if any(
+            candidate_root != source_root and _is_relative_to(candidate_root, source_root)
+            for source_root in source_dirs
+        ):
+            generated_root = candidate_root
+
+    candidates = {Path(file_path).resolve() for file_path in files}
+    retained: list[str] = []
+    ignored = 0
+    for file_path in files:
+        resolved = Path(file_path).resolve()
+        if resolved in exact_exclusions:
+            ignored += 1
+            continue
+        if resolved in explicit_files:
+            retained.append(file_path)
+            continue
+        if generated_root is not None and _is_relative_to(resolved, generated_root):
+            ignored += 1
+            continue
+        if generated_suffix and resolved.stem.endswith(generated_suffix):
+            original_stem = resolved.stem[: -len(generated_suffix)]
+            original = resolved.with_name(f"{original_stem}{resolved.suffix}")
+            if original in candidates:
+                ignored += 1
+                continue
+        if normalized_extension and resolved.suffix.lower() == normalized_extension:
+            ignored += 1
+            continue
+        retained.append(file_path)
+
+    return retained, ignored
+
+
+def partition_existing_outputs(
+    tasks: Sequence[tuple[str, str]],
+    *,
+    overwrite: bool,
+) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+    """Split batch tasks into pending work and idempotent existing-output skips.
+
+    Args:
+        tasks: Input/output task pairs.
+        overwrite: Whether existing outputs should remain pending.
+
+    Returns:
+        A tuple of pending tasks and tasks skipped because their output exists.
+    """
+    if overwrite:
+        return list(tasks), []
+    pending: list[tuple[str, str]] = []
+    skipped: list[tuple[str, str]] = []
+    for task in tasks:
+        if Path(task[1]).is_file():
+            skipped.append(task)
+        else:
+            pending.append(task)
+    return pending, skipped
+
+
 def plan_output_path(
     input_path: str,
     output_name: str,
