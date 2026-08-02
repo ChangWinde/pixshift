@@ -84,6 +84,7 @@ def register_system_commands(cli_group: click.Group, console: Console, mini_logo
 
             table.add_row("颜色模式", img_info.get("mode", "N/A"))
             table.add_row("透明通道", "是" if img_info.get("has_alpha") else "否")
+            table.add_row("帧数", str(img_info.get("frame_count", "N/A")))
             if img_info.get("error"):
                 table.add_row("错误", f"[red]{img_info['error']}[/red]")
 

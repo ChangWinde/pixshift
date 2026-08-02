@@ -19,7 +19,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from .converter import SUPPORTED_INPUT_FORMATS
 from .core.files import atomic_output_path
-from .core.metadata import normalize_orientation, normalized_exif_bytes
+from .core.metadata import ensure_static_image, normalize_orientation, normalized_exif_bytes
 
 # ============================================================
 #  数据结构
@@ -237,6 +237,7 @@ def add_text_watermark(
             raise ValueError("间距和边距不能为负数")
 
         with Image.open(input_path) as source:
+            ensure_static_image(source)
             original_format = source.format
             original = normalize_orientation(source)
             img = original.convert("RGBA")
@@ -382,6 +383,8 @@ def add_image_watermark(
             raise ValueError("间距和边距不能为负数")
 
         with Image.open(input_path) as source, Image.open(watermark_path) as wm_source:
+            ensure_static_image(source)
+            ensure_static_image(wm_source)
             original_format = source.format
             original = normalize_orientation(source)
             img = original.convert("RGBA")

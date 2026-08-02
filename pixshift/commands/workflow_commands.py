@@ -598,22 +598,30 @@ def register_workflow_commands(
                 console.print(f"[red]分析失败: {result.error}[/red]\n")
                 raise click.exceptions.Exit(1)
             return
-        if result.duplicate_groups == 0:
+        if result.duplicate_groups == 0 and result.deletable_files == 0:
             if as_json:
                 emit_json(
                     {
                         "command": "dedup",
                         "ok": True,
+                        "mode": "analyze",
                         "total_files": result.total_files,
                         "duplicate_groups": 0,
                         "duplicate_files": 0,
-                        "deletable_files": 0,
+                        "deletable_files": result.deletable_files,
                         "recoverable_bytes": result.recoverable_size,
+                        "skipped_invalid": result.skipped_invalid,
                         "duration_sec": round(result.duration, 4),
+                        "preview": [],
                     }
                 )
             else:
                 console.print("[green]未发现重复或相似图片。[/green]\n")
+                if result.skipped_invalid:
+                    console.print(
+                        f"[yellow]有 {result.skipped_invalid} 个文件未参与感知分析；"
+                        "多帧图片仍会参与字节级重复检测。[/yellow]\n"
+                    )
             return
 
         if not as_json:
@@ -644,6 +652,7 @@ def register_workflow_commands(
                     f"  重复组: [bold yellow]{result.duplicate_groups}[/bold yellow]\n"
                     f"  相似候选: [bold]{result.duplicate_files}[/bold]\n"
                     f"  可删除的字节级重复文件: [bold]{result.deletable_files}[/bold]\n"
+                    f"  跳过感知分析: [bold]{result.skipped_invalid}[/bold]\n"
                     f"  可回收空间: [bold green]{result.recoverable_size_human}[/bold green]\n"
                     f"  耗时: [bold]{result.duration:.2f} 秒[/bold]",
                     title="[bold]去重分析[/bold]",
@@ -664,6 +673,7 @@ def register_workflow_commands(
                         "duplicate_files": result.duplicate_files,
                         "deletable_files": result.deletable_files,
                         "recoverable_bytes": result.recoverable_size,
+                        "skipped_invalid": result.skipped_invalid,
                         "duration_sec": round(result.duration, 4),
                         "preview": [
                             {
@@ -689,6 +699,7 @@ def register_workflow_commands(
                         "would_delete": len(delete_result["deleted"]),
                         "keep": len(delete_result["kept"]),
                         "deletable_files": result.deletable_files,
+                        "skipped_invalid": result.skipped_invalid,
                     }
                 )
             else:
@@ -716,6 +727,7 @@ def register_workflow_commands(
                         "kept": 0,
                         "deletable_files": 0,
                         "skipped_similar": result.duplicate_files,
+                        "skipped_invalid": result.skipped_invalid,
                         "skipped": [],
                         "errors": [],
                         "message": "no_exact_duplicates",
@@ -760,6 +772,7 @@ def register_workflow_commands(
                 "deleted": len(delete_result["deleted"]),
                 "kept": len(delete_result["kept"]),
                 "deletable_files": result.deletable_files,
+                "skipped_invalid": result.skipped_invalid,
                 "skipped": delete_result["skipped"],
                 "errors": delete_result["errors"],
             }

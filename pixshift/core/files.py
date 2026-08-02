@@ -325,7 +325,7 @@ def _resolved_dirs(source_paths: Iterable[str]) -> list[Path]:
 
 
 def _is_relative_to(path: Path, root: Path) -> bool:
-    """Python 3.8-compatible Path.is_relative_to."""
+    """Return whether a path is located within a candidate parent path."""
     try:
         path.relative_to(root)
         return True

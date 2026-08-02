@@ -18,7 +18,13 @@ from PIL import Image
 
 from .core.defaults import DEFAULT_COMPRESS_PRESET
 from .core.files import atomic_copy_file, atomic_write_bytes
-from .core.metadata import normalize_orientation, normalized_exif_bytes
+from .core.metadata import (
+    ensure_static_image,
+    flatten_transparency,
+    image_has_transparency,
+    normalize_orientation,
+    normalized_exif_bytes,
+)
 
 # ============================================================
 #  数据结构
@@ -203,6 +209,7 @@ def compress_single(
             result.iterations = 1
         else:
             with Image.open(input_path) as source:
+                ensure_static_image(source)
                 img = normalize_orientation(source)
 
                 if max_size:
@@ -275,7 +282,9 @@ def _encode_compressed(
     save_img = img
 
     if ext in (".jpg", ".jpeg"):
-        if save_img.mode in ("RGBA", "LA", "PA") or save_img.mode not in ("RGB", "L"):
+        if image_has_transparency(save_img):
+            save_img = flatten_transparency(save_img)
+        elif save_img.mode not in ("RGB", "L"):
             save_img = save_img.convert("RGB")
         save_kwargs = {
             "format": "JPEG",

@@ -20,7 +20,14 @@ from .core.files import (
     conversion_output_name,
     plan_output_path,
 )
-from .core.metadata import normalize_orientation, normalized_exif_bytes
+from .core.metadata import (
+    ensure_static_image,
+    flatten_transparency,
+    image_frame_count,
+    image_has_transparency,
+    normalize_orientation,
+    normalized_exif_bytes,
+)
 
 try:
     import pillow_heif
@@ -273,14 +280,8 @@ class PixShiftConverter:
         no_alpha_formats = {"jpg", "jpeg", "bmp", "pdf", "pcx"}
 
         if output_fmt_lower in no_alpha_formats or self.strip_alpha:
-            if img.mode in ("RGBA", "LA", "PA"):
-                background = Image.new("RGB", img.size, self.background_color)
-                if img.mode == "RGBA":
-                    background.paste(img, mask=img.split()[3])
-                else:
-                    img_rgba = img.convert("RGBA")
-                    background.paste(img_rgba, mask=img_rgba.split()[3])
-                img = background
+            if image_has_transparency(img):
+                img = flatten_transparency(img, self.background_color)
             elif img.mode not in ("RGB", "L"):
                 img = img.convert("RGB")
 
@@ -322,6 +323,7 @@ class PixShiftConverter:
 
             # 打开图片并复制到内存，避免覆盖源文件时依赖惰性文件句柄。
             with Image.open(input_path) as opened:
+                ensure_static_image(opened)
                 result.width, result.height = opened.size
                 img = opened.copy()
                 img.info.update(opened.info)
@@ -387,7 +389,8 @@ class PixShiftConverter:
                 info["height"] = img.size[1]
                 info["mode"] = img.mode
                 info["format"] = img.format
-                info["has_alpha"] = img.mode in ("RGBA", "LA", "PA")
+                info["has_alpha"] = image_has_transparency(img)
+                info["frame_count"] = image_frame_count(img)
 
                 try:
                     exif = img.getexif()

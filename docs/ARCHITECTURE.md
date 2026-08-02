@@ -22,7 +22,7 @@ image/PDF engines
 core policy
   ├─ files.py     collection, root containment, collision checks, atomic writes
   ├─ defaults.py  canonical human and automation defaults
-  ├─ metadata.py  visual orientation and canonical EXIF handling
+  ├─ metadata.py  frame, transparency, orientation, and EXIF policy
   ├─ errors.py    stable policy error codes
   └─ models.py    shared batch summaries
 ```
@@ -49,6 +49,8 @@ live under each command.
   after successful completion.
 - Pixel-changing operations normalize EXIF Orientation exactly once and remove the
   consumed tag.
+- Still-image operations reject multi-frame input before output mutation, and opaque
+  encoders use one canonical transparency-compositing policy.
 - Similar-image groups are advisory. Automatic deletion is limited to byte-identical
   files whose size and SHA-256 digest are revalidated immediately before removal.
 - An impossible target-size request fails without leaving a misleading output.

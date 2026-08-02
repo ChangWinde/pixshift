@@ -17,7 +17,7 @@ from typing import Any
 from PIL import ExifTags, Image
 
 from .core.files import atomic_output_path
-from .core.metadata import normalize_orientation
+from .core.metadata import ensure_static_image, normalize_orientation
 
 # ============================================================
 #  数据结构
@@ -137,6 +137,7 @@ TIME_TAGS = {
 
 # 所有敏感标签
 ALL_SENSITIVE_TAGS = GPS_TAGS | DEVICE_TAGS | PERSONAL_TAGS | TIME_TAGS
+EXIF_IFD_TAG = 34665
 
 
 # ============================================================
@@ -188,6 +189,7 @@ def strip_metadata(
         os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
 
         with Image.open(input_path) as opened:
+            ensure_static_image(opened)
             img = opened.copy()
             img.info.update(opened.info)
 
@@ -195,7 +197,7 @@ def strip_metadata(
         original_fields = 0
         try:
             exif = img.getexif()
-            original_fields = len(exif)
+            original_fields = len(_iter_exif_entries(exif))
         except Exception:
             pass
 
@@ -306,24 +308,20 @@ def _selective_strip(
         if strip_time:
             tags_to_remove |= TIME_TAGS
 
-        # 从标签名映射到标签 ID。
-        tag_name_to_id = {v: k for k, v in ExifTags.TAGS.items()}
+        fields_removed += _remove_named_tags(exif, tags_to_remove)
 
-        # 删除匹配的标签
-        keys_to_delete = []
-        for key in exif:
-            tag_name = ExifTags.TAGS.get(key, "")
-            if tag_name in tags_to_remove:
-                keys_to_delete.append(key)
-
-        for key in keys_to_delete:
-            del exif[key]
-            fields_removed += 1
+        nested_exif = _get_nested_exif(exif)
+        fields_removed += _remove_named_tags(nested_exif, tags_to_remove)
+        if EXIF_IFD_TAG in exif and not nested_exif:
+            del exif[EXIF_IFD_TAG]
 
         # 特殊处理 GPS IFD
         if strip_gps:
-            gps_ifd_key = tag_name_to_id.get("GPSInfo")
-            if gps_ifd_key and gps_ifd_key in exif:
+            gps_ifd_key = next(
+                (key for key, name in ExifTags.TAGS.items() if name == "GPSInfo"),
+                None,
+            )
+            if gps_ifd_key is not None and gps_ifd_key in exif:
                 del exif[gps_ifd_key]
                 fields_removed += 1
 
@@ -340,6 +338,31 @@ def _selective_strip(
         fields_removed = -1  # 标记为完全清除
 
     return fields_removed
+
+
+def _get_nested_exif(exif: Any) -> dict[int, Any]:
+    """Return the mutable Exif IFD mapping when it is present."""
+    if EXIF_IFD_TAG not in exif:
+        return {}
+    try:
+        return exif.get_ifd(EXIF_IFD_TAG)
+    except (KeyError, TypeError, ValueError):
+        return {}
+
+
+def _iter_exif_entries(exif: Any) -> list[tuple[int, Any]]:
+    """Return logical EXIF fields, including fields stored in the nested Exif IFD."""
+    entries = [(key, value) for key, value in exif.items() if key != EXIF_IFD_TAG]
+    entries.extend(_get_nested_exif(exif).items())
+    return entries
+
+
+def _remove_named_tags(exif_fields: Any, tags_to_remove: set[str]) -> int:
+    """Remove matching EXIF fields from one mutable IFD mapping."""
+    keys = [key for key in exif_fields if ExifTags.TAGS.get(key, "") in tags_to_remove]
+    for key in keys:
+        del exif_fields[key]
+    return len(keys)
 
 
 def _save_atomic(img: Image.Image, output_path: str, save_kwargs: dict) -> None:
@@ -380,9 +403,10 @@ def analyze_metadata(filepath: str) -> dict[str, Any]:
                 return info
 
             info["has_exif"] = True
-            info["total_fields"] = len(exif)
+            entries = _iter_exif_entries(exif)
+            info["total_fields"] = len(entries)
 
-            for key, val in exif.items():
+            for key, val in entries:
                 tag_name = ExifTags.TAGS.get(key, f"Tag_{key}")
                 val_str = str(val)
                 if len(val_str) > 100:

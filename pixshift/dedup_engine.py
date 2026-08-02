@@ -20,6 +20,7 @@ from pathlib import Path
 from PIL import Image
 
 from .converter import SUPPORTED_INPUT_FORMATS, _human_size
+from .core.metadata import ensure_static_image
 
 # ============================================================
 #  数据结构
@@ -59,6 +60,7 @@ class DedupResult:
     deletable_files: int = 0
     recoverable_size: int = 0
     recoverable_size_human: str = ""
+    skipped_invalid: int = 0
     groups: list[DuplicateGroup] = field(default_factory=list)
     delete_candidates: list[DeleteCandidate] = field(default_factory=list)
     duration: float = 0.0
@@ -189,24 +191,28 @@ def find_duplicates(
             "dhash": _difference_hash,
         }.get(hash_method, _perceptual_hash)
 
-        # 计算所有图片的哈希
+        # 计算静态图片的感知哈希。字节级重复检测仍覆盖所有可读取文件。
         file_hashes: list[tuple[str, int, int]] = []  # (path, hash, size)
+        file_records: list[tuple[str, int]] = []
 
         for filepath in files:
             try:
-                with Image.open(filepath) as img:
-                    h = hash_func(img, hash_size)
                 size = os.path.getsize(filepath)
-                file_hashes.append((filepath, h, size))
+                file_records.append((filepath, size))
                 result.total_size += size
+                with Image.open(filepath) as img:
+                    ensure_static_image(img)
+                    h = hash_func(img, hash_size)
+                file_hashes.append((filepath, h, size))
             except Exception:
+                result.skipped_invalid += 1
                 continue
 
         # 聚类：找出相似的图片组
         groups = _cluster_by_hash(file_hashes, threshold)
 
         # 删除候选必须是字节级完全一致的文件，与感知相似分组解耦。
-        result.delete_candidates = _find_exact_duplicates(file_hashes)
+        result.delete_candidates = _find_exact_duplicates(file_records)
         result.deletable_files = len(result.delete_candidates)
         result.recoverable_size = sum(candidate.size for candidate in result.delete_candidates)
 
@@ -306,11 +312,11 @@ def _cluster_by_hash(
 
 
 def _find_exact_duplicates(
-    file_hashes: list[tuple[str, int, int]],
+    file_records: list[tuple[str, int]],
 ) -> list[DeleteCandidate]:
     """Build safe delete candidates by hashing only equal-size files."""
     by_size: dict[int, list[str]] = defaultdict(list)
-    for path, _, size in file_hashes:
+    for path, size in file_records:
         by_size[size].append(path)
 
     candidates: list[DeleteCandidate] = []

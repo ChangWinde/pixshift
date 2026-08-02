@@ -2,6 +2,15 @@
 
 This page is a concise reference for all commands.
 
+## Media Semantics
+
+Pixel-changing commands, `compare`, `optimize`, and PDF image merge currently accept
+still images only. A multi-frame GIF, APNG, WebP, or TIFF fails with
+`animated_input_not_supported` before an output is replaced. The exact-copy path of
+`compress --preset lossless` may still copy an already lossy animated file byte-for-byte
+because that path does not decode or discard frames. Use `info` to inspect `frame_count`
+before building an automated workflow.
+
 ## Core Workflows
 
 ### `convert`
@@ -36,6 +45,10 @@ Remove metadata for privacy or cleanup.
 pixshift strip INPUTS... [--mode privacy] [-o OUT_DIR] [-r] [--json]
 ```
 
+The default `privacy` mode removes GPS, device, and personal fields from both top-level
+EXIF and nested EXIF directories while preserving unrelated time and color metadata.
+Use `--mode all` only when every EXIF field must be removed.
+
 ### `dedup`
 
 Analyze similar images and optionally delete byte-identical duplicates.
@@ -46,6 +59,8 @@ pixshift dedup INPUTS... [-r] [--delete] [--dry-run] [--yes] [--json]
 
 `--delete` never removes a file based only on perceptual similarity. Candidates
 must be byte-identical and are revalidated immediately before deletion.
+Animations are excluded from perceptual grouping because comparing only their first
+frame is misleading. Byte-identical animations remain eligible for safe exact deduplication.
 
 ## Advanced Workflows
 
@@ -58,7 +73,9 @@ pixshift compare A.jpg B.jpg [--json]
 ```
 
 Images with the same aspect ratio may be normalized to a common size. Materially
-different aspect ratios fail instead of producing misleading similarity metrics.
+different aspect ratios fail instead of producing misleading similarity metrics. The
+`完美` rating requires exact pixel and transparency equality; luminance SSIM alone is
+not treated as proof of equality.
 
 ### `crop`
 

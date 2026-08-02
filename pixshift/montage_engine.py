@@ -16,8 +16,13 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 from .converter import SUPPORTED_INPUT_FORMATS
+from .core.errors import AnimatedInputNotSupportedError
 from .core.files import atomic_output_path
-from .core.metadata import normalize_orientation
+from .core.metadata import (
+    ensure_static_image,
+    image_has_transparency,
+    normalize_orientation,
+)
 
 # ============================================================
 #  数据结构
@@ -107,8 +112,12 @@ def create_montage(
         image_specs: list[tuple[str, int, int]] = []
         for p in input_paths:
             try:
-                with Image.open(p) as source, normalize_orientation(source) as normalized:
+                with Image.open(p) as source:
+                    ensure_static_image(source)
+                    normalized = normalize_orientation(source)
                     image_specs.append((p, normalized.width, normalized.height))
+            except AnimatedInputNotSupportedError:
+                raise
             except Exception:
                 result.skipped_invalid += 1
                 continue
@@ -171,7 +180,9 @@ def create_montage(
             y = gap + row * (cell_height + label_height + gap)
 
             # 缩放图片以适应单元格
-            with Image.open(image_path) as source, normalize_orientation(source) as img:
+            with Image.open(image_path) as source:
+                ensure_static_image(source)
+                img = normalize_orientation(source)
                 resized = _fit_image(img, cell_width, cell_height)
 
             # 居中放置
@@ -192,8 +203,9 @@ def create_montage(
                 )
 
             # 粘贴图片
-            if resized.mode == "RGBA":
-                canvas.paste(resized, (offset_x, offset_y), resized)
+            if image_has_transparency(resized):
+                rgba = resized.convert("RGBA")
+                canvas.paste(rgba, (offset_x, offset_y), rgba)
             else:
                 canvas.paste(resized, (offset_x, offset_y))
 
