@@ -26,9 +26,18 @@ PixShift provides stable JSON output for automation with the `--json` flag.
 
 ## Common Fields
 
+- `schema_version`: machine-contract version; currently `"1.0"`
 - `command`: command identifier, e.g. `compress`, `pdf.info`
 - `ok`: boolean success state
 - `error`: error string when `ok` is false (if available)
+
+Still-image-only operations use the stable error
+`animated_input_not_supported` for multi-frame inputs. They validate this condition
+before replacing an output file.
+
+Batch workflow payloads additionally use integer `skipped` and
+`ignored_generated` counts. Deduplication's operation-specific `skipped` field remains
+an array of safety reasons.
 
 ## Workflow Command Payloads
 
@@ -39,6 +48,7 @@ PixShift provides stable JSON output for automation with the `--json` flag.
 - `input_bytes`, `output_bytes`
 - `duration_sec`
 - `errors` (array)
+- `skipped`, `ignored_generated`
 
 ### `compress --json`
 
@@ -46,6 +56,8 @@ PixShift provides stable JSON output for automation with the `--json` flag.
 - `input_bytes`, `output_bytes`
 - `duration_sec`
 - `errors` (array)
+- `skipped`, `ignored_generated`
+- `warnings` (array; for example `quality_ignored_for_lossless`)
 
 ### `strip --json`
 
@@ -60,13 +72,19 @@ PixShift provides stable JSON output for automation with the `--json` flag.
 Analyze mode (`--delete` not set):
 - `mode: "analyze"`
 - `total_files`, `duplicate_groups`, `duplicate_files`
-- `recoverable_bytes`
+- `deletable_files`, `recoverable_bytes`
+- `skipped_invalid` (files excluded from perceptual analysis, including animations)
 - `preview` (array of groups, truncated)
+
+Perceptual similarity is advisory. `deletable_files` and `recoverable_bytes` count
+only byte-identical files verified with SHA-256. Exact duplicate detection still covers
+files excluded from perceptual analysis.
 
 Delete mode (`--delete` set):
 - `mode: "delete"`
-- `deleted`, `kept`
+- `deleted`, `kept`, `skipped`
 - `errors` (array)
+- A candidate changed after analysis is reported in `skipped` and is not deleted.
 - In `--json` mode, use `--yes` with `--delete` to avoid interactive prompts.
 
 Delete dry-run mode (`--delete --dry-run`):
@@ -78,7 +96,9 @@ Delete dry-run mode (`--delete --dry-run`):
 ### `info --json`
 
 - `total`
-- `files` (array of per-file metadata; includes EXIF only when `--exif` is set)
+- `files` (array of per-file metadata)
+- Each file includes `frame_count` and `has_alpha`; indexed transparency counts as alpha.
+- EXIF is included only when `--exif` is set.
 
 ### `formats --json`
 
@@ -86,11 +106,13 @@ Delete dry-run mode (`--delete --dry-run`):
 - `output_formats` (array)
 - `features.heif`
 - `features.avif_encode`
+- `defaults` (canonical common workflow defaults for clients)
 
 ### `doctor --json`
 
 - `all_ready` (boolean)
-- `checks` (array with `name`, `status`, `ok`)
+- `checks` (array with `name`, `status`, `ok`, `required`)
+- Missing optional encoders remain visible in `checks` but do not make the command fail.
 
 ## Advanced Command Payloads
 
@@ -99,6 +121,7 @@ Delete dry-run mode (`--delete --dry-run`):
 - `image_a`, `image_b`
 - `mse`, `psnr`, `ssim`
 - `quality_rating`, `quality_detail`
+- `comparison_size`, `resized_for_comparison`
 
 ### `crop --json`
 
@@ -125,11 +148,16 @@ Delete dry-run mode (`--delete --dry-run`):
 - `results[*].input`
 - `results[*].recommended_format`
 - `results[*].recommended_reason`
+- `results[*].analysis` (dimensions, sampling basis, alpha and classification reason)
+- `results[*].estimates` (format, estimated bytes, ratio and quality properties)
+- `results[*].plan.command`
+- `results[*].plan.arguments` (structured CLI option values)
 
 ### `watch --once --json`
 
 - `mode: "once"`
-- `total`, `success`, `failed`
+- `total`, `success`, `failed`, `skipped`
+- `output_format`, `quality`
 - `errors` (array)
 
 ## PDF Command Payloads
@@ -144,6 +172,7 @@ Delete dry-run mode (`--delete --dry-run`):
 
 - `input`, `output_dir`
 - `total_pages`, `exported_pages`
+- `requested_pages`, `skipped_existing`, `output_format`, `dpi`
 - `input_bytes`, `output_bytes`
 - `duration_sec`
 
@@ -180,5 +209,6 @@ remain backward compatible.
 Notes:
 - "No files found" cases that are non-destructive and expected return `ok: true`
   with exit code `0`.
-- Validation failures (for example invalid arguments) return `ok: false` with
-  exit code `1`.
+- Validation failures (including Click's missing parameter, invalid value, and
+  unknown option errors) return versioned JSON with `ok: false` and a non-zero
+  exit code whenever `--json` is present.

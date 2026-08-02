@@ -9,21 +9,25 @@ PixShift PDF Engine — 基于 PyMuPDF 的 PDF 处理引擎
   5. info     — PDF 信息查看
 """
 
-import os
 import io
+import os
 import time
-from pathlib import Path
-from typing import Optional, Tuple, List, Dict
 from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
 
 try:
     import fitz  # PyMuPDF
+
     PYMUPDF_AVAILABLE = True
 except ImportError:
     PYMUPDF_AVAILABLE = False
 
 from PIL import Image
 
+from .core.defaults import DEFAULT_PDF_EXTRACT_DPI, DEFAULT_PDF_MERGE_MARGIN
+from .core.files import atomic_output_path, safe_output_path
+from .core.metadata import ensure_static_image, image_has_transparency, normalize_orientation
 
 # ============================================================
 #  常量定义
@@ -31,19 +35,31 @@ from PIL import Image
 
 # 支持的图片输入格式（用于 merge）
 PDF_IMAGE_FORMATS = {
-    ".png", ".jpg", ".jpeg", ".bmp", ".gif", ".tiff", ".tif",
-    ".webp", ".heic", ".heif", ".avif", ".ppm", ".tga", ".ico",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".bmp",
+    ".gif",
+    ".tiff",
+    ".tif",
+    ".webp",
+    ".heic",
+    ".heif",
+    ".avif",
+    ".ppm",
+    ".tga",
+    ".ico",
 }
 
 # 标准纸张尺寸 (宽, 高) 单位: 点 (1点 = 1/72英寸)
-PAGE_SIZES = {
-    "a4":       (595.28, 841.89),
-    "a3":       (841.89, 1190.55),
-    "a5":       (419.53, 595.28),
-    "letter":   (612, 792),
-    "legal":    (612, 1008),
-    "b5":       (498.90, 708.66),
-    "fit":      None,  # 自适应图片大小
+PAGE_SIZES: dict[str, tuple[float, float] | None] = {
+    "a4": (595.28, 841.89),
+    "a3": (841.89, 1190.55),
+    "a5": (419.53, 595.28),
+    "letter": (612, 792),
+    "legal": (612, 1008),
+    "b5": (498.90, 708.66),
+    "fit": None,  # 自适应图片大小
 }
 
 # PDF 压缩预设
@@ -53,14 +69,14 @@ PAGE_SIZES = {
 #   - medium:   中度压缩，图片质量 80，肉眼难辨
 #   - heavy:    重度压缩，图片质量 60，明显缩小
 #   - extreme:  极限压缩，图片质量 40 + 缩小分辨率，最小体积
-PDF_COMPRESS_PRESETS = {
+PDF_COMPRESS_PRESETS: dict[str, dict[str, Any]] = {
     "lossless": {
         "description": "无损 — 仅优化 PDF 结构，不重压缩图片",
-        "image_quality": None,   # None = 不重压缩图片
-        "max_image_dpi": None,   # None = 不缩小分辨率
-        "deflate": True,         # 对流数据使用 deflate 压缩
-        "clean": True,           # 清理无用对象
-        "garbage": 4,            # 垃圾回收等级 (0-4, 4最彻底)
+        "image_quality": None,  # None = 不重压缩图片
+        "max_image_dpi": None,  # None = 不缩小分辨率
+        "deflate": True,  # 对流数据使用 deflate 压缩
+        "clean": True,  # 清理无用对象
+        "garbage": 4,  # 垃圾回收等级 (0-4, 4最彻底)
     },
     "light": {
         "description": "轻度 — 图片质量95，几乎无视觉损失",
@@ -101,9 +117,11 @@ PDF_COMPRESS_PRESETS = {
 #  数据结构
 # ============================================================
 
+
 @dataclass
 class PDFResult:
     """PDF 操作结果"""
+
     success: bool = False
     output_path: str = ""
     input_size: int = 0
@@ -111,12 +129,13 @@ class PDFResult:
     duration: float = 0.0
     page_count: int = 0
     error: str = ""
-    details: Dict = field(default_factory=dict)
+    details: dict = field(default_factory=dict)
 
 
 @dataclass
 class PDFInfo:
     """PDF 文件信息"""
+
     path: str = ""
     size_bytes: int = 0
     page_count: int = 0
@@ -129,33 +148,34 @@ class PDFInfo:
     mod_date: str = ""
     encrypted: bool = False
     pdf_version: str = ""
-    pages: List[Dict] = field(default_factory=list)
+    pages: list[dict] = field(default_factory=list)
     image_count: int = 0
     total_image_size: int = 0
+    error: str = ""
 
 
 # ============================================================
 #  工具函数
 # ============================================================
 
+
 def _human_size(size_bytes: int) -> str:
     """将字节数转换为人类可读的大小"""
+    size = float(size_bytes)
     for unit in ("B", "KB", "MB", "GB"):
-        if size_bytes < 1024:
-            return f"{size_bytes:.1f} {unit}"
-        size_bytes /= 1024
-    return f"{size_bytes:.1f} TB"
+        if size < 1024:
+            return f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} TB"
 
 
-def _check_pymupdf():
+def _check_pymupdf() -> None:
     """检查 PyMuPDF 是否可用"""
     if not PYMUPDF_AVAILABLE:
-        raise ImportError(
-            "PDF 功能需要 PyMuPDF。请安装: pip install PyMuPDF"
-        )
+        raise ImportError("PDF 功能需要 PyMuPDF。请安装: pip install PyMuPDF")
 
 
-def _collect_images(input_paths: List[str], recursive: bool = False) -> List[str]:
+def _collect_images(input_paths: list[str], recursive: bool = False) -> list[str]:
     """收集所有图片文件（用于 merge）"""
     files = []
     for path_str in input_paths:
@@ -168,10 +188,10 @@ def _collect_images(input_paths: List[str], recursive: bool = False) -> List[str
             for item in sorted(path.glob(pattern)):
                 if item.is_file() and item.suffix.lower() in PDF_IMAGE_FORMATS:
                     files.append(str(item.resolve()))
-    return files
+    return list(dict.fromkeys(files))
 
 
-def _collect_pdfs(input_paths: List[str], recursive: bool = False) -> List[str]:
+def _collect_pdfs(input_paths: list[str], recursive: bool = False) -> list[str]:
     """收集所有 PDF 文件（用于 concat）"""
     files = []
     for path_str in input_paths:
@@ -184,35 +204,18 @@ def _collect_pdfs(input_paths: List[str], recursive: bool = False) -> List[str]:
             for item in sorted(path.glob(pattern)):
                 if item.is_file():
                     files.append(str(item.resolve()))
-    return files
+    return list(dict.fromkeys(files))
 
 
-def _image_to_bytes(image_path: str, quality: int = 95) -> bytes:
+def _image_to_bytes(image_path: str, quality: int = 95) -> tuple[bytes, tuple[int, int]]:
     """将图片转为 JPEG/PNG bytes，供 PyMuPDF 插入"""
-    img = Image.open(image_path)
-
-    # 自动旋转
-    try:
-        from PIL import ExifTags
-        exif = img.getexif()
-        for key, val in ExifTags.TAGS.items():
-            if val == "Orientation":
-                orientation = exif.get(key)
-                if orientation:
-                    rotations = {
-                        3: Image.ROTATE_180,
-                        6: Image.ROTATE_270,
-                        8: Image.ROTATE_90,
-                    }
-                    if orientation in rotations:
-                        img = img.transpose(rotations[orientation])
-                break
-    except Exception:
-        pass
+    with Image.open(image_path) as source:
+        ensure_static_image(source)
+        img = normalize_orientation(source).copy()
 
     # 有透明通道用 PNG，否则用 JPEG
     buf = io.BytesIO()
-    if img.mode in ("RGBA", "LA", "PA"):
+    if image_has_transparency(img):
         img.save(buf, format="PNG")
     else:
         if img.mode != "RGB":
@@ -226,12 +229,13 @@ def _image_to_bytes(image_path: str, quality: int = 95) -> bytes:
 #  1. merge — 多图合并成 PDF
 # ============================================================
 
+
 def pdf_merge_images(
-    image_paths: List[str],
+    image_paths: list[str],
     output_path: str,
     page_size: str = "a4",
     quality: int = 95,
-    margin: int = 0,
+    margin: int = DEFAULT_PDF_MERGE_MARGIN,
     landscape: bool = False,
     overwrite: bool = False,
 ) -> PDFResult:
@@ -252,54 +256,65 @@ def pdf_merge_images(
     start_time = time.time()
 
     try:
+        normalized_page_size = page_size.lower()
+        if not image_paths:
+            raise ValueError("no_input_images")
+        if normalized_page_size not in PAGE_SIZES:
+            raise ValueError(f"unsupported_page_size:{page_size}")
+        if not 1 <= quality <= 100:
+            raise ValueError("quality_must_be_between_1_and_100")
+        if margin < 0:
+            raise ValueError("margin_must_not_be_negative")
         if os.path.exists(output_path) and not overwrite:
             result.error = "输出文件已存在（使用 --overwrite 覆盖）"
             return result
 
         # 计算总输入大小
         result.input_size = sum(os.path.getsize(p) for p in image_paths)
+        with fitz.open() as doc:
+            for img_path in image_paths:
+                img_data, (img_w, img_h) = _image_to_bytes(img_path, quality)
 
-        doc = fitz.open()
+                # 确定页面大小
+                if normalized_page_size == "fit":
+                    # 自适应页面使用图片尺寸，按 72 DPI 将像素换算为点。
+                    pw, ph = float(img_w), float(img_h)
+                else:
+                    size = PAGE_SIZES[normalized_page_size]
+                    if size is None:
+                        raise ValueError(f"无效页面尺寸: {page_size}")
+                    pw, ph = size
 
-        for img_path in image_paths:
-            img_data, (img_w, img_h) = _image_to_bytes(img_path, quality)
+                # 横向
+                if landscape:
+                    pw, ph = ph, pw
 
-            # 确定页面大小
-            if page_size.lower() == "fit":
-                # 自适应：页面大小 = 图片大小 (像素→点, 假设 72 DPI)
-                pw, ph = float(img_w), float(img_h)
-            else:
-                size = PAGE_SIZES.get(page_size.lower(), PAGE_SIZES["a4"])
-                pw, ph = size
+                # 创建页面
+                page = doc.new_page(width=pw, height=ph)
 
-            # 横向
-            if landscape:
-                pw, ph = ph, pw
+                # 计算图片在页面中的位置（居中，保持比例）
+                avail_w = pw - 2 * margin
+                avail_h = ph - 2 * margin
+                if avail_w <= 0 or avail_h <= 0:
+                    raise ValueError("margin_too_large_for_page")
 
-            # 创建页面
-            page = doc.new_page(width=pw, height=ph)
+                scale_w = avail_w / img_w
+                scale_h = avail_h / img_h
+                scale = min(scale_w, scale_h)
 
-            # 计算图片在页面中的位置（居中，保持比例）
-            avail_w = pw - 2 * margin
-            avail_h = ph - 2 * margin
+                draw_w = img_w * scale
+                draw_h = img_h * scale
 
-            scale_w = avail_w / img_w
-            scale_h = avail_h / img_h
-            scale = min(scale_w, scale_h)
+                x0 = margin + (avail_w - draw_w) / 2
+                y0 = margin + (avail_h - draw_h) / 2
 
-            draw_w = img_w * scale
-            draw_h = img_h * scale
+                rect = fitz.Rect(x0, y0, x0 + draw_w, y0 + draw_h)
+                page.insert_image(rect, stream=img_data)
 
-            x0 = margin + (avail_w - draw_w) / 2
-            y0 = margin + (avail_h - draw_h) / 2
-
-            rect = fitz.Rect(x0, y0, x0 + draw_w, y0 + draw_h)
-            page.insert_image(rect, stream=img_data)
-
-        # 保存
-        os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
-        doc.save(output_path, deflate=True, garbage=4)
-        doc.close()
+            # 保存
+            os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+            with atomic_output_path(output_path) as temporary:
+                doc.save(temporary, deflate=True, garbage=4)
 
         result.output_size = os.path.getsize(output_path)
         result.page_count = len(image_paths)
@@ -316,12 +331,13 @@ def pdf_merge_images(
 #  2. extract — PDF 拆分为图片
 # ============================================================
 
+
 def pdf_extract_pages(
     pdf_path: str,
     output_dir: str,
     output_format: str = "png",
-    dpi: int = 300,
-    pages: Optional[str] = None,
+    dpi: int = DEFAULT_PDF_EXTRACT_DPI,
+    pages: str | None = None,
     prefix: str = "",
     overwrite: bool = False,
 ) -> PDFResult:
@@ -332,7 +348,7 @@ def pdf_extract_pages(
         pdf_path: 输入 PDF 路径
         output_dir: 输出目录
         output_format: 输出图片格式 (png/jpg/webp/tiff)
-        dpi: 渲染 DPI (越高越清晰，默认 300)
+        dpi: 渲染 DPI (越高越清晰，默认 150)
         pages: 指定页码，如 "1-5,8,10-12"，None 表示全部
         prefix: 输出文件名前缀
         overwrite: 是否覆盖
@@ -342,6 +358,11 @@ def pdf_extract_pages(
     start_time = time.time()
 
     try:
+        fmt = output_format.lower().lstrip(".")
+        if fmt not in {"png", "jpg", "jpeg", "webp", "tiff"}:
+            raise ValueError(f"unsupported_output_format:{output_format}")
+        if not 72 <= dpi <= 1200:
+            raise ValueError("dpi_must_be_between_72_and_1200")
         result.input_size = os.path.getsize(pdf_path)
         doc = fitz.open(pdf_path)
         total_pages = doc.page_count
@@ -351,7 +372,6 @@ def pdf_extract_pages(
 
         os.makedirs(output_dir, exist_ok=True)
 
-        fmt = output_format.lower().lstrip(".")
         if fmt in ("jpg", "jpeg"):
             pix_format = "jpeg"
             ext = ".jpg"
@@ -368,15 +388,17 @@ def pdf_extract_pages(
 
         output_total_size = 0
         extracted_count = 0
+        skipped_existing = 0
 
         for page_idx in page_indices:
             page = doc[page_idx]
             page_num = page_idx + 1
 
             out_name = f"{prefix}page_{page_num:04d}{ext}"
-            out_path = os.path.join(output_dir, out_name)
+            out_path = safe_output_path(output_dir, out_name)
 
             if os.path.exists(out_path) and not overwrite:
+                skipped_existing += 1
                 continue
 
             # 渲染页面
@@ -384,17 +406,18 @@ def pdf_extract_pages(
             mat = fitz.Matrix(zoom, zoom)
             pix = page.get_pixmap(matrix=mat, alpha=False)
 
-            if fmt in ("webp", "tiff"):
-                # 通过 Pillow 转换
-                img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-                if fmt == "webp":
-                    img.save(out_path, format="WEBP", quality=95)
+            with atomic_output_path(out_path) as temporary:
+                if fmt in ("webp", "tiff"):
+                    # 通过 Pillow 转换
+                    img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+                    if fmt == "webp":
+                        img.save(temporary, format="WEBP", quality=95)
+                    else:
+                        img.save(temporary, format="TIFF")
+                elif pix_format == "jpeg":
+                    pix.save(temporary, output=pix_format)
                 else:
-                    img.save(out_path, format="TIFF")
-            elif pix_format == "jpeg":
-                pix.save(out_path, output=pix_format)
-            else:
-                pix.save(out_path)
+                    pix.save(temporary)
 
             output_total_size += os.path.getsize(out_path)
             extracted_count += 1
@@ -405,7 +428,9 @@ def pdf_extract_pages(
         result.page_count = extracted_count
         result.success = True
         result.details["total_pages"] = total_pages
+        result.details["requested_pages"] = len(page_indices)
         result.details["extracted_pages"] = extracted_count
+        result.details["skipped_existing"] = skipped_existing
 
     except Exception as e:
         result.error = str(e)
@@ -414,29 +439,42 @@ def pdf_extract_pages(
     return result
 
 
-def _parse_page_range(pages_str: Optional[str], total: int) -> List[int]:
+def _parse_page_range(pages_str: str | None, total: int) -> list[int]:
     """
     解析页码范围字符串
 
-    支持格式: "1-5,8,10-12" → [0,1,2,3,4,7,9,10,11]
-    None → 全部页码
+    格式 "1-5,8,10-12" 解析为 [0,1,2,3,4,7,9,10,11]。
+    None 表示全部页码。
     """
     if pages_str is None:
         return list(range(total))
 
+    if total <= 0 or not pages_str.strip():
+        raise ValueError("invalid_page_range")
+
     indices = set()
-    for part in pages_str.split(","):
-        part = part.strip()
-        if "-" in part:
-            start, end = part.split("-", 1)
-            start = max(1, int(start.strip()))
-            end = min(total, int(end.strip()))
-            for i in range(start, end + 1):
-                indices.add(i - 1)
-        else:
-            idx = int(part.strip()) - 1
-            if 0 <= idx < total:
-                indices.add(idx)
+    try:
+        for part in pages_str.split(","):
+            part = part.strip()
+            if not part:
+                raise ValueError
+            if "-" in part:
+                if part.count("-") != 1:
+                    raise ValueError
+                start_text, end_text = part.split("-", 1)
+                start = int(start_text.strip())
+                end = int(end_text.strip())
+                if start < 1 or end > total or start > end:
+                    raise ValueError
+                for page_number in range(start, end + 1):
+                    indices.add(page_number - 1)
+            else:
+                page_number = int(part)
+                if not 1 <= page_number <= total:
+                    raise ValueError
+                indices.add(page_number - 1)
+    except (TypeError, ValueError) as error:
+        raise ValueError("invalid_page_range") from error
 
     return sorted(indices)
 
@@ -445,12 +483,13 @@ def _parse_page_range(pages_str: Optional[str], total: int) -> List[int]:
 #  3. compress — PDF 压缩优化
 # ============================================================
 
+
 def pdf_compress(
     input_path: str,
     output_path: str,
     preset: str = "medium",
-    image_quality: Optional[int] = None,
-    max_image_dpi: Optional[int] = None,
+    image_quality: int | None = None,
+    max_image_dpi: int | None = None,
     overwrite: bool = False,
 ) -> PDFResult:
     """
@@ -478,6 +517,13 @@ def pdf_compress(
     start_time = time.time()
 
     try:
+        normalized_preset = preset.lower()
+        if normalized_preset not in PDF_COMPRESS_PRESETS:
+            raise ValueError(f"unsupported_pdf_compress_preset:{preset}")
+        if image_quality is not None and not 1 <= image_quality <= 100:
+            raise ValueError("image_quality_must_be_between_1_and_100")
+        if max_image_dpi is not None and not 72 <= max_image_dpi <= 1200:
+            raise ValueError("max_image_dpi_must_be_between_72_and_1200")
         if os.path.exists(output_path) and not overwrite:
             result.error = "输出文件已存在（使用 --overwrite 覆盖）"
             return result
@@ -485,7 +531,7 @@ def pdf_compress(
         result.input_size = os.path.getsize(input_path)
 
         # 获取压缩参数
-        config = PDF_COMPRESS_PRESETS.get(preset, PDF_COMPRESS_PRESETS["medium"]).copy()
+        config = PDF_COMPRESS_PRESETS[normalized_preset].copy()
 
         # 自定义参数覆盖预设
         if image_quality is not None:
@@ -513,10 +559,12 @@ def pdf_compress(
 
         if img_quality is not None:
             # 有损压缩：重压缩图片 + 结构优化
-            stats = _compress_rebuild(doc, output_path, img_quality, max_dpi, save_opts)
+            with atomic_output_path(output_path) as temporary:
+                stats = _compress_rebuild(doc, temporary, img_quality, max_dpi, save_opts)
         else:
             # 无损压缩：仅结构优化（去重、清理、deflate）
-            doc.save(output_path, **save_opts)
+            with atomic_output_path(output_path) as temporary:
+                doc.save(temporary, **save_opts)
             stats = {"images_processed": 0, "images_skipped": 0, "images_replaced": 0}
 
         doc.close()
@@ -526,7 +574,7 @@ def pdf_compress(
         result.details["images_processed"] = stats["images_processed"]
         result.details["images_skipped"] = stats["images_skipped"]
         result.details["images_replaced"] = stats["images_replaced"]
-        result.details["preset"] = preset
+        result.details["preset"] = normalized_preset
 
     except Exception as e:
         result.error = str(e)
@@ -539,9 +587,9 @@ def _compress_rebuild(
     doc: "fitz.Document",
     output_path: str,
     image_quality: int,
-    max_dpi: Optional[int],
+    max_dpi: int | None,
     save_opts: dict,
-) -> Dict:
+) -> dict:
     """
     通过重建方式压缩 PDF：
     遍历每页，提取所有图片并用指定质量重新编码，然后替换。
@@ -588,7 +636,7 @@ def _compress_rebuild(
                 img_width = base_image.get("width", 0)
                 img_height = base_image.get("height", 0)
 
-                pil_img = Image.open(io.BytesIO(img_bytes))
+                pil_img: Image.Image = Image.open(io.BytesIO(img_bytes))
 
                 # 降低分辨率
                 if max_dpi and img_width > 0 and img_height > 0:
@@ -608,20 +656,21 @@ def _compress_rebuild(
                                     new_w = max(1, int(img_width * scale))
                                     new_h = max(1, int(img_height * scale))
                                     pil_img = pil_img.resize(
-                                        (new_w, new_h), Image.LANCZOS
+                                        (new_w, new_h), Image.Resampling.LANCZOS
                                     )
                     except Exception:
                         pass
 
                 # 重新编码
                 buf = io.BytesIO()
-                if pil_img.mode in ("RGBA", "LA", "PA"):
+                if image_has_transparency(pil_img):
                     pil_img.save(buf, format="PNG", optimize=True)
                 else:
                     if pil_img.mode != "RGB":
                         pil_img = pil_img.convert("RGB")
                     pil_img.save(
-                        buf, format="JPEG",
+                        buf,
+                        format="JPEG",
                         quality=image_quality,
                         optimize=True,
                     )
@@ -655,8 +704,9 @@ def _compress_rebuild(
 #  4. concat — 多个 PDF 合并
 # ============================================================
 
+
 def pdf_concat(
-    pdf_paths: List[str],
+    pdf_paths: list[str],
     output_path: str,
     overwrite: bool = False,
 ) -> PDFResult:
@@ -673,6 +723,8 @@ def pdf_concat(
     start_time = time.time()
 
     try:
+        if len(pdf_paths) < 2:
+            raise ValueError("need_at_least_two")
         if os.path.exists(output_path) and not overwrite:
             result.error = "输出文件已存在（使用 --overwrite 覆盖）"
             return result
@@ -689,7 +741,8 @@ def pdf_concat(
             src.close()
 
         os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
-        merged.save(output_path, deflate=True, garbage=4)
+        with atomic_output_path(output_path) as temporary:
+            merged.save(temporary, deflate=True, garbage=4)
         merged.close()
 
         result.output_size = os.path.getsize(output_path)
@@ -707,6 +760,7 @@ def pdf_concat(
 # ============================================================
 #  5. info — PDF 信息查看
 # ============================================================
+
 
 def pdf_get_info(pdf_path: str) -> PDFInfo:
     """
@@ -766,6 +820,6 @@ def pdf_get_info(pdf_path: str) -> PDFInfo:
         doc.close()
 
     except Exception as e:
-        info.title = f"错误: {e}"
+        info.error = str(e)
 
     return info

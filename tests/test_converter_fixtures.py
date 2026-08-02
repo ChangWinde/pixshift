@@ -4,6 +4,7 @@ from pathlib import Path
 
 from PIL import Image
 
+from pixshift.commands.convert_command import _parse_resize
 from pixshift.converter import PixShiftConverter
 
 
@@ -23,12 +24,30 @@ def test_process_image_auto_orient_hook_is_used(monkeypatch):
 
     def fake_orient(img):
         called["ok"] = True
-        return img.transpose(Image.ROTATE_90)
+        return img.transpose(Image.Transpose.ROTATE_90)
 
     monkeypatch.setattr(converter, "_auto_orient", fake_orient)
     result = converter._process_image(source, "png")
     assert called["ok"] is True
     assert result.size == (20, 10)
+
+
+def test_percent_resize_never_produces_zero_dimension():
+    converter = PixShiftConverter(resize_percent=1)
+
+    result = converter._process_image(Image.new("RGB", (1, 1)), "png")
+
+    assert result.size == (1, 1)
+
+
+def test_resize_rejects_non_finite_percentages():
+    for expression in ("nan%", "inf%", "-inf%"):
+        try:
+            _parse_resize(expression)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"expected {expression} to be rejected")
 
 
 def test_convert_single_includes_exif_and_icc_when_enabled(tmp_path, monkeypatch):
@@ -37,7 +56,9 @@ def test_convert_single_includes_exif_and_icc_when_enabled(tmp_path, monkeypatch
     source_path.write_bytes(b"input")
 
     src_image = Image.new("RGB", (4, 4), (1, 2, 3))
-    src_image.info["exif"] = b"fake-exif"
+    exif = Image.Exif()
+    exif[315] = "PixShift"
+    src_image.info["exif"] = exif.tobytes()
     src_image.info["icc_profile"] = b"fake-icc"
     captured = {}
 
@@ -53,7 +74,7 @@ def test_convert_single_includes_exif_and_icc_when_enabled(tmp_path, monkeypatch
     result = converter.convert_single(str(source_path), str(output_path))
 
     assert result.success is True
-    assert captured["exif"] == b"fake-exif"
+    assert captured["exif"]
     assert captured["icc_profile"] == b"fake-icc"
 
 
@@ -81,4 +102,3 @@ def test_convert_single_excludes_exif_and_icc_when_disabled(tmp_path, monkeypatc
     assert result.success is True
     assert "exif" not in captured
     assert "icc_profile" not in captured
-

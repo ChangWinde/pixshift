@@ -1,9 +1,12 @@
 """Operation wrappers for image compare workflows."""
 
-from ..compare_engine import compare_images
+from ..compare_engine import CompareResult, compare_images
 
 
-def compare(image_a: str, image_b: str, use_blocks: bool = True, block_size: int = 64):
+def compare(
+    image_a: str, image_b: str, use_blocks: bool = True, block_size: int = 64
+) -> CompareResult:
     """Compare two images and return quality metrics."""
-    return compare_images(image_a=image_a, image_b=image_b, use_blocks=use_blocks, block_size=block_size)
-
+    return compare_images(
+        image_a=image_a, image_b=image_b, use_blocks=use_blocks, block_size=block_size
+    )

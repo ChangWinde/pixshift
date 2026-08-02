@@ -10,43 +10,52 @@ PixShift Montage Engine — 拼图/网格拼接
 
 import os
 import time
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, List, Tuple
-from dataclasses import dataclass, field
 
 from PIL import Image, ImageDraw, ImageFont
 
-from .converter import SUPPORTED_INPUT_FORMATS, _human_size
-
+from .converter import SUPPORTED_INPUT_FORMATS
+from .core.errors import AnimatedInputNotSupportedError
+from .core.files import atomic_output_path
+from .core.metadata import (
+    ensure_static_image,
+    image_has_transparency,
+    normalize_orientation,
+)
 
 # ============================================================
 #  数据结构
 # ============================================================
 
+
 @dataclass
 class MontageResult:
     """拼图结果"""
+
     output_path: str = ""
     success: bool = False
     output_size: int = 0
     duration: float = 0.0
     error: str = ""
     total_images: int = 0
-    grid_size: Tuple[int, int] = (0, 0)  # (cols, rows)
-    canvas_size: Tuple[int, int] = (0, 0)  # (width, height)
+    grid_size: tuple[int, int] = (0, 0)  # (cols, rows)
+    canvas_size: tuple[int, int] = (0, 0)  # (width, height)
+    skipped_invalid: int = 0
 
 
 # ============================================================
 #  核心拼图函数
 # ============================================================
 
+
 def create_montage(
-    input_paths: List[str],
+    input_paths: list[str],
     output_path: str,
     cols: int = 3,
     gap: int = 10,
-    cell_width: Optional[int] = None,
-    cell_height: Optional[int] = None,
+    cell_width: int | None = None,
+    cell_height: int | None = None,
     background: str = "255,255,255",
     border: int = 0,
     border_color: str = "200,200,200",
@@ -81,39 +90,54 @@ def create_montage(
             result.error = "没有输入图片"
             return result
 
+        output_extension = Path(output_path).suffix.lower()
+        if output_extension not in {".png", ".jpg", ".jpeg", ".webp"}:
+            raise ValueError(f"unsupported_output_format: {output_extension or '<none>'}")
+
+        if cols <= 0 or gap < 0 or border < 0:
+            raise ValueError("列数必须为正数，间距和边框不能为负数")
+        if cell_width is not None and cell_width <= 0:
+            raise ValueError("单元格宽度必须为正数")
+        if cell_height is not None and cell_height <= 0:
+            raise ValueError("单元格高度必须为正数")
+
         if os.path.exists(output_path) and not overwrite:
             result.error = "输出文件已存在（使用 --overwrite 覆盖）"
             return result
 
         os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
 
-        # 加载所有图片
-        images = []
-        labels_text = []
+        # First pass keeps only dimensions and paths. Full decoded images are
+        # intentionally not retained together, which bounds peak memory for batches.
+        image_specs: list[tuple[str, int, int]] = []
         for p in input_paths:
             try:
-                img = Image.open(p)
-                images.append(img)
-                labels_text.append(Path(p).name)
+                with Image.open(p) as source:
+                    ensure_static_image(source)
+                    normalized = normalize_orientation(source)
+                    image_specs.append((p, normalized.width, normalized.height))
+            except AnimatedInputNotSupportedError:
+                raise
             except Exception:
+                result.skipped_invalid += 1
                 continue
 
-        if not images:
+        if not image_specs:
             result.error = "没有可用的图片"
             return result
 
-        result.total_images = len(images)
+        result.total_images = len(image_specs)
 
         # 计算网格
-        rows = (len(images) + cols - 1) // cols
+        rows = (len(image_specs) + cols - 1) // cols
         result.grid_size = (cols, rows)
 
         # 计算单元格大小
         if cell_width is None or cell_height is None:
             if auto_size:
                 # 自动计算：取所有图片的中位数大小
-                widths = sorted([img.width for img in images])
-                heights = sorted([img.height for img in images])
+                widths = sorted(spec[1] for spec in image_specs)
+                heights = sorted(spec[2] for spec in image_specs)
                 median_w = widths[len(widths) // 2]
                 median_h = heights[len(heights) // 2]
 
@@ -123,8 +147,8 @@ def create_montage(
                     cell_height = min(median_h, 600)
             else:
                 # 使用最大尺寸
-                cell_width = cell_width or max(img.width for img in images)
-                cell_height = cell_height or max(img.height for img in images)
+                cell_width = cell_width or max(spec[1] for spec in image_specs)
+                cell_height = cell_height or max(spec[2] for spec in image_specs)
 
         # 标签高度
         label_height = (label_size + 10) if label else 0
@@ -148,7 +172,7 @@ def create_montage(
             font = _get_simple_font(label_size)
 
         # 放置图片
-        for idx, img in enumerate(images):
+        for idx, (image_path, _, _) in enumerate(image_specs):
             row = idx // cols
             col = idx % cols
 
@@ -156,7 +180,10 @@ def create_montage(
             y = gap + row * (cell_height + label_height + gap)
 
             # 缩放图片以适应单元格
-            resized = _fit_image(img, cell_width, cell_height)
+            with Image.open(image_path) as source:
+                ensure_static_image(source)
+                img = normalize_orientation(source)
+                resized = _fit_image(img, cell_width, cell_height)
 
             # 居中放置
             offset_x = x + (cell_width - resized.width) // 2
@@ -165,24 +192,28 @@ def create_montage(
             # 边框
             if border > 0:
                 draw.rectangle(
-                    [offset_x - border, offset_y - border,
-                     offset_x + resized.width + border - 1,
-                     offset_y + resized.height + border - 1],
+                    [
+                        offset_x - border,
+                        offset_y - border,
+                        offset_x + resized.width + border - 1,
+                        offset_y + resized.height + border - 1,
+                    ],
                     outline=bd_color,
                     width=border,
                 )
 
             # 粘贴图片
-            if resized.mode == "RGBA":
-                canvas.paste(resized, (offset_x, offset_y), resized)
+            if image_has_transparency(resized):
+                rgba = resized.convert("RGBA")
+                canvas.paste(rgba, (offset_x, offset_y), rgba)
             else:
                 canvas.paste(resized, (offset_x, offset_y))
 
             # 标签
-            if label and font and idx < len(labels_text):
+            if label and font:
                 label_x = x + cell_width // 2
                 label_y = y + cell_height + 2
-                text = labels_text[idx]
+                text = Path(image_path).name
                 # 截断过长的文件名
                 if len(text) > 30:
                     text = text[:27] + "..."
@@ -196,13 +227,14 @@ def create_montage(
                 )
 
         # 保存
-        ext = Path(output_path).suffix.lower()
-        if ext in (".jpg", ".jpeg"):
-            canvas.save(output_path, format="JPEG", quality=95, optimize=True)
-        elif ext == ".webp":
-            canvas.save(output_path, format="WEBP", quality=95)
-        else:
-            canvas.save(output_path, format="PNG", optimize=True)
+        ext = output_extension
+        with atomic_output_path(output_path) as temporary:
+            if ext in (".jpg", ".jpeg"):
+                canvas.save(temporary, format="JPEG", quality=95, optimize=True)
+            elif ext == ".webp":
+                canvas.save(temporary, format="WEBP", quality=95)
+            else:
+                canvas.save(temporary, format="PNG", optimize=True)
 
         result.output_size = os.path.getsize(output_path)
         result.success = True
@@ -218,6 +250,7 @@ def create_montage(
 #  工具函数
 # ============================================================
 
+
 def _fit_image(
     img: Image.Image,
     max_width: int,
@@ -225,23 +258,33 @@ def _fit_image(
 ) -> Image.Image:
     """缩放图片以适应指定大小（保持比例）"""
     img_copy = img.copy()
-    img_copy.thumbnail((max_width, max_height), Image.LANCZOS)
+    img_copy.thumbnail((max_width, max_height), Image.Resampling.LANCZOS)
     return img_copy
 
 
-def _parse_rgb(color_str: str) -> Tuple[int, int, int]:
+def _parse_rgb(color_str: str) -> tuple[int, int, int]:
     """解析 RGB 颜色字符串"""
     if color_str.startswith("#"):
         hex_str = color_str[1:]
-        return (int(hex_str[0:2], 16), int(hex_str[2:4], 16), int(hex_str[4:6], 16))
+        if len(hex_str) != 6:
+            raise ValueError("十六进制颜色必须使用 #RRGGBB")
+        result = (
+            int(hex_str[0:2], 16),
+            int(hex_str[2:4], 16),
+            int(hex_str[4:6], 16),
+        )
+    else:
+        parts = [int(x.strip()) for x in color_str.split(",")]
+        if len(parts) != 3:
+            raise ValueError("颜色必须使用 R,G,B 或 #RRGGBB")
+        result = (parts[0], parts[1], parts[2])
 
-    parts = [int(x.strip()) for x in color_str.split(",")]
-    if len(parts) >= 3:
-        return (parts[0], parts[1], parts[2])
-    return (255, 255, 255)
+    if any(not 0 <= channel <= 255 for channel in result):
+        raise ValueError("颜色通道必须在 0 到 255 之间")
+    return result
 
 
-def _get_simple_font(size: int):
+def _get_simple_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
     """获取简单字体"""
     system_fonts = [
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
@@ -259,9 +302,9 @@ def _get_simple_font(size: int):
 
 
 def collect_montage_files(
-    input_paths: List[str],
+    input_paths: list[str],
     recursive: bool = False,
-) -> List[str]:
+) -> list[str]:
     """收集所有可拼接的图片文件"""
     files = []
     for path_str in input_paths:

@@ -2,30 +2,39 @@
 PixShift Compress Engine — 智能图片压缩（不改格式，只优化体积）
 
 功能:
-  - 同格式压缩优化（PNG→优化PNG, JPG→更小JPG）
+  - 同格式压缩优化（优化 PNG 和 JPEG 编码，不改变输出格式）
   - 目标文件大小限制（二分法自动调质量）
   - 批量 + 并行处理
 """
 
-import os
 import io
+import os
 import time
-from pathlib import Path
-from typing import Optional, Tuple, List, Dict
 from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
 
 from PIL import Image
 
-from .converter import SUPPORTED_INPUT_FORMATS, _human_size
-
+from .core.defaults import DEFAULT_COMPRESS_PRESET
+from .core.files import atomic_copy_file, atomic_write_bytes
+from .core.metadata import (
+    ensure_static_image,
+    flatten_transparency,
+    image_has_transparency,
+    normalize_orientation,
+    normalized_exif_bytes,
+)
 
 # ============================================================
 #  数据结构
 # ============================================================
 
+
 @dataclass
 class CompressResult:
     """单个文件的压缩结果"""
+
     input_path: str = ""
     output_path: str = ""
     success: bool = False
@@ -40,6 +49,7 @@ class CompressResult:
 @dataclass
 class CompressBatchResult:
     """批量压缩汇总"""
+
     total: int = 0
     success: int = 0
     failed: int = 0
@@ -47,7 +57,7 @@ class CompressBatchResult:
     total_input_size: int = 0
     total_output_size: int = 0
     total_duration: float = 0.0
-    results: List[CompressResult] = field(default_factory=list)
+    results: list[CompressResult] = field(default_factory=list)
 
 
 # ============================================================
@@ -55,7 +65,7 @@ class CompressBatchResult:
 # ============================================================
 
 # 支持压缩的格式及其质量参数范围
-COMPRESSIBLE_FORMATS = {
+COMPRESSIBLE_FORMATS: dict[str, dict[str, Any]] = {
     ".jpg": {"min_q": 1, "max_q": 100, "format": "JPEG", "param": "quality"},
     ".jpeg": {"min_q": 1, "max_q": 100, "format": "JPEG", "param": "quality"},
     ".png": {"min_q": 0, "max_q": 9, "format": "PNG", "param": "compress_level"},
@@ -67,10 +77,12 @@ COMPRESSIBLE_FORMATS = {
     ".tif": {"min_q": 0, "max_q": 9, "format": "TIFF", "param": "compression"},
 }
 
+LOSSLESS_COMPRESSION_FORMATS = {".png", ".tif", ".tiff"}
+
 # 压缩预设
-COMPRESS_PRESETS = {
+COMPRESS_PRESETS: dict[str, dict[str, Any]] = {
     "lossless": {
-        "description": "无损优化 — 仅优化编码，不降低质量",
+        "description": "严格无损 — 有损源格式按字节复制，避免再次编码",
         "jpg_quality": 100,
         "png_level": 9,
         "webp_quality": 100,
@@ -106,6 +118,7 @@ COMPRESS_PRESETS = {
 #  核心压缩函数
 # ============================================================
 
+
 def _parse_target_size(target_str: str) -> int:
     """
     解析目标文件大小字符串
@@ -123,7 +136,7 @@ def _parse_target_size(target_str: str) -> int:
 
     for suffix, mult in sorted(multipliers.items(), key=lambda x: -len(x[0])):
         if target_str.endswith(suffix):
-            num_str = target_str[:-len(suffix)].strip()
+            num_str = target_str[: -len(suffix)].strip()
             return int(float(num_str) * mult)
 
     # 纯数字，默认字节
@@ -133,10 +146,10 @@ def _parse_target_size(target_str: str) -> int:
 def compress_single(
     input_path: str,
     output_path: str,
-    quality: Optional[int] = None,
-    preset: str = "medium",
-    target_size: Optional[str] = None,
-    max_size: Optional[int] = None,
+    quality: int | None = None,
+    preset: str = DEFAULT_COMPRESS_PRESET,
+    target_size: str | None = None,
+    max_size: int | None = None,
     overwrite: bool = False,
 ) -> CompressResult:
     """
@@ -172,27 +185,46 @@ def compress_single(
             result.error = f"不支持压缩此格式: {ext}"
             return result
 
+        if preset not in COMPRESS_PRESETS:
+            raise ValueError(f"unsupported_compress_preset:{preset}")
+        if max_size is not None and max_size <= 0:
+            raise ValueError("max_size_must_be_positive")
+        if quality is not None and not 1 <= quality <= 100:
+            raise ValueError("quality_must_be_between_1_and_100")
+        if quality is not None and target_size is not None:
+            raise ValueError("quality_and_target_size_are_mutually_exclusive")
+
         os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
 
-        img = Image.open(input_path)
-
-        # 缩小尺寸
-        if max_size:
-            img.thumbnail((max_size, max_size), Image.LANCZOS)
-
-        # 目标大小模式：二分法
-        if target_size:
-            target_bytes = _parse_target_size(target_size)
-            result = _compress_to_target(
-                img, input_path, output_path, ext, fmt_config,
-                target_bytes, result
-            )
-        else:
-            # 固定质量模式
-            actual_quality = _get_quality(ext, quality, preset)
-            _save_compressed(img, output_path, ext, fmt_config, actual_quality)
-            result.quality_used = actual_quality
+        exact_copy_formats = {".jpg", ".jpeg", ".webp", ".avif", ".heic", ".heif"}
+        if (
+            preset == "lossless"
+            and quality is None
+            and target_size is None
+            and max_size is None
+            and ext in exact_copy_formats
+        ):
+            atomic_copy_file(input_path, output_path)
+            result.quality_used = 100
             result.iterations = 1
+        else:
+            with Image.open(input_path) as source:
+                ensure_static_image(source)
+                img = normalize_orientation(source)
+
+                if max_size:
+                    img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+
+                if target_size:
+                    target_bytes = _parse_target_size(target_size)
+                    result = _compress_to_target(
+                        img, output_path, ext, fmt_config, target_bytes, result
+                    )
+                else:
+                    actual_quality = _get_quality(ext, quality, preset)
+                    _save_compressed(img, output_path, ext, fmt_config, actual_quality)
+                    result.quality_used = actual_quality
+                    result.iterations = 1
 
         if os.path.exists(output_path):
             result.output_size = os.path.getsize(output_path)
@@ -205,23 +237,25 @@ def compress_single(
     return result
 
 
-def _get_quality(ext: str, quality: Optional[int], preset: str) -> int:
+def _get_quality(ext: str, quality: int | None, preset: str) -> int:
     """根据格式、自定义质量、预设获取实际质量值"""
+    preset_config = COMPRESS_PRESETS[preset]
+
+    # PNG and TIFF are lossless here. A 1-100 visual-quality value has no
+    # meaningful mapping to their compression effort and must not override it.
+    if ext == ".png":
+        return int(preset_config.get("png_level", 9))
+    if ext in (".tif", ".tiff"):
+        return 0
     if quality is not None:
         return quality
 
-    preset_config = COMPRESS_PRESETS.get(preset, COMPRESS_PRESETS["medium"])
-
     if ext in (".jpg", ".jpeg"):
-        return preset_config.get("jpg_quality", 82)
-    elif ext == ".png":
-        return preset_config.get("png_level", 9)
-    elif ext == ".webp":
-        return preset_config.get("webp_quality", 80)
-    elif ext in (".avif",):
-        return preset_config.get("webp_quality", 80)
+        return int(preset_config.get("jpg_quality", 82))
+    elif ext == ".webp" or ext in (".avif",):
+        return int(preset_config.get("webp_quality", 80))
     elif ext in (".heic", ".heif"):
-        return preset_config.get("jpg_quality", 82)
+        return int(preset_config.get("jpg_quality", 82))
     else:
         return 80
 
@@ -230,17 +264,28 @@ def _save_compressed(
     img: Image.Image,
     output_path: str,
     ext: str,
-    fmt_config: dict,
+    fmt_config: dict[str, Any],
     quality_val: int,
-):
+) -> None:
     """按指定质量保存压缩后的图片"""
-    save_kwargs = {}
+    atomic_write_bytes(output_path, _encode_compressed(img, ext, fmt_config, quality_val))
+
+
+def _encode_compressed(
+    img: Image.Image,
+    ext: str,
+    fmt_config: dict[str, Any],
+    quality_val: int,
+) -> bytes:
+    """Encode one image using the exact payload used for final output."""
+    save_kwargs: dict[str, Any] = {}
+    save_img = img
 
     if ext in (".jpg", ".jpeg"):
-        if img.mode in ("RGBA", "LA", "PA"):
-            img = img.convert("RGB")
-        elif img.mode not in ("RGB", "L"):
-            img = img.convert("RGB")
+        if image_has_transparency(save_img):
+            save_img = flatten_transparency(save_img)
+        elif save_img.mode not in ("RGB", "L"):
+            save_img = save_img.convert("RGB")
         save_kwargs = {
             "format": "JPEG",
             "quality": quality_val,
@@ -260,15 +305,15 @@ def _save_compressed(
             "method": 6,
         }
     elif ext == ".avif":
-        if img.mode not in ("RGB", "RGBA"):
-            img = img.convert("RGB")
+        if save_img.mode not in ("RGB", "RGBA"):
+            save_img = save_img.convert("RGB")
         save_kwargs = {
             "format": "AVIF",
             "quality": quality_val,
         }
     elif ext in (".heic", ".heif"):
-        if img.mode not in ("RGB", "RGBA"):
-            img = img.convert("RGB")
+        if save_img.mode not in ("RGB", "RGBA"):
+            save_img = save_img.convert("RGB")
         save_kwargs = {
             "format": "HEIF",
             "quality": quality_val,
@@ -283,7 +328,7 @@ def _save_compressed(
 
     # 保留 EXIF 和 ICC
     try:
-        exif_data = img.info.get("exif")
+        exif_data = normalized_exif_bytes(img)
         if exif_data:
             save_kwargs["exif"] = exif_data
     except Exception:
@@ -296,15 +341,16 @@ def _save_compressed(
     except Exception:
         pass
 
-    img.save(output_path, **save_kwargs)
+    buf = io.BytesIO()
+    save_img.save(buf, **save_kwargs)
+    return buf.getvalue()
 
 
 def _compress_to_target(
     img: Image.Image,
-    input_path: str,
     output_path: str,
     ext: str,
-    fmt_config: dict,
+    fmt_config: dict[str, Any],
     target_bytes: int,
     result: CompressResult,
 ) -> CompressResult:
@@ -314,100 +360,98 @@ def _compress_to_target(
     对 PNG 等无损格式，通过缩小尺寸来达到目标大小。
     对 JPG/WebP 等有损格式，通过调整质量参数来达到目标。
     """
-    if ext == ".png":
-        # PNG 是无损的，质量参数只影响压缩速度不影响大小
-        # 先尝试最大压缩，如果还是太大就缩小尺寸
-        _save_compressed(img, output_path, ext, fmt_config, 9)
-        current_size = os.path.getsize(output_path)
+    if target_bytes <= 0:
+        raise ValueError("target_size_must_be_positive")
 
-        if current_size <= target_bytes:
-            result.quality_used = 9
-            result.iterations = 1
-            return result
+    if ext in {".png", ".tif", ".tiff"}:
+        return _compress_lossless_to_target(img, output_path, ext, fmt_config, target_bytes, result)
 
-        # 需要缩小尺寸
-        iterations = 0
-        scale_low, scale_high = 0.1, 1.0
+    q_low = int(fmt_config["min_q"])
+    q_high = int(fmt_config["max_q"])
+    minimum = _encode_compressed(img, ext, fmt_config, q_low)
+    if len(minimum) > target_bytes:
+        raise ValueError(f"target_size_unreachable: minimum={len(minimum)} target={target_bytes}")
 
-        while iterations < 20:
-            iterations += 1
-            scale = (scale_low + scale_high) / 2
-            new_w = max(1, int(img.width * scale))
-            new_h = max(1, int(img.height * scale))
-            resized = img.resize((new_w, new_h), Image.LANCZOS)
+    best_quality = q_low
+    best_payload = minimum
+    iterations = 1
+    while q_low <= q_high and iterations < 20:
+        q_mid = (q_low + q_high) // 2
+        payload = _encode_compressed(img, ext, fmt_config, q_mid)
+        iterations += 1
+        if len(payload) <= target_bytes:
+            best_quality = q_mid
+            best_payload = payload
+            q_low = q_mid + 1
+        else:
+            q_high = q_mid - 1
 
-            _save_compressed(resized, output_path, ext, fmt_config, 9)
-            current_size = os.path.getsize(output_path)
+    atomic_write_bytes(output_path, best_payload)
+    result.quality_used = best_quality
+    result.iterations = iterations
+    return result
 
-            if abs(current_size - target_bytes) < target_bytes * 0.05:
-                break
-            elif current_size > target_bytes:
-                scale_high = scale
-            else:
-                scale_low = scale
 
-        result.quality_used = 9
-        result.iterations = iterations
+def _compress_lossless_to_target(
+    img: Image.Image,
+    output_path: str,
+    ext: str,
+    fmt_config: dict[str, Any],
+    target_bytes: int,
+    result: CompressResult,
+) -> CompressResult:
+    """Find the largest lossless image dimensions that fit the target."""
+    quality = 9 if ext == ".png" else 0
+    full_payload = _encode_compressed(img, ext, fmt_config, quality)
+    if len(full_payload) <= target_bytes:
+        atomic_write_bytes(output_path, full_payload)
+        result.quality_used = quality
+        result.iterations = 1
         return result
 
-    else:
-        # 有损格式：二分法调质量
-        q_low = fmt_config["min_q"]
-        q_high = fmt_config["max_q"]
-        best_quality = q_high
-        iterations = 0
+    smallest = img.resize((1, 1), Image.Resampling.LANCZOS)
+    best_payload = _encode_compressed(smallest, ext, fmt_config, quality)
+    if len(best_payload) > target_bytes:
+        raise ValueError(
+            f"target_size_unreachable: minimum={len(best_payload)} target={target_bytes}"
+        )
 
-        while q_low <= q_high and iterations < 20:
-            iterations += 1
-            q_mid = (q_low + q_high) // 2
+    low = 1.0 / max(img.width, img.height)
+    high = 1.0
+    iterations = 1
+    while iterations < 20 and high - low > 0.0001:
+        scale = (low + high) / 2
+        resized = img.resize(
+            (max(1, int(img.width * scale)), max(1, int(img.height * scale))),
+            Image.Resampling.LANCZOS,
+        )
+        payload = _encode_compressed(resized, ext, fmt_config, quality)
+        iterations += 1
+        if len(payload) <= target_bytes:
+            best_payload = payload
+            low = scale
+        else:
+            high = scale
 
-            buf = io.BytesIO()
-            _save_to_buffer(img, buf, ext, q_mid)
-            current_size = buf.tell()
-
-            if current_size <= target_bytes:
-                best_quality = q_mid
-                q_low = q_mid + 1
-                # 如果已经很接近目标，停止
-                if current_size >= target_bytes * 0.9:
-                    break
-            else:
-                q_high = q_mid - 1
-
-        _save_compressed(img, output_path, ext, fmt_config, best_quality)
-        result.quality_used = best_quality
-        result.iterations = iterations
-        return result
+    atomic_write_bytes(output_path, best_payload)
+    result.quality_used = quality
+    result.iterations = iterations
+    return result
 
 
-def _save_to_buffer(img: Image.Image, buf: io.BytesIO, ext: str, quality: int):
+def _save_to_buffer(img: Image.Image, buf: io.BytesIO, ext: str, quality: int) -> None:
     """将图片保存到内存缓冲区（用于二分法测试大小）"""
-    if ext in (".jpg", ".jpeg"):
-        save_img = img
-        if save_img.mode in ("RGBA", "LA", "PA"):
-            save_img = save_img.convert("RGB")
-        elif save_img.mode not in ("RGB", "L"):
-            save_img = save_img.convert("RGB")
-        save_img.save(buf, format="JPEG", quality=quality, optimize=True)
-    elif ext == ".webp":
-        img.save(buf, format="WEBP", quality=quality, method=6)
-    elif ext == ".avif":
-        save_img = img
-        if save_img.mode not in ("RGB", "RGBA"):
-            save_img = save_img.convert("RGB")
-        save_img.save(buf, format="AVIF", quality=quality)
-    elif ext in (".heic", ".heif"):
-        save_img = img
-        if save_img.mode not in ("RGB", "RGBA"):
-            save_img = save_img.convert("RGB")
-        save_img.save(buf, format="HEIF", quality=quality)
+    config = COMPRESSIBLE_FORMATS.get(ext)
+    if config is None:
+        raise ValueError(f"unsupported compression format: {ext}")
+    buf.write(_encode_compressed(img, ext, config, quality))
 
 
 def collect_compressible_files(
-    input_paths: List[str],
-    input_format: Optional[str] = None,
+    input_paths: list[str],
+    input_format: str | None = None,
     recursive: bool = False,
-) -> List[str]:
+) -> list[str]:
     """收集所有可压缩的图片文件"""
     files = []
     compressible_exts = set(COMPRESSIBLE_FORMATS.keys())

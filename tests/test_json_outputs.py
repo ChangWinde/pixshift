@@ -168,6 +168,16 @@ def test_formats_json_output():
     assert payload["ok"] is True
     assert "input_extensions" in payload
     assert "output_formats" in payload
+    assert payload["defaults"] == {
+        "compress_preset": "medium",
+        "convert_quality": "high",
+        "pdf_extract_dpi": 150,
+        "pdf_merge_margin": 20,
+        "strip_mode": "privacy",
+        "watch_format": "webp",
+        "watch_quality": "high",
+        "watermark_font_size": "auto",
+    }
 
 
 def test_doctor_json_output():
@@ -179,4 +189,3 @@ def test_doctor_json_output():
     assert payload["ok"] is True
     assert isinstance(payload["all_ready"], bool)
     assert isinstance(payload["checks"], list)
-

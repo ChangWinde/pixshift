@@ -1,11 +1,9 @@
 """Operation wrappers for image compression workflows."""
 
-from typing import List, Optional
-
-from ..compress_engine import collect_compressible_files, compress_single
+from ..compress_engine import CompressResult, collect_compressible_files, compress_single
 
 
-def collect_files(input_paths: List[str], input_format: Optional[str], recursive: bool) -> List[str]:
+def collect_files(input_paths: list[str], input_format: str | None, recursive: bool) -> list[str]:
     """Collect candidate files for compression."""
     return collect_compressible_files(input_paths, input_format, recursive)
 
@@ -13,12 +11,12 @@ def collect_files(input_paths: List[str], input_format: Optional[str], recursive
 def compress_one(
     input_path: str,
     output_path: str,
-    quality: Optional[int],
+    quality: int | None,
     preset: str,
-    target_size: Optional[str],
-    max_size: Optional[int],
+    target_size: str | None,
+    max_size: int | None,
     overwrite: bool,
-):
+) -> CompressResult:
     """Compress one file with provided parameters."""
     return compress_single(
         input_path=input_path,
@@ -29,4 +27,3 @@ def compress_one(
         max_size=max_size,
         overwrite=overwrite,
     )
-

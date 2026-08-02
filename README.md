@@ -5,7 +5,7 @@
 </p>
 
 [![CI](https://img.shields.io/github/actions/workflow/status/ChangWinde/pixshift/ci.yml?branch=main&label=CI)](https://github.com/ChangWinde/pixshift/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/actions/workflow/status/ChangWinde/pixshift/release.yml?branch=main&label=Release)](https://github.com/ChangWinde/pixshift/actions/workflows/release.yml)
+[![Release](https://img.shields.io/github/actions/workflow/status/ChangWinde/pixshift/release.yml?label=Release)](https://github.com/ChangWinde/pixshift/actions/workflows/release.yml)
 
 PixShift is a high-performance CLI toolkit for daily image and PDF workflows.
 It is designed for both direct terminal usage and automation-first pipelines.
@@ -13,8 +13,11 @@ It is designed for both direct terminal usage and automation-first pipelines.
 ## Why PixShift
 
 - Fast batch operations with practical defaults
-- Safe behavior for destructive actions
+- Idempotent reruns: discovered generated files are ignored and existing outputs are skipped
+- Safe destructive behavior: similarity is advisory; only revalidated,
+  byte-identical duplicates can be deleted
 - Human-readable output and script-friendly JSON mode
+- AI-ready optimization plans with structured arguments, estimates, and uncertainty metadata
 - Modular architecture for long-term maintainability
 
 ## Installation
@@ -67,10 +70,16 @@ pixshift watch ./incoming --once -t webp
 pixshift pdf merge ./photos/ -o album.pdf
 ```
 
+Common defaults favor everyday speed without hiding control: conversion uses `high`
+quality, PDF extraction uses 150 DPI, text-watermark size adapts to the image, and
+existing batch outputs are skipped. Use `-q max`, `--dpi 300`, `--font-size 36`, or
+`--overwrite` when those explicit behaviors are required.
+
 ## Automation Mode (`--json`)
 
 JSON mode is intended for CI and scripts.
 In JSON mode, failures return non-zero exit codes.
+Every document includes `"schema_version": "1.0"`, `command`, and `ok`.
 
 ```bash
 pixshift convert ./photos/ -t webp --json
@@ -99,10 +108,12 @@ Script templates:
 ## Documentation
 
 - Architecture: `docs/ARCHITECTURE.md`
+- Safety boundary ADR: `docs/adr/0001-safe-operation-boundaries.md`
 - Command reference: `docs/COMMANDS.md`
 - Phase checklist: `docs/PHASE1_CHECKLIST.md`
 - JSON output contract: `docs/JSON_OUTPUT.md`
-- First release PR pack: `docs/RELEASE_PR_FIRST.md`
+- Performance evidence: `docs/PERFORMANCE.md`
+- Product defaults ADR: `docs/adr/0002-opinionated-defaults-and-ai-plans.md`
 - Label strategy: `docs/LABEL_STRATEGY.md`
 - Automation examples: `examples/automation/README.md`
 - Advanced examples: `examples/advanced/README.md`

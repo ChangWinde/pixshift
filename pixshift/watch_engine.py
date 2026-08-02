@@ -10,33 +10,34 @@ PixShift Watch Engine — 目录监控自动转换
 """
 
 import os
-import sys
-import time
 import signal
+import time
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, List, Set, Callable
-from dataclasses import dataclass, field
+from types import FrameType
 
 from .converter import (
     SUPPORTED_INPUT_FORMATS,
     PixShiftConverter,
     generate_output_path,
-    _human_size,
 )
-
+from .core.defaults import DEFAULT_WATCH_FORMAT, DEFAULT_WATCH_QUALITY
 
 # ============================================================
 #  数据结构
 # ============================================================
 
+
 @dataclass
 class WatchConfig:
     """监控配置"""
+
     watch_dir: str = ""
     output_dir: str = ""
-    output_format: str = "webp"
-    quality: str = "max"
-    input_format: Optional[str] = None
+    output_format: str = DEFAULT_WATCH_FORMAT
+    quality: str = DEFAULT_WATCH_QUALITY
+    input_format: str | None = None
     recursive: bool = False
     interval: float = 2.0  # 扫描间隔（秒）
     keep_exif: bool = True
@@ -46,6 +47,7 @@ class WatchConfig:
 @dataclass
 class WatchStats:
     """监控统计"""
+
     files_processed: int = 0
     files_failed: int = 0
     files_skipped: int = 0
@@ -58,6 +60,7 @@ class WatchStats:
 #  目录监控器
 # ============================================================
 
+
 class DirectoryWatcher:
     """
     目录监控器
@@ -68,13 +71,13 @@ class DirectoryWatcher:
     def __init__(
         self,
         config: WatchConfig,
-        on_new_file: Optional[Callable] = None,
-        on_status: Optional[Callable] = None,
-    ):
+        on_new_file: Callable[..., None] | None = None,
+        on_status: Callable[..., None] | None = None,
+    ) -> None:
         self.config = config
         self.on_new_file = on_new_file
         self.on_status = on_status
-        self.processed_files: Set[str] = set()
+        self.processed_files: set[str] = set()
         self.stats = WatchStats()
         self._running = False
         self._converter = PixShiftConverter(
@@ -83,7 +86,7 @@ class DirectoryWatcher:
             overwrite=config.overwrite,
         )
 
-    def start(self):
+    def start(self) -> WatchStats:
         """开始监控"""
         self._running = True
         self.stats.start_time = time.time()
@@ -91,7 +94,7 @@ class DirectoryWatcher:
         # 注册信号处理
         original_sigint = signal.getsignal(signal.SIGINT)
 
-        def _handle_sigint(signum, frame):
+        def _handle_sigint(signum: int, frame: FrameType | None) -> None:
             self._running = False
             if self.on_status:
                 self.on_status("stop", "收到停止信号，正在退出...")
@@ -130,37 +133,13 @@ class DirectoryWatcher:
 
         return self.stats
 
-    def stop(self):
+    def stop(self) -> None:
         """停止监控"""
         self._running = False
 
-    def _scan_directory(self) -> List[str]:
+    def _scan_directory(self) -> list[str]:
         """扫描目录中的图片文件"""
-        files = []
-        watch_path = Path(self.config.watch_dir)
-
-        if not watch_path.is_dir():
-            return files
-
-        pattern = "**/*" if self.config.recursive else "*"
-
-        for item in watch_path.glob(pattern):
-            if not item.is_file():
-                continue
-
-            ext = item.suffix.lower()
-
-            # 过滤格式
-            if self.config.input_format:
-                target_ext = f".{self.config.input_format.lower().lstrip('.')}"
-                if ext != target_ext:
-                    continue
-            elif ext not in SUPPORTED_INPUT_FORMATS:
-                continue
-
-            files.append(str(item.resolve()))
-
-        return files
+        return collect_watch_files(self.config)
 
     def _wait_for_file(self, filepath: str, timeout: float = 10.0) -> bool:
         """等待文件写入完成（大小不再变化）"""
@@ -178,18 +157,24 @@ class DirectoryWatcher:
         except Exception:
             return False
 
-    def _process_file(self, filepath: str):
+    def _process_file(self, filepath: str) -> None:
         """处理单个新文件"""
         try:
-            output_dir = self.config.output_dir or str(
-                Path(self.config.watch_dir) / "converted"
-            )
+            output_dir = self.config.output_dir or str(Path(self.config.watch_dir) / "converted")
 
             output_path = generate_output_path(
                 filepath,
                 self.config.output_format,
                 output_dir=output_dir,
+                source_paths=[self.config.watch_dir],
             )
+
+            if os.path.isfile(output_path) and not self.config.overwrite:
+                self.processed_files.add(filepath)
+                self.stats.files_skipped += 1
+                if self.on_new_file:
+                    self.on_new_file("skipped", filepath)
+                return
 
             if self.on_new_file:
                 self.on_new_file("processing", filepath)
@@ -197,6 +182,7 @@ class DirectoryWatcher:
             result = self._converter.convert_single(filepath, output_path)
 
             if result.success:
+                self.processed_files.add(str(Path(output_path).resolve()))
                 self.stats.files_processed += 1
                 self.stats.total_input_size += result.input_size
                 self.stats.total_output_size += result.output_size
@@ -212,3 +198,39 @@ class DirectoryWatcher:
             self.stats.files_failed += 1
             if self.on_new_file:
                 self.on_new_file("error", filepath, str(e))
+
+
+def _is_within(path: Path, root: Path) -> bool:
+    """Return whether ``path`` is equal to or below ``root``."""
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
+def collect_watch_files(config: WatchConfig) -> list[str]:
+    """Collect watch inputs while excluding the generated-output subtree."""
+    files: list[str] = []
+    watch_path = Path(config.watch_dir).resolve()
+    output_path = Path(config.output_dir or watch_path / "converted").resolve()
+    output_is_subtree = output_path != watch_path and _is_within(output_path, watch_path)
+    if not watch_path.is_dir():
+        return files
+
+    pattern = "**/*" if config.recursive else "*"
+    for item in watch_path.glob(pattern):
+        if not item.is_file():
+            continue
+        resolved_item = item.resolve()
+        if output_is_subtree and _is_within(resolved_item, output_path):
+            continue
+        extension = item.suffix.lower()
+        if config.input_format:
+            target_extension = f".{config.input_format.lower().lstrip('.')}"
+            if extension != target_extension:
+                continue
+        elif extension not in SUPPORTED_INPUT_FORMATS:
+            continue
+        files.append(str(resolved_item))
+    return sorted(files)

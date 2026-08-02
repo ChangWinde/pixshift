@@ -1,6 +1,8 @@
 """Operation wrappers for watch workflows."""
 
-from ..watch_engine import DirectoryWatcher, WatchConfig
+from collections.abc import Callable
+
+from ..watch_engine import DirectoryWatcher, WatchConfig, collect_watch_files
 
 
 def make_config(
@@ -8,7 +10,7 @@ def make_config(
     output_dir: str,
     output_format: str,
     quality: str,
-    input_format,
+    input_format: str | None,
     recursive: bool,
     interval: float,
     keep_exif: bool,
@@ -28,7 +30,15 @@ def make_config(
     )
 
 
-def create_watcher(config: WatchConfig, on_new_file=None, on_status=None) -> DirectoryWatcher:
+def create_watcher(
+    config: WatchConfig,
+    on_new_file: Callable[..., None] | None = None,
+    on_status: Callable[..., None] | None = None,
+) -> DirectoryWatcher:
     """Create watch runner object."""
     return DirectoryWatcher(config=config, on_new_file=on_new_file, on_status=on_status)
 
+
+def collect_files(config: WatchConfig) -> list[str]:
+    """Collect files using the same exclusions as continuous watch mode."""
+    return collect_watch_files(config)

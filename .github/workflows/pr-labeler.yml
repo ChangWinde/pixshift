@@ -13,7 +13,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Auto-label PR by changed files
-        uses: actions/labeler@v6
+        uses: actions/labeler@b8dd2d9be0f68b860e7dae5dae7d772984eacd6d # v6
         with:
           repo-token: "${{ secrets.GITHUB_TOKEN }}"
-

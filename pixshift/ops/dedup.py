@@ -1,11 +1,11 @@
 """Operation wrappers for dedup workflows."""
 
-from typing import Dict, List
-
-from ..dedup_engine import delete_duplicates, find_duplicates
+from ..dedup_engine import DedupResult, DeleteCandidate, delete_duplicates, find_duplicates
 
 
-def analyze(input_paths: List[str], recursive: bool, hash_method: str, threshold: int):
+def analyze(
+    input_paths: list[str], recursive: bool, hash_method: str, threshold: int
+) -> DedupResult:
     """Find duplicate groups for input paths."""
     return find_duplicates(
         input_paths=input_paths,
@@ -15,7 +15,6 @@ def analyze(input_paths: List[str], recursive: bool, hash_method: str, threshold
     )
 
 
-def delete(groups: List, dry_run: bool = False) -> Dict:
+def delete(groups: list[DeleteCandidate], dry_run: bool = False) -> dict[str, list[str]]:
     """Delete duplicate files for selected groups."""
     return delete_duplicates(groups, dry_run=dry_run)
-
