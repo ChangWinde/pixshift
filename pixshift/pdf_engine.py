@@ -27,7 +27,7 @@ from PIL import Image
 
 from .core.defaults import DEFAULT_PDF_EXTRACT_DPI, DEFAULT_PDF_MERGE_MARGIN
 from .core.files import atomic_output_path, safe_output_path
-from .core.metadata import normalize_orientation
+from .core.metadata import ensure_static_image, image_has_transparency, normalize_orientation
 
 # ============================================================
 #  常量定义
@@ -210,11 +210,12 @@ def _collect_pdfs(input_paths: list[str], recursive: bool = False) -> list[str]:
 def _image_to_bytes(image_path: str, quality: int = 95) -> tuple[bytes, tuple[int, int]]:
     """将图片转为 JPEG/PNG bytes，供 PyMuPDF 插入"""
     with Image.open(image_path) as source:
+        ensure_static_image(source)
         img = normalize_orientation(source).copy()
 
     # 有透明通道用 PNG，否则用 JPEG
     buf = io.BytesIO()
-    if img.mode in ("RGBA", "LA", "PA"):
+    if image_has_transparency(img):
         img.save(buf, format="PNG")
     else:
         if img.mode != "RGB":
@@ -270,52 +271,50 @@ def pdf_merge_images(
 
         # 计算总输入大小
         result.input_size = sum(os.path.getsize(p) for p in image_paths)
-        doc = fitz.open()
+        with fitz.open() as doc:
+            for img_path in image_paths:
+                img_data, (img_w, img_h) = _image_to_bytes(img_path, quality)
 
-        for img_path in image_paths:
-            img_data, (img_w, img_h) = _image_to_bytes(img_path, quality)
+                # 确定页面大小
+                if normalized_page_size == "fit":
+                    # 自适应页面使用图片尺寸，按 72 DPI 将像素换算为点。
+                    pw, ph = float(img_w), float(img_h)
+                else:
+                    size = PAGE_SIZES[normalized_page_size]
+                    if size is None:
+                        raise ValueError(f"无效页面尺寸: {page_size}")
+                    pw, ph = size
 
-            # 确定页面大小
-            if normalized_page_size == "fit":
-                # 自适应页面使用图片尺寸，按 72 DPI 将像素换算为点。
-                pw, ph = float(img_w), float(img_h)
-            else:
-                size = PAGE_SIZES[normalized_page_size]
-                if size is None:
-                    raise ValueError(f"无效页面尺寸: {page_size}")
-                pw, ph = size
+                # 横向
+                if landscape:
+                    pw, ph = ph, pw
 
-            # 横向
-            if landscape:
-                pw, ph = ph, pw
+                # 创建页面
+                page = doc.new_page(width=pw, height=ph)
 
-            # 创建页面
-            page = doc.new_page(width=pw, height=ph)
+                # 计算图片在页面中的位置（居中，保持比例）
+                avail_w = pw - 2 * margin
+                avail_h = ph - 2 * margin
+                if avail_w <= 0 or avail_h <= 0:
+                    raise ValueError("margin_too_large_for_page")
 
-            # 计算图片在页面中的位置（居中，保持比例）
-            avail_w = pw - 2 * margin
-            avail_h = ph - 2 * margin
-            if avail_w <= 0 or avail_h <= 0:
-                raise ValueError("margin_too_large_for_page")
+                scale_w = avail_w / img_w
+                scale_h = avail_h / img_h
+                scale = min(scale_w, scale_h)
 
-            scale_w = avail_w / img_w
-            scale_h = avail_h / img_h
-            scale = min(scale_w, scale_h)
+                draw_w = img_w * scale
+                draw_h = img_h * scale
 
-            draw_w = img_w * scale
-            draw_h = img_h * scale
+                x0 = margin + (avail_w - draw_w) / 2
+                y0 = margin + (avail_h - draw_h) / 2
 
-            x0 = margin + (avail_w - draw_w) / 2
-            y0 = margin + (avail_h - draw_h) / 2
+                rect = fitz.Rect(x0, y0, x0 + draw_w, y0 + draw_h)
+                page.insert_image(rect, stream=img_data)
 
-            rect = fitz.Rect(x0, y0, x0 + draw_w, y0 + draw_h)
-            page.insert_image(rect, stream=img_data)
-
-        # 保存
-        os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
-        with atomic_output_path(output_path) as temporary:
-            doc.save(temporary, deflate=True, garbage=4)
-        doc.close()
+            # 保存
+            os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+            with atomic_output_path(output_path) as temporary:
+                doc.save(temporary, deflate=True, garbage=4)
 
         result.output_size = os.path.getsize(output_path)
         result.page_count = len(image_paths)
@@ -664,7 +663,7 @@ def _compress_rebuild(
 
                 # 重新编码
                 buf = io.BytesIO()
-                if pil_img.mode in ("RGBA", "LA", "PA"):
+                if image_has_transparency(pil_img):
                     pil_img.save(buf, format="PNG", optimize=True)
                 else:
                     if pil_img.mode != "RGB":

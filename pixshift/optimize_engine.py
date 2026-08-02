@@ -18,7 +18,12 @@ from typing import Any
 from PIL import Image, ImageStat
 
 from .converter import _human_size
-from .core.metadata import normalize_orientation
+from .core.metadata import (
+    ensure_static_image,
+    flatten_transparency,
+    image_has_transparency,
+    normalize_orientation,
+)
 
 ANALYSIS_MAX_SIDE = 1600
 
@@ -77,8 +82,13 @@ def _detect_image_type(img: Image.Image) -> tuple[str, str]:
     返回: (类型, 原因)
     类型: photo / screenshot / graphic / text
     """
-    # 转为 RGB 分析
-    analyze_img = img.convert("RGB") if img.mode in ("RGBA", "LA", "PA") or img.mode == "L" else img
+    # 统一为可见 RGB 像素，避免透明调色板索引影响内容分类。
+    if image_has_transparency(img):
+        analyze_img = flatten_transparency(img)
+    elif img.mode != "RGB":
+        analyze_img = img.convert("RGB")
+    else:
+        analyze_img = img
 
     stat = ImageStat.Stat(analyze_img)
 
@@ -175,9 +185,10 @@ def analyze_image(input_path: str) -> OptimizeResult:
         result.input_format = Path(input_path).suffix.lower().lstrip(".")
 
         with Image.open(input_path) as source:
+            ensure_static_image(source)
             img = normalize_orientation(source).copy()
         result.width, result.height = img.size
-        result.has_alpha = img.mode in ("RGBA", "LA", "PA")
+        result.has_alpha = image_has_transparency(img)
 
         analysis_img = img.copy()
         analysis_img.thumbnail(
@@ -314,10 +325,8 @@ def _estimate_format(
     est = FormatEstimate()
 
     save_img = img
-    if format_name == "JPEG" and save_img.mode in ("RGBA", "LA", "PA"):
-        bg = Image.new("RGB", save_img.size, (255, 255, 255))
-        bg.paste(save_img, mask=save_img.split()[-1])
-        save_img = bg
+    if format_name == "JPEG" and image_has_transparency(save_img):
+        save_img = flatten_transparency(save_img)
     elif format_name == "JPEG" and save_img.mode not in ("RGB", "L"):
         save_img = save_img.convert("RGB")
 

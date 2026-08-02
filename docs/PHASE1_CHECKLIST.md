@@ -35,7 +35,7 @@ Build PixShift into a high-frequency daily CLI with:
 - [x] Add fixture tests for `strip` (mode behavior and field removal).
 - [x] Add fixture tests for `dedup` (hash threshold and delete behavior).
 - [x] Add fixture tests for `pdf` (merge/extract/compress smoke coverage).
-- [x] Add CI job for lint + tests on Python 3.8+.
+- [x] Add CI jobs for lint, type checks, and tests on Python 3.10, 3.12, and 3.13.
 - [x] Add test coverage gate in CI for regression control.
 
 ## E) UX Consistency

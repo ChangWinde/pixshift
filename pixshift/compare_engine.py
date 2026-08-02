@@ -16,7 +16,7 @@ from dataclasses import dataclass
 
 from PIL import Image, ImageChops, ImageFilter, ImageStat
 
-from .core.metadata import normalize_orientation
+from .core.metadata import ensure_static_image, normalize_orientation
 
 # ============================================================
 #  数据结构
@@ -164,10 +164,10 @@ def _compute_ssim_blocks(img_a: Image.Image, img_b: Image.Image, block_size: int
 
 def _compute_mse(img_a: Image.Image, img_b: Image.Image) -> float:
     """计算均方误差 (MSE)"""
-    a_rgb = img_a.convert("RGB")
-    b_rgb = img_b.convert("RGB")
+    a_rgba = img_a.convert("RGBA")
+    b_rgba = img_b.convert("RGBA")
 
-    diff = ImageChops.difference(a_rgb, b_rgb)
+    diff = ImageChops.difference(a_rgba, b_rgba)
     stat = ImageStat.Stat(diff)
 
     # 各通道的均方值
@@ -218,6 +218,8 @@ def compare_images(
         result.filesize_b = os.path.getsize(image_b)
 
         with Image.open(image_a) as source_a, Image.open(image_b) as source_b:
+            ensure_static_image(source_a)
+            ensure_static_image(source_b)
             img_a = normalize_orientation(source_a).copy()
             img_b = normalize_orientation(source_b).copy()
 
@@ -267,8 +269,8 @@ def compare_images(
 
 def _rate_quality(ssim: float, psnr: float, mse: float) -> tuple[str, str]:
     """评估质量等级"""
-    if ssim >= 0.99 or psnr == float("inf"):
-        return "完美", "几乎无差异，视觉上完全相同"
+    if mse == 0:
+        return "完美", "像素与透明度完全相同"
     elif ssim >= 0.95 and psnr >= 40:
         return "优秀", "极微小差异，肉眼几乎不可见"
     elif ssim >= 0.90 and psnr >= 35:

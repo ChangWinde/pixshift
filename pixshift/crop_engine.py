@@ -18,7 +18,13 @@ from PIL import Image, ImageChops
 
 from .converter import SUPPORTED_INPUT_FORMATS
 from .core.files import atomic_output_path
-from .core.metadata import normalize_orientation, normalized_exif_bytes
+from .core.metadata import (
+    ensure_static_image,
+    flatten_transparency,
+    image_has_transparency,
+    normalize_orientation,
+    normalized_exif_bytes,
+)
 
 # ============================================================
 #  数据结构
@@ -132,6 +138,7 @@ def crop_single(
         os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
 
         with Image.open(input_path) as source:
+            ensure_static_image(source)
             original_format = source.format
             img = normalize_orientation(source)
             result.original_size = img.size
@@ -274,10 +281,8 @@ def _save_cropped(
     save_kwargs: dict[str, Any] = {}
 
     if ext in (".jpg", ".jpeg"):
-        if cropped.mode in ("RGBA", "LA", "PA"):
-            bg = Image.new("RGB", cropped.size, (255, 255, 255))
-            bg.paste(cropped, mask=cropped.split()[-1])
-            cropped = bg
+        if image_has_transparency(cropped):
+            cropped = flatten_transparency(cropped)
         elif cropped.mode not in ("RGB", "L"):
             cropped = cropped.convert("RGB")
         save_kwargs = {"format": "JPEG", "quality": 95, "optimize": True}

@@ -23,3 +23,12 @@ class OutputCollisionError(OperationPolicyError):
     """Multiple source files resolve to the same output path."""
 
     code = "output_collision"
+
+
+class AnimatedInputNotSupportedError(OperationPolicyError):
+    """A still-image operation received a multi-frame image."""
+
+    code = "animated_input_not_supported"
+
+    def __init__(self) -> None:
+        super().__init__(self.code)

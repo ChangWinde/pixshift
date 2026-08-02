@@ -62,6 +62,16 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- Removed sensitive device and personal fields stored in nested EXIF directories during
+  default privacy cleanup while preserving metadata outside the selected categories.
+- Rejected multi-frame inputs in still-image-only transformations and analyzers instead
+  of silently replacing animations with their first frame.
+- Excluded animations from perceptual deduplication while retaining byte-identical
+  animation detection and reporting the skipped analysis count.
+- Detected indexed transparency consistently and flattened it onto the configured
+  background for opaque outputs.
+- Required exact pixel and alpha equality for a perfect comparison rating.
+- Kept empty deduplication analysis payloads consistent with the documented JSON schema.
 - Prevented recursive/repeated workflows from consuming their own outputs or watermark assets.
 - Made the documented "skip existing output" behavior idempotent instead of a failed batch.
 - Prevented invalid or out-of-range PDF page selections from silently succeeding with no output.

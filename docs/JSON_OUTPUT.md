@@ -31,6 +31,10 @@ PixShift provides stable JSON output for automation with the `--json` flag.
 - `ok`: boolean success state
 - `error`: error string when `ok` is false (if available)
 
+Still-image-only operations use the stable error
+`animated_input_not_supported` for multi-frame inputs. They validate this condition
+before replacing an output file.
+
 Batch workflow payloads additionally use integer `skipped` and
 `ignored_generated` counts. Deduplication's operation-specific `skipped` field remains
 an array of safety reasons.
@@ -69,10 +73,12 @@ Analyze mode (`--delete` not set):
 - `mode: "analyze"`
 - `total_files`, `duplicate_groups`, `duplicate_files`
 - `deletable_files`, `recoverable_bytes`
+- `skipped_invalid` (files excluded from perceptual analysis, including animations)
 - `preview` (array of groups, truncated)
 
 Perceptual similarity is advisory. `deletable_files` and `recoverable_bytes` count
-only byte-identical files verified with SHA-256.
+only byte-identical files verified with SHA-256. Exact duplicate detection still covers
+files excluded from perceptual analysis.
 
 Delete mode (`--delete` set):
 - `mode: "delete"`
@@ -90,7 +96,9 @@ Delete dry-run mode (`--delete --dry-run`):
 ### `info --json`
 
 - `total`
-- `files` (array of per-file metadata; includes EXIF only when `--exif` is set)
+- `files` (array of per-file metadata)
+- Each file includes `frame_count` and `has_alpha`; indexed transparency counts as alpha.
+- EXIF is included only when `--exif` is set.
 
 ### `formats --json`
 
