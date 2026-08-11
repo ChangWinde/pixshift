@@ -6,6 +6,10 @@ All notable changes to this project are documented in this file.
 
 ### Added
 
+- Forge commit convention (`[scope/op]: title`) documented in CONTRIBUTING and
+  enforced via a `commit-msg` pre-commit hook, a CI check on pull-request
+  commits, and dependabot commit prefixes.
+
 - AI-native tool surface (ADR-0003): `pixshift tools` catalog with MCP-aligned
   side-effect annotations, and `pixshift apply` to execute `optimize` plans.
 - Agent workflow commands: `prep` (bounded convert + privacy strip + hashed
