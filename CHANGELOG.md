@@ -4,6 +4,28 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- AI-native tool surface (ADR-0003): `pixshift tools` catalog with MCP-aligned
+  side-effect annotations, and `pixshift apply` to execute `optimize` plans.
+- Agent workflow commands: `prep` (bounded convert + privacy strip + hashed
+  manifest), `manifest` (inventory with SHA-256 and sensitive-EXIF summary),
+  and `hash` (content digests for audits).
+- JSON Schema contracts in `docs/schemas/v1/` validated against live command
+  output in CI.
+- Thin MCP stdio adapter (`python -m pixshift.mcp`) mapping the catalog onto
+  the CLI JSON contract.
+- `python -m pixshift` module entry point.
+- Positioning and governance docs: `GOAL.md`, `AGENTS.md`, ADR-0003, and a
+  pre-commit configuration.
+
+### Changed
+
+- README repositioned around the AI-native discover/plan/apply/verify loop,
+  with shell-completion instructions.
+- Ruff lint scope extended (`W`, `C4`, `PIE`, `RUF`).
+- Contributor workflow standardized on `uv sync --frozen --extra dev`.
+
 ## [1.1.0] - 2026-08-02
 
 ### Added
