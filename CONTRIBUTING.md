@@ -44,6 +44,10 @@ uv run pre-commit install
 
 ## Commit Style (required)
 
+Enforced by the `commit-msg` pre-commit hook (`uv run pre-commit install`) and
+by CI on every pull request (`scripts/check_commit_messages.py`); merge commits
+are exempt.
+
 Use the `[scope/op]: title` format with an imperative title under 72 characters.
 Valid ops: `feat` `fix` `refactor` `test` `docs` `chore` `perf` `style` `ci`
 `build` `revert`. Scope names a module or area (`cli`, `ops`, `core`, `pdf`,
