@@ -1,0 +1,302 @@
+"""Execute machine-readable plans against existing engines."""
+
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+from ..core.defaults import DEFAULT_COMPRESS_PRESET, DEFAULT_CONVERT_QUALITY
+from ..core.files import conversion_output_name, plan_output_path
+from . import compress as compress_ops
+from . import convert as convert_ops
+from . import strip as strip_ops
+
+
+@dataclass
+class AppliedStep:
+    """One applied plan step."""
+
+    input_path: str
+    command: str
+    arguments: dict[str, Any]
+    output_path: str = ""
+    success: bool = False
+    skipped: bool = False
+    dry_run: bool = False
+    error: str = ""
+    detail: str = ""
+
+
+@dataclass
+class ApplyResult:
+    """Batch apply summary."""
+
+    steps: list[AppliedStep] = field(default_factory=list)
+    error: str = ""
+
+    @property
+    def ok(self) -> bool:
+        if self.error:
+            return False
+        return all(step.success or step.skipped for step in self.steps)
+
+
+def load_plan_document(raw: str) -> list[dict[str, Any]]:
+    """Normalize optimize payloads or explicit plan lists into executable steps."""
+    document = json.loads(raw)
+    if isinstance(document, list):
+        return [_normalize_step(item) for item in document]
+    if not isinstance(document, dict):
+        raise ValueError("plan_must_be_object_or_array")
+
+    if "results" in document:
+        steps: list[dict[str, Any]] = []
+        for item in document["results"]:
+            if not isinstance(item, dict):
+                raise ValueError("invalid_optimize_result")
+            plan = item.get("plan")
+            if not isinstance(plan, dict):
+                raise ValueError("missing_plan")
+            steps.append(
+                {
+                    "input": item.get("input") or item.get("input_path"),
+                    "command": plan.get("command"),
+                    "arguments": dict(plan.get("arguments") or {}),
+                }
+            )
+        return [_normalize_step(step) for step in steps]
+
+    if "plans" in document:
+        return [_normalize_step(item) for item in document["plans"]]
+
+    if "command" in document:
+        return [_normalize_step(document)]
+
+    raise ValueError("unrecognized_plan_document")
+
+
+def _normalize_step(item: dict[str, Any]) -> dict[str, Any]:
+    input_path = item.get("input") or item.get("input_path")
+    command = item.get("command")
+    arguments = item.get("arguments") or {}
+    if not input_path or not isinstance(input_path, str):
+        raise ValueError("missing_input")
+    if not command or not isinstance(command, str):
+        raise ValueError("missing_command")
+    if not isinstance(arguments, dict):
+        raise ValueError("invalid_arguments")
+    return {"input": input_path, "command": command, "arguments": dict(arguments)}
+
+
+def apply_plans(
+    steps: list[dict[str, Any]],
+    *,
+    output_dir: str | None = None,
+    overwrite: bool = False,
+    dry_run: bool = False,
+) -> ApplyResult:
+    """Apply normalized plan steps sequentially."""
+    result = ApplyResult()
+    for step in steps:
+        applied = _apply_one(
+            input_path=step["input"],
+            command=step["command"],
+            arguments=step["arguments"],
+            output_dir=output_dir,
+            overwrite=overwrite,
+            dry_run=dry_run,
+        )
+        result.steps.append(applied)
+    return result
+
+
+def _apply_one(
+    *,
+    input_path: str,
+    command: str,
+    arguments: dict[str, Any],
+    output_dir: str | None,
+    overwrite: bool,
+    dry_run: bool,
+) -> AppliedStep:
+    applied = AppliedStep(
+        input_path=input_path,
+        command=command,
+        arguments=dict(arguments),
+        dry_run=dry_run,
+    )
+    source = Path(input_path)
+    if not source.is_file():
+        applied.error = "input_not_found"
+        return applied
+
+    try:
+        if command == "convert":
+            return _apply_convert(
+                applied, output_dir=output_dir, overwrite=overwrite, dry_run=dry_run
+            )
+        if command == "compress":
+            return _apply_compress(
+                applied, output_dir=output_dir, overwrite=overwrite, dry_run=dry_run
+            )
+        if command == "strip":
+            return _apply_strip(
+                applied, output_dir=output_dir, overwrite=overwrite, dry_run=dry_run
+            )
+        applied.error = "unsupported_plan_command"
+        return applied
+    except Exception as error:
+        applied.error = "apply_failed"
+        applied.detail = str(error)
+        return applied
+
+
+def _output_for(
+    input_path: str,
+    *,
+    output_dir: str | None,
+    output_format: str,
+    overwrite: bool,
+) -> tuple[str, bool]:
+    name = conversion_output_name(input_path, output_format)
+    target = plan_output_path(
+        input_path,
+        name,
+        output_dir=output_dir,
+        flatten=False,
+        source_paths=[input_path],
+    )
+    if Path(target).exists() and not overwrite:
+        return target, True
+    return target, False
+
+
+def _apply_convert(
+    applied: AppliedStep,
+    *,
+    output_dir: str | None,
+    overwrite: bool,
+    dry_run: bool,
+) -> AppliedStep:
+    target_format = str(
+        applied.arguments.get("to") or applied.arguments.get("format") or ""
+    ).lower()
+    if not target_format:
+        applied.error = "missing_target_format"
+        return applied
+    if target_format == "jpeg":
+        target_format = "jpg"
+    quality = str(applied.arguments.get("quality") or DEFAULT_CONVERT_QUALITY)
+    output_path, skipped = _output_for(
+        applied.input_path,
+        output_dir=output_dir,
+        output_format=target_format,
+        overwrite=overwrite,
+    )
+    applied.output_path = output_path
+    if skipped:
+        applied.skipped = True
+        applied.success = True
+        applied.detail = "existing_output_skipped"
+        return applied
+    if dry_run:
+        applied.success = True
+        return applied
+    result = convert_ops.convert_one(
+        applied.input_path,
+        output_path,
+        {"quality": quality, "overwrite": overwrite},
+    )
+    applied.success = bool(result.success)
+    applied.error = result.error or ""
+    return applied
+
+
+def _apply_compress(
+    applied: AppliedStep,
+    *,
+    output_dir: str | None,
+    overwrite: bool,
+    dry_run: bool,
+) -> AppliedStep:
+    suffix = Path(applied.input_path).suffix.lstrip(".").lower() or "bin"
+    output_path, skipped = _output_for(
+        applied.input_path,
+        output_dir=output_dir,
+        output_format=suffix,
+        overwrite=overwrite,
+    )
+    applied.output_path = output_path
+    if skipped:
+        applied.skipped = True
+        applied.success = True
+        applied.detail = "existing_output_skipped"
+        return applied
+    if dry_run:
+        applied.success = True
+        return applied
+    preset = str(applied.arguments.get("preset") or DEFAULT_COMPRESS_PRESET)
+    quality_raw = applied.arguments.get("quality")
+    quality: int | None
+    if quality_raw is None:
+        quality = None
+    elif isinstance(quality_raw, int):
+        quality = quality_raw
+    else:
+        quality = int(quality_raw)
+    result = compress_ops.compress_one(
+        applied.input_path,
+        output_path,
+        quality=quality,
+        preset=preset,
+        target_size=None,
+        max_size=None,
+        overwrite=overwrite,
+    )
+    applied.success = bool(result.success)
+    applied.error = result.error or ""
+    return applied
+
+
+def _apply_strip(
+    applied: AppliedStep,
+    *,
+    output_dir: str | None,
+    overwrite: bool,
+    dry_run: bool,
+) -> AppliedStep:
+    suffix = Path(applied.input_path).suffix.lstrip(".").lower() or "bin"
+    output_path, skipped = _output_for(
+        applied.input_path,
+        output_dir=output_dir,
+        output_format=suffix,
+        overwrite=overwrite,
+    )
+    applied.output_path = output_path
+    if skipped:
+        applied.skipped = True
+        applied.success = True
+        applied.detail = "existing_output_skipped"
+        return applied
+    if dry_run:
+        applied.success = True
+        return applied
+    mode = str(applied.arguments.get("mode") or "privacy")
+    privacy = mode == "privacy"
+    result = strip_ops.strip_one(
+        applied.input_path,
+        output_path,
+        strip_exif=privacy or bool(applied.arguments.get("strip_exif", False)),
+        strip_gps=privacy or bool(applied.arguments.get("strip_gps", True)),
+        strip_icc=bool(applied.arguments.get("strip_icc", False)),
+        strip_device=privacy or bool(applied.arguments.get("strip_device", True)),
+        strip_personal=privacy or bool(applied.arguments.get("strip_personal", True)),
+        strip_time=bool(applied.arguments.get("strip_time", False)),
+        keep_orientation=bool(applied.arguments.get("keep_orientation", True)),
+        overwrite=overwrite,
+    )
+    applied.success = bool(result.success)
+    applied.error = result.error or ""
+    return applied
