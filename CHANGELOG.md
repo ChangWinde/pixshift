@@ -23,6 +23,12 @@ All notable changes to this project are documented in this file.
 
 - README repositioned around the AI-native discover/plan/apply/verify loop,
   with shell-completion instructions.
+- Release workflow now publishes to PyPI via trusted publishing behind the
+  `pypi` environment gate.
+- PDF modules import `pymupdf` under its canonical name, removing the `fitz`
+  deprecation warning from CLI output.
+- `apply` steps without `--output` follow CLI derivative naming
+  (`_compressed`, `_clean`) instead of colliding with the source file.
 - Ruff lint scope extended (`W`, `C4`, `PIE`, `RUF`).
 - Contributor workflow standardized on `uv sync --frozen --extra dev`.
 

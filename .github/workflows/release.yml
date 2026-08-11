@@ -31,7 +31,7 @@ jobs:
           uv run mypy . --ignore-missing-imports
 
       - name: Run tests with coverage gate
-        run: uv run pytest -q --cov=pixshift --cov-report=term-missing --cov-fail-under=60
+        run: uv run pytest -q --cov=pixshift --cov-report=term-missing --cov-fail-under=70
 
       - name: Build package
         run: uv build
@@ -44,3 +44,24 @@ jobs:
         with:
           name: pixshift-dist
           path: dist/*
+
+  publish:
+    # Publishes via PyPI trusted publishing (OIDC); requires the `pypi`
+    # environment and a matching publisher configured on pypi.org.
+    # See docs/RELEASING.md for the one-time setup.
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/pixshift/
+    permissions:
+      id-token: write
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: pixshift-dist
+          path: dist
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
