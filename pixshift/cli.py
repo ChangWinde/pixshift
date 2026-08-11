@@ -12,6 +12,7 @@ from rich.panel import Panel
 
 from . import __version__
 from .commands.advanced_commands import register_advanced_commands
+from .commands.agent_commands import register_agent_commands
 from .commands.convert_command import register_convert_command
 from .commands.pdf_commands import register_pdf_commands
 from .commands.system_commands import register_system_commands
@@ -156,6 +157,12 @@ register_pdf_commands(
     human_size=_human_size,
 )
 register_advanced_commands(
+    cli_group=cli,
+    console=console,
+    mini_logo=MINI_LOGO,
+    human_size=_human_size,
+)
+register_agent_commands(
     cli_group=cli,
     console=console,
     mini_logo=MINI_LOGO,

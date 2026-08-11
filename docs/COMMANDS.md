@@ -174,6 +174,60 @@ pixshift pdf info input.pdf [--pages] [--json]
 Page extraction defaults to 150 DPI. Pass `--dpi 300` when print-level raster output is
 more important than speed and file size.
 
+## Agent Tools
+
+### `tools`
+
+List the agent-facing tool catalog with side-effect annotations.
+
+```bash
+pixshift tools [--json]
+```
+
+Every entry carries `readOnlyHint`, `destructiveHint`, `idempotentHint`, and
+`openWorldHint` (always `false` for local tools).
+
+### `apply`
+
+Execute machine plans produced by `optimize` (or written by hand).
+
+```bash
+pixshift apply --plan plan.json [-o OUT_DIR] [--overwrite] [--dry-run] [--json]
+pixshift optimize ./photos --json | pixshift apply --plan - --json
+```
+
+Supported plan commands: `convert`, `compress`, `strip`. Existing outputs are
+idempotent skips unless `--overwrite` is set. Without `-o`, outputs follow the
+CLI naming conventions next to the source: `convert` swaps the extension,
+`compress` appends `_compressed`, and `strip` appends `_clean`.
+
+### `prep`
+
+Prepare delivery-ready assets in one shot: bounded resize, format conversion,
+privacy metadata strip, and a hashed manifest.
+
+```bash
+pixshift prep INPUTS... -o OUT_DIR [--max-size 2048] [-t webp] [-q high] \
+  [--keep-metadata] [-r] [--overwrite] [--dry-run] [--json]
+```
+
+### `manifest`
+
+Inventory media files: dimensions, format, alpha, frame count, sensitive EXIF
+keys, and SHA-256 content digests.
+
+```bash
+pixshift manifest INPUTS... [-r] [--json]
+```
+
+### `hash`
+
+Compute content hashes for audits (media files by default).
+
+```bash
+pixshift hash INPUTS... [-r] [--algorithm sha256] [--all-files] [--json]
+```
+
 ## Repeat Runs
 
 Batch commands skip existing outputs unless `--overwrite` is set. Files discovered in a

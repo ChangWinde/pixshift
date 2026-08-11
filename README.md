@@ -7,17 +7,21 @@
 [![CI](https://img.shields.io/github/actions/workflow/status/ChangWinde/pixshift/ci.yml?branch=main&label=CI)](https://github.com/ChangWinde/pixshift/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/actions/workflow/status/ChangWinde/pixshift/release.yml?label=Release)](https://github.com/ChangWinde/pixshift/actions/workflows/release.yml)
 
-PixShift is a high-performance CLI toolkit for daily image and PDF workflows.
-It is designed for both direct terminal usage and automation-first pipelines.
+PixShift is an AI-native, local-first CLI toolkit for daily image and PDF
+workflows. Humans get fast commands with rich output; agents and scripts get a
+discoverable tool catalog, schema-validated JSON contracts, and executable plans
+over the same deterministic engines.
 
 ## Why PixShift
 
+- AI-native surface: `tools` catalog with side-effect annotations, `optimize`
+  plans, `apply` execution, and schema contracts under `docs/schemas/v1/`
 - Fast batch operations with practical defaults
 - Idempotent reruns: discovered generated files are ignored and existing outputs are skipped
 - Safe destructive behavior: similarity is advisory; only revalidated,
   byte-identical duplicates can be deleted
-- Human-readable output and script-friendly JSON mode
-- AI-ready optimization plans with structured arguments, estimates, and uncertainty metadata
+- Human-readable output and script-friendly JSON mode with stable failure exit codes
+- Local media hot path: no model or network call sits between you and your files
 - Modular architecture for long-term maintainability
 
 ## Installation
@@ -45,6 +49,11 @@ pixshift
 ├─ info         Inspect image metadata and properties
 ├─ formats      Show supported formats and quality presets
 ├─ doctor       Validate runtime dependencies
+├─ tools        List the agent-facing tool catalog
+├─ apply        Execute machine plans from optimize
+├─ prep         Prepare delivery-ready assets (resize + convert + privacy strip)
+├─ manifest     Inventory media with hashes and properties
+├─ hash         Compute content hashes for audits
 └─ pdf
    ├─ merge     Merge images into PDF
    ├─ extract   Extract PDF pages as images
@@ -74,6 +83,42 @@ Common defaults favor everyday speed without hiding control: conversion uses `hi
 quality, PDF extraction uses 150 DPI, text-watermark size adapts to the image, and
 existing batch outputs are skipped. Use `-q max`, `--dpi 300`, `--font-size 36`, or
 `--overwrite` when those explicit behaviors are required.
+
+## AI-Native Interface
+
+Agents discover, plan, apply, and verify with four moves:
+
+```bash
+pixshift tools --json                          # discover: catalog + annotations
+pixshift optimize ./photos -r --json > plan.json   # plan: executable recommendations
+pixshift apply --plan plan.json -o ./out --json    # apply: run the plan (supports --dry-run)
+pixshift hash ./out -r --json                  # verify: content digests for audit
+```
+
+- Every tool entry carries MCP-aligned annotations (`readOnlyHint`,
+  `destructiveHint`, `idempotentHint`, `openWorldHint: false`).
+- JSON payload contracts live in `docs/schemas/v1/` and are validated in CI.
+- One-shot asset preparation: `pixshift prep ./raw -o ./dist --max-size 2048 -t webp --json`
+  converts, bounds dimensions, strips privacy metadata, and returns a hashed manifest.
+- Directory inventory: `pixshift manifest ./photos -r --json` reports formats,
+  dimensions, alpha, frame counts, sensitive EXIF keys, and SHA-256 digests.
+- Optional MCP hosting: `python -m pixshift.mcp` serves the same catalog over
+  stdio JSON-RPC; the CLI JSON document remains the authoritative contract
+  (see `docs/adr/0003-ai-native-tool-surface.md`).
+- Agent guide: `AGENTS.md`.
+
+## Shell Completion
+
+Click provides completion for bash, zsh, and fish:
+
+```bash
+# bash (~/.bashrc)
+eval "$(_PIXSHIFT_COMPLETE=bash_source pixshift)"
+# zsh (~/.zshrc)
+eval "$(_PIXSHIFT_COMPLETE=zsh_source pixshift)"
+# fish (~/.config/fish/completions/pixshift.fish)
+_PIXSHIFT_COMPLETE=fish_source pixshift | source
+```
 
 ## Automation Mode (`--json`)
 
@@ -110,6 +155,10 @@ Script templates:
 - Architecture: `docs/ARCHITECTURE.md`
 - Safety boundary ADR: `docs/adr/0001-safe-operation-boundaries.md`
 - Command reference: `docs/COMMANDS.md`
+- AI-native surface ADR: `docs/adr/0003-ai-native-tool-surface.md`
+- JSON Schema contracts: `docs/schemas/v1/`
+- Agent guide: `AGENTS.md`
+- Project goal and milestones: `GOAL.md`
 - Phase checklist: `docs/PHASE1_CHECKLIST.md`
 - JSON output contract: `docs/JSON_OUTPUT.md`
 - Performance evidence: `docs/PERFORMANCE.md`

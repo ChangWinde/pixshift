@@ -2,6 +2,11 @@
 
 PixShift provides stable JSON output for automation with the `--json` flag.
 
+Formal JSON Schema files for the envelope and command payloads live in
+`docs/schemas/v1/` and are validated against live command output in CI.
+Fields are additive under `schema_version` `"1.0"`; removing or retyping a
+documented field requires a version bump.
+
 ## Supported Commands
 
 - `pixshift compress ... --json`
@@ -23,6 +28,11 @@ PixShift provides stable JSON output for automation with the `--json` flag.
 - `pixshift pdf compress ... --json`
 - `pixshift pdf concat ... --json`
 - `pixshift pdf info ... --json`
+- `pixshift tools --json`
+- `pixshift apply --plan ... --json`
+- `pixshift prep ... --json`
+- `pixshift manifest ... --json`
+- `pixshift hash ... --json`
 
 ## Common Fields
 
@@ -212,3 +222,37 @@ Notes:
 - Validation failures (including Click's missing parameter, invalid value, and
   unknown option errors) return versioned JSON with `ok: false` and a non-zero
   exit code whenever `--json` is present.
+
+## Agent Command Payloads
+
+### `tools --json`
+
+- `total`
+- `tools` (array of `name`, `description`, `when_to_use`, `input_summary`,
+  `annotations` with `readOnlyHint` / `destructiveHint` / `idempotentHint` /
+  `openWorldHint`)
+
+### `apply --json`
+
+- `total`, `applied`, `skipped`, `failed`, `dry_run`
+- `steps` (array of `input`, `plan_command`, `arguments`, `output`, `ok`,
+  `skipped`, `error`, `detail`)
+- Accepted plan documents: an `optimize --json` payload, a single plan object,
+  a `{"plans": [...]}` wrapper, or a JSON array of plan objects.
+
+### `prep --json`
+
+- `total`, `success`, `skipped`, `failed`, `ignored_generated`, `output_dir`, `dry_run`
+- `items` (array of `input`, `output`, `ok`, `skipped`, `input_bytes`,
+  `output_bytes`, `sha256`, `width`, `height`, `error`)
+
+### `manifest --json`
+
+- `total`
+- `files` (array of `path`, `sha256`, `bytes`, `format`, `width`, `height`,
+  `mode`, `has_alpha`, `frame_count`, `sensitive_exif_keys`, `error`)
+
+### `hash --json`
+
+- `total`, `algorithm`
+- `files` (array of `path`, `algorithm`, `digest`, `bytes`, `error`)

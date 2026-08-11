@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 try:
-    import fitz  # PyMuPDF
+    import pymupdf as fitz  # canonical import name since PyMuPDF 1.24
 
     PYMUPDF_AVAILABLE = True
 except ImportError:

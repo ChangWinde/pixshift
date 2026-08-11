@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ChangWinde/pixshift/docs/schemas/v1/hash.json",
+  "title": "pixshift hash --json",
+  "type": "object",
+  "required": ["schema_version", "command", "ok", "total", "algorithm", "files"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "command": {"const": "hash"},
+    "ok": {"type": "boolean"},
+    "total": {"type": "integer", "minimum": 0},
+    "algorithm": {"enum": ["sha256", "sha1", "sha512", "blake2b", "md5"]},
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "algorithm", "digest", "bytes", "error"],
+        "properties": {
+          "path": {"type": "string"},
+          "algorithm": {"type": "string"},
+          "digest": {"type": "string", "pattern": "^$|^[0-9a-f]+$"},
+          "bytes": {"type": "integer", "minimum": 0},
+          "error": {"type": "string"}
+        }
+      }
+    }
+  }
+}

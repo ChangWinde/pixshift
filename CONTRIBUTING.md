@@ -5,8 +5,23 @@ Thanks for your interest in improving PixShift.
 ## Development Setup
 
 ```bash
-python -m pip install -e ".[dev]"
-python -m pytest -q
+uv sync --frozen --extra dev
+uv run pytest -q
+```
+
+Quality gates (same as CI):
+
+```bash
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy . --ignore-missing-imports
+uv run pytest -q --cov=pixshift --cov-fail-under=70
+```
+
+Optional pre-commit hooks:
+
+```bash
+uv run pre-commit install
 ```
 
 ## Project Expectations

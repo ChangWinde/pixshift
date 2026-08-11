@@ -276,7 +276,7 @@ def _collect_doctor_checks() -> list[tuple[str, str, bool, bool]]:
         )
 
     try:
-        import fitz
+        import pymupdf as fitz
 
         fitz_ver = fitz.version[0] if hasattr(fitz, "version") else fitz.VersionBind
         checks.append(("PyMuPDF（PDF 处理）", str(fitz_ver), True, True))

@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ChangWinde/pixshift/docs/schemas/v1/envelope.json",
+  "title": "PixShift JSON envelope",
+  "type": "object",
+  "required": ["schema_version", "command", "ok"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "command": {"type": "string", "minLength": 1},
+    "ok": {"type": "boolean"},
+    "error": {"type": "string"}
+  }
+}

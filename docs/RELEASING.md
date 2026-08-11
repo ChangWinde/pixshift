@@ -12,7 +12,7 @@ PixShift follows semantic versioning (`MAJOR.MINOR.PATCH`).
    uv run ruff check .
    uv run ruff format --check .
    uv run mypy . --ignore-missing-imports
-   uv run pytest -q --cov=pixshift --cov-report=term-missing --cov-fail-under=60
+   uv run pytest -q --cov=pixshift --cov-report=term-missing --cov-fail-under=70
    uv build
    uv run twine check dist/*
    ```
@@ -26,13 +26,24 @@ PixShift follows semantic versioning (`MAJOR.MINOR.PATCH`).
 4. The tag-only `release.yml` workflow tests, builds, validates, and uploads package artifacts.
 5. Download and verify artifacts from GitHub Actions.
 
-## Optional: Publish to PyPI
+## Publish to PyPI (trusted publishing)
 
-The current workflow does **not** publish to PyPI. After validating artifacts, publish
-with trusted publishing or add an explicitly reviewed publish job. Never assume a green
-artifact build means PyPI was updated.
+The tag-driven `release.yml` workflow contains a `publish` job that uploads the
+validated artifacts to PyPI through [trusted publishing](https://docs.pypi.org/trusted-publishers/)
+(OIDC, no long-lived API token). One-time setup:
+
+1. On pypi.org, add a trusted publisher for project `pixshift`:
+   owner `ChangWinde`, repository `pixshift`, workflow `release.yml`,
+   environment `pypi`. For a first release use a *pending* publisher.
+2. In the GitHub repository settings, create the `pypi` environment.
+   Recommended: require a reviewer so publishing stays an explicit decision.
+3. Push a `vX.Y.Z` tag. The `build` job runs the full gate and builds artifacts;
+   the `publish` job uploads them only after the environment gate passes.
+
+Never assume a green artifact build means PyPI was updated; verify the release
+page on PyPI after the `publish` job succeeds.
 
 ## Coverage Policy
 
-The current repository-wide gate is a baseline (`60%`) to enforce trend safety.
-Increase this threshold gradually as module coverage improves.
+The current repository-wide gate is `70%` (measured coverage is above 75%).
+Increase this threshold gradually as module coverage improves; the next target is `80%`.

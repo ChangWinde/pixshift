@@ -40,6 +40,7 @@ all = ["pillow-avif-plugin"]
 dev = [
     "build>=1.2.0",
     "hypothesis>=6.165.0",
+    "jsonschema>=4.23",
     "mypy>=1.10",
     "pytest>=7.0",
     "pytest-cov>=4.0",
@@ -64,7 +65,9 @@ target-version = "py310"
 line-length = 100
 
 [tool.ruff.lint]
-select = ["E4", "E7", "E9", "F", "I", "UP", "B", "SIM"]
+select = ["E4", "E7", "E9", "W", "F", "I", "UP", "B", "SIM", "C4", "PIE", "RUF"]
+# Chinese full-width punctuation in CLI copy is intentional.
+ignore = ["RUF001", "RUF002", "RUF003"]
 
 [tool.mypy]
 python_version = "3.10"

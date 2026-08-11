@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ChangWinde/pixshift/docs/schemas/v1/optimize.json",
+  "title": "pixshift optimize --json",
+  "type": "object",
+  "required": ["schema_version", "command", "ok", "total"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "command": {"const": "optimize"},
+    "ok": {"type": "boolean"},
+    "total": {"type": "integer", "minimum": 0},
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["input", "input_bytes", "recommended_format", "plan", "error"],
+        "properties": {
+          "input": {"type": "string"},
+          "input_bytes": {"type": "integer", "minimum": 0},
+          "image_type": {"type": "string"},
+          "recommended_format": {"type": "string"},
+          "recommended_reason": {"type": "string"},
+          "plan": {
+            "type": "object",
+            "required": ["command", "arguments"],
+            "properties": {
+              "command": {"enum": ["convert", "compress", "strip"]},
+              "arguments": {"type": "object"}
+            }
+          },
+          "error": {"type": "string"}
+        }
+      }
+    }
+  }
+}
