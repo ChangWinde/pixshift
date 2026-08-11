@@ -85,6 +85,26 @@ def test_apply_dry_run_writes_nothing(tmp_path):
     assert not out_dir.exists() or not any(out_dir.iterdir())
 
 
+def test_apply_compress_without_output_uses_derivative_name(tmp_path):
+    src = tmp_path / "img.png"
+    Image.new("RGB", (32, 32), (200, 200, 10)).save(src, format="PNG")
+    plan = {
+        "input": str(src),
+        "command": "compress",
+        "arguments": {"preset": "lossless"},
+    }
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["apply", "--plan", "-", "--json"], input=json.dumps(plan))
+    assert result.exit_code == 0
+    payload = _payload(result)
+    step = payload["steps"][0]
+    assert step["ok"] is True
+    assert step["skipped"] is False
+    assert step["output"].endswith("img_compressed.png")
+    assert (tmp_path / "img_compressed.png").is_file()
+
+
 def test_apply_rejects_invalid_plan():
     runner = CliRunner()
     result = runner.invoke(cli, ["apply", "--plan", "-", "--json"], input="{}")

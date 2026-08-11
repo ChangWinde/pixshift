@@ -11,7 +11,7 @@ from typing import Any
 from ..converter import SUPPORTED_INPUT_FORMATS
 from ..core.defaults import DEFAULT_CONVERT_QUALITY
 from ..core.files import (
-    atomic_write_bytes,
+    atomic_copy_file,
     collect_supported_files,
     conversion_output_name,
     filter_generated_inputs,
@@ -164,7 +164,7 @@ def _prep_one(
                     item.error = strip_result.error or "strip_failed"
                     return item
                 final_source = tmp_strip
-            atomic_write_bytes(dest, Path(final_source).read_bytes())
+            atomic_copy_file(final_source, dest)
         item.success = True
         item.output_bytes = Path(dest).stat().st_size
         item.sha256 = _sha256(dest)

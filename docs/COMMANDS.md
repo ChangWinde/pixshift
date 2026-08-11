@@ -197,7 +197,9 @@ pixshift optimize ./photos --json | pixshift apply --plan - --json
 ```
 
 Supported plan commands: `convert`, `compress`, `strip`. Existing outputs are
-idempotent skips unless `--overwrite` is set.
+idempotent skips unless `--overwrite` is set. Without `-o`, outputs follow the
+CLI naming conventions next to the source: `convert` swaps the extension,
+`compress` appends `_compressed`, and `strip` appends `_clean`.
 
 ### `prep`
 

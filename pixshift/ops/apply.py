@@ -8,7 +8,11 @@ from pathlib import Path
 from typing import Any
 
 from ..core.defaults import DEFAULT_COMPRESS_PRESET, DEFAULT_CONVERT_QUALITY
-from ..core.files import conversion_output_name, plan_output_path
+from ..core.files import (
+    conversion_output_name,
+    derivative_output_name,
+    plan_output_path,
+)
 from . import compress as compress_ops
 from . import convert as convert_ops
 from . import strip as strip_ops
@@ -157,13 +161,12 @@ def _output_for(
     input_path: str,
     *,
     output_dir: str | None,
-    output_format: str,
+    output_name: str,
     overwrite: bool,
 ) -> tuple[str, bool]:
-    name = conversion_output_name(input_path, output_format)
     target = plan_output_path(
         input_path,
-        name,
+        output_name,
         output_dir=output_dir,
         flatten=False,
         source_paths=[input_path],
@@ -192,7 +195,7 @@ def _apply_convert(
     output_path, skipped = _output_for(
         applied.input_path,
         output_dir=output_dir,
-        output_format=target_format,
+        output_name=conversion_output_name(applied.input_path, target_format),
         overwrite=overwrite,
     )
     applied.output_path = output_path
@@ -221,11 +224,10 @@ def _apply_compress(
     overwrite: bool,
     dry_run: bool,
 ) -> AppliedStep:
-    suffix = Path(applied.input_path).suffix.lstrip(".").lower() or "bin"
     output_path, skipped = _output_for(
         applied.input_path,
         output_dir=output_dir,
-        output_format=suffix,
+        output_name=derivative_output_name(applied.input_path, "_compressed"),
         overwrite=overwrite,
     )
     applied.output_path = output_path
@@ -267,11 +269,10 @@ def _apply_strip(
     overwrite: bool,
     dry_run: bool,
 ) -> AppliedStep:
-    suffix = Path(applied.input_path).suffix.lstrip(".").lower() or "bin"
     output_path, skipped = _output_for(
         applied.input_path,
         output_dir=output_dir,
-        output_format=suffix,
+        output_name=derivative_output_name(applied.input_path, "_clean"),
         overwrite=overwrite,
     )
     applied.output_path = output_path
