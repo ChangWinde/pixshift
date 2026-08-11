@@ -42,11 +42,24 @@ uv run pre-commit install
    - tests for new or changed logic.
 4. Ensure CI is green.
 
-## Commit Style (recommended)
+## Commit Style (required)
 
-Use clear, imperative messages:
+Use the `[scope/op]: title` format with an imperative title under 72 characters.
+Valid ops: `feat` `fix` `refactor` `test` `docs` `chore` `perf` `style` `ci`
+`build` `revert`. Scope names a module or area (`cli`, `ops`, `core`, `pdf`,
+`schema`, `release`, `repo`).
 
-- `feat: add json output for convert`
-- `fix: preserve directory layout in output planner`
-- `docs: add automation examples`
+- `[cli/feat]: add json output for convert`
+- `[core/fix]: preserve directory layout in output planner`
+- `[repo/docs]: add automation examples`
+
+Recommended body for non-trivial changes:
+
+```
+[scope/op]: title
+
+What: one-line summary of the change
+Why: motivation or issue reference
+How: brief technical approach (if non-obvious)
+```
 
