@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ChangWinde/pixshift/docs/schemas/v1/apply.json",
+  "title": "pixshift apply --json",
+  "type": "object",
+  "required": ["schema_version", "command", "ok", "total", "applied", "skipped", "failed", "dry_run", "steps"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "command": {"const": "apply"},
+    "ok": {"type": "boolean"},
+    "total": {"type": "integer", "minimum": 0},
+    "applied": {"type": "integer", "minimum": 0},
+    "skipped": {"type": "integer", "minimum": 0},
+    "failed": {"type": "integer", "minimum": 0},
+    "dry_run": {"type": "boolean"},
+    "steps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["input", "plan_command", "arguments", "output", "ok", "skipped", "error"],
+        "properties": {
+          "input": {"type": "string"},
+          "plan_command": {"type": "string"},
+          "arguments": {"type": "object"},
+          "output": {"type": "string"},
+          "ok": {"type": "boolean"},
+          "skipped": {"type": "boolean"},
+          "error": {"type": "string"},
+          "detail": {"type": "string"}
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ChangWinde/pixshift/docs/schemas/v1/manifest.json",
+  "title": "pixshift manifest --json",
+  "type": "object",
+  "required": ["schema_version", "command", "ok", "total", "files"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "command": {"const": "manifest"},
+    "ok": {"type": "boolean"},
+    "total": {"type": "integer", "minimum": 0},
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "sha256", "bytes", "format", "sensitive_exif_keys", "error"],
+        "properties": {
+          "path": {"type": "string"},
+          "sha256": {"type": "string", "pattern": "^$|^[0-9a-f]{64}$"},
+          "bytes": {"type": "integer", "minimum": 0},
+          "format": {"type": "string"},
+          "width": {"type": ["integer", "null"]},
+          "height": {"type": ["integer", "null"]},
+          "mode": {"type": "string"},
+          "has_alpha": {"type": ["boolean", "null"]},
+          "frame_count": {"type": ["integer", "null"]},
+          "sensitive_exif_keys": {"type": "array", "items": {"type": "string"}},
+          "error": {"type": "string"}
+        }
+      }
+    }
+  }
+}

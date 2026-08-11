@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ChangWinde/pixshift/docs/schemas/v1/prep.json",
+  "title": "pixshift prep --json",
+  "type": "object",
+  "required": ["schema_version", "command", "ok", "total", "success", "skipped", "failed", "ignored_generated", "output_dir", "dry_run", "items"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "command": {"const": "prep"},
+    "ok": {"type": "boolean"},
+    "total": {"type": "integer", "minimum": 0},
+    "success": {"type": "integer", "minimum": 0},
+    "skipped": {"type": "integer", "minimum": 0},
+    "failed": {"type": "integer", "minimum": 0},
+    "ignored_generated": {"type": "integer", "minimum": 0},
+    "output_dir": {"type": "string"},
+    "dry_run": {"type": "boolean"},
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["input", "output", "ok", "skipped", "input_bytes", "output_bytes", "sha256", "error"],
+        "properties": {
+          "input": {"type": "string"},
+          "output": {"type": "string"},
+          "ok": {"type": "boolean"},
+          "skipped": {"type": "boolean"},
+          "input_bytes": {"type": "integer", "minimum": 0},
+          "output_bytes": {"type": "integer", "minimum": 0},
+          "sha256": {"type": "string", "pattern": "^$|^[0-9a-f]{64}$"},
+          "width": {"type": ["integer", "null"]},
+          "height": {"type": ["integer", "null"]},
+          "error": {"type": "string"}
+        }
+      }
+    }
+  }
+}

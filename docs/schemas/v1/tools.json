@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ChangWinde/pixshift/docs/schemas/v1/tools.json",
+  "title": "pixshift tools --json",
+  "type": "object",
+  "required": ["schema_version", "command", "ok", "total", "tools"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "command": {"const": "tools"},
+    "ok": {"type": "boolean"},
+    "total": {"type": "integer", "minimum": 0},
+    "tools": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "description", "when_to_use", "input_summary", "annotations"],
+        "properties": {
+          "name": {"type": "string", "pattern": "^[a-z][a-z0-9._-]*$"},
+          "description": {"type": "string", "minLength": 1},
+          "when_to_use": {"type": "string", "minLength": 1},
+          "input_summary": {"type": "string", "minLength": 1},
+          "annotations": {
+            "type": "object",
+            "required": ["readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint"],
+            "properties": {
+              "readOnlyHint": {"type": "boolean"},
+              "destructiveHint": {"type": "boolean"},
+              "idempotentHint": {"type": "boolean"},
+              "openWorldHint": {"type": "boolean"}
+            }
+          }
+        }
+      }
+    }
+  }
+}
