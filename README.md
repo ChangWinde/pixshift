@@ -42,10 +42,11 @@ pixshift
 ├─ dedup        Find and remove similar/duplicate images
 ├─ compare      Compare image quality (SSIM/PSNR/MSE)
 ├─ crop         Crop images by box/aspect/auto-trim
+├─ resize       Resize images keeping their format
+├─ rotate       Rotate or mirror images
 ├─ watermark    Add text/image watermark
 ├─ montage      Build image grid montage
 ├─ optimize     Recommend best output format
-├─ watch        Watch directory and auto-convert
 ├─ info         Inspect image metadata and properties
 ├─ formats      Show supported formats and quality presets
 ├─ doctor       Validate runtime dependencies
@@ -57,6 +58,7 @@ pixshift
 └─ pdf
    ├─ merge     Merge images into PDF
    ├─ extract   Extract PDF pages as images
+   ├─ split     Split PDF into separate PDFs
    ├─ compress  Compress PDF
    ├─ concat    Concatenate multiple PDFs
    └─ info      Show PDF details
@@ -72,11 +74,13 @@ pixshift dedup ./photos/ -r --delete --dry-run
 pixshift dedup ./photos/ -r --delete --yes
 pixshift compare a.jpg b.jpg
 pixshift crop ./photos/ --aspect 1:1 -r
+pixshift resize ./photos/ --max-size 1600 -r
+pixshift rotate ./scans/ --degrees 90
 pixshift watermark text ./photos/ --text "© PixShift" -r
 pixshift montage ./photos/ -o board.png --cols 4
 pixshift optimize ./photos/ -r
-pixshift watch ./incoming --once -t webp
 pixshift pdf merge ./photos/ -o album.pdf
+pixshift pdf split ./report.pdf -o ./pages/
 ```
 
 Common defaults favor everyday speed without hiding control: conversion uses `high`
@@ -133,14 +137,16 @@ pixshift strip ./photos/ --mode privacy --json
 pixshift dedup ./photos/ -r --json
 pixshift compare a.jpg b.jpg --json
 pixshift crop ./photos/ --aspect 16:9 --dry-run --json
+pixshift resize ./photos/ --percent 50 --json
+pixshift rotate ./scans/ --degrees 90 --json
 pixshift watermark text ./photos/ --text "© PixShift" --dry-run --json
 pixshift montage ./photos/ -o board.png --json
 pixshift optimize ./photos/ --json
-pixshift watch ./incoming --once --json
 pixshift info ./photo.jpg --json
 pixshift formats --json
 pixshift doctor --json
 pixshift pdf info ./report.pdf --json
+pixshift pdf split ./report.pdf -o ./pages/ --json
 ```
 
 Script templates:

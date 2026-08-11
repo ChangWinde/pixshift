@@ -18,13 +18,15 @@ documented field requires a version bump.
 - `pixshift doctor --json`
 - `pixshift compare ... --json`
 - `pixshift crop ... --json`
+- `pixshift resize ... --json`
+- `pixshift rotate ... --json`
 - `pixshift watermark text ... --json`
 - `pixshift watermark image ... --json`
 - `pixshift montage ... --json`
 - `pixshift optimize ... --json`
-- `pixshift watch ... --once --json`
 - `pixshift pdf merge ... --json`
 - `pixshift pdf extract ... --json`
+- `pixshift pdf split ... --json`
 - `pixshift pdf compress ... --json`
 - `pixshift pdf concat ... --json`
 - `pixshift pdf info ... --json`
@@ -163,66 +165,6 @@ Delete dry-run mode (`--delete --dry-run`):
 - `results[*].plan.command`
 - `results[*].plan.arguments` (structured CLI option values)
 
-### `watch --once --json`
-
-- `mode: "once"`
-- `total`, `success`, `failed`, `skipped`
-- `output_format`, `quality`
-- `errors` (array)
-
-## PDF Command Payloads
-
-### `pdf merge --json`
-
-- `input_count`, `output`, `page_count`
-- `input_bytes`, `output_bytes`
-- `duration_sec`
-
-### `pdf extract --json`
-
-- `input`, `output_dir`
-- `total_pages`, `exported_pages`
-- `requested_pages`, `skipped_existing`, `output_format`, `dpi`
-- `input_bytes`, `output_bytes`
-- `duration_sec`
-
-### `pdf compress --json`
-
-- `input`, `output`, `page_count`
-- `input_bytes`, `output_bytes`
-- `duration_sec`
-
-### `pdf concat --json`
-
-- `input_count`, `output`, `page_count`
-- `input_bytes`, `output_bytes`
-- `duration_sec`
-
-### `pdf info --json`
-
-- `path`, `size_bytes`, `page_count`
-- `encrypted`, `pdf_version`, `image_count`
-- `metadata` (object)
-- `pages` (array when `--pages` is set, otherwise `null`)
-
-## Stability Note
-
-Field names listed in this document are intended to be stable for scripts.
-Future versions may add new fields, but existing documented fields should
-remain backward compatible.
-
-## Exit Code Semantics (JSON Mode)
-
-- `0`: successful command execution (`ok: true`)
-- `1`: command-level failure (`ok: false`)
-
-Notes:
-- "No files found" cases that are non-destructive and expected return `ok: true`
-  with exit code `0`.
-- Validation failures (including Click's missing parameter, invalid value, and
-  unknown option errors) return versioned JSON with `ok: false` and a non-zero
-  exit code whenever `--json` is present.
-
 ## Agent Command Payloads
 
 ### `tools --json`
@@ -256,3 +198,24 @@ Notes:
 
 - `total`, `algorithm`
 - `files` (array of `path`, `algorithm`, `digest`, `bytes`, `error`)
+
+## Transform Command Payloads
+
+### `resize --json`
+
+- `total`, `success`, `failed`, `skipped`, `ignored_generated`
+- `quality`, `input_bytes`, `output_bytes`, `duration_sec`
+- `errors` (array)
+- Dry-run mode returns `mode: "dry_run"` with `pending` and a bounded `preview`.
+
+### `rotate --json`
+
+- `total`, `success`, `failed`, `skipped`, `ignored_generated`
+- `degrees`, `flip`, `duration_sec`
+- `errors` (array)
+
+### `pdf split --json`
+
+- `mode` (`each` or `single`)
+- `total_pages`, `requested_pages`, `written_files`, `skipped_existing`
+- `input_bytes`, `output_bytes`, `duration_sec`

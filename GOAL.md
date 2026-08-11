@@ -27,6 +27,8 @@ Next frontier, in order:
 3. Coverage climb toward 80% (watch_engine and watermark_engine are the
    thinnest areas).
 4. MkDocs documentation site.
+5. Animated-image transforms (GIF/APNG to animated WebP) - the largest
+   remaining daily-workflow gap (ADR-0004).
 
 ## Milestones
 

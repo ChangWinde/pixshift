@@ -44,7 +44,6 @@ def test_advanced_commands_help_available():
     assert "watermark" in root.output
     assert "montage" in root.output
     assert "optimize" in root.output
-    assert "watch" in root.output
 
     watermark_help = runner.invoke(cli, ["watermark", "--help"])
     assert watermark_help.exit_code == 0
@@ -59,7 +58,6 @@ def test_advanced_commands_help_available():
         ["watermark", "image", "--help"],
         ["montage", "--help"],
         ["optimize", "--help"],
-        ["watch", "--help"],
     ]:
         result = runner.invoke(cli, args)
         assert result.exit_code == 0

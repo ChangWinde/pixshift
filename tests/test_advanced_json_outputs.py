@@ -119,19 +119,3 @@ def test_optimize_json_output(tmp_path):
         "command": "compress",
         "arguments": {"preset": "lossless"},
     }
-
-
-def test_watch_json_once_output(tmp_path):
-    src = tmp_path / "img.png"
-    Image.new("RGB", (16, 16), (10, 20, 30)).save(src, format="PNG")
-    out = tmp_path / "converted"
-    runner = CliRunner()
-    result = runner.invoke(
-        cli,
-        ["watch", str(tmp_path), "--once", "--json", "-t", "jpg", "-o", str(out), "--overwrite"],
-    )
-    assert result.exit_code == 0
-    payload = json.loads(result.output.strip())
-    assert payload["command"] == "watch"
-    assert payload["mode"] == "once"
-    assert payload["ok"] is True

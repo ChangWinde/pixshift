@@ -14,10 +14,7 @@ from rich.table import Table
 
 from ..converter import (
     SUPPORTED_INPUT_FORMATS,
-    SUPPORTED_OUTPUT_FORMATS,
-    PixShiftConverter,
 )
-from ..core.defaults import DEFAULT_WATCH_FORMAT, DEFAULT_WATCH_QUALITY
 from ..core.files import (
     collect_supported_files,
     derivative_output_name,
@@ -29,7 +26,6 @@ from ..ops import compare as compare_ops
 from ..ops import crop as crop_ops
 from ..ops import montage as montage_ops
 from ..ops import optimize as optimize_ops
-from ..ops import watch as watch_ops
 from ..ops import watermark as watermark_ops
 from ..presenters.json_presenters import emit_json, emit_json_and_exit
 from .common import validate_tasks_or_exit
@@ -603,143 +599,6 @@ def register_advanced_commands(
             console.print(f"[dim]... 还有 {len(analyses) - 50} 个文件[/dim]")
         console.print()
         if any(result.error for result in analyses):
-            raise click.exceptions.Exit(1)
-
-    @cli_group.command("watch")
-    @click.argument("watch_dir", type=click.Path(exists=True, file_okay=False))
-    @click.option(
-        "-t",
-        "--to",
-        "output_format",
-        default=DEFAULT_WATCH_FORMAT,
-        type=click.Choice(sorted(SUPPORTED_OUTPUT_FORMATS), case_sensitive=False),
-        help="目标格式；选项按当前运行环境探测",
-    )
-    @click.option("-o", "--output", "output_dir", default="", type=click.Path(), help="输出目录")
-    @click.option("-f", "--from", "input_format", default=None, help="仅监控指定输入格式")
-    @click.option(
-        "-q",
-        "--quality",
-        default=DEFAULT_WATCH_QUALITY,
-        type=click.Choice(["max", "high", "medium", "low", "web"]),
-        help="编码质量；默认 high（平衡质量、体积与速度）",
-    )
-    @click.option("-r", "--recursive", is_flag=True, default=False, help="递归监控子目录")
-    @click.option(
-        "--interval", default=2.0, type=click.FloatRange(0.2, 60.0), help="轮询间隔（秒）"
-    )
-    @click.option("--overwrite", is_flag=True, default=False, help="覆盖输出")
-    @click.option("--once", is_flag=True, default=False, help="单次扫描并退出")
-    @click.option(
-        "--json", "as_json", is_flag=True, default=False, help="以 JSON 输出结果（仅 --once）"
-    )
-    def watch_cmd(
-        watch_dir: str,
-        output_format: str,
-        output_dir: str,
-        input_format: str | None,
-        quality: str,
-        recursive: bool,
-        interval: float,
-        overwrite: bool,
-        once: bool,
-        as_json: bool,
-    ) -> None:
-        """监控目录并自动转换新图片。"""
-        if as_json and not once:
-            emit_json_and_exit({"command": "watch", "ok": False, "error": "json_requires_once"}, 1)
-        config = watch_ops.make_config(
-            watch_dir=watch_dir,
-            output_dir=output_dir,
-            output_format=output_format,
-            quality=quality,
-            input_format=input_format,
-            recursive=recursive,
-            interval=interval,
-            keep_exif=True,
-            overwrite=overwrite,
-        )
-        if once:
-            files = watch_ops.collect_files(config)
-            converter = PixShiftConverter(quality=quality, overwrite=overwrite)
-            success = 0
-            failed = 0
-            skipped = 0
-            out_dir = output_dir or str(Path(watch_dir) / "converted")
-            os.makedirs(out_dir, exist_ok=True)
-            errors: list[str] = []
-            for f in files:
-                out = plan_output_path(
-                    f,
-                    f"{Path(f).stem}.{output_format.lower().lstrip('.')}",
-                    out_dir,
-                    False,
-                    [watch_dir],
-                )
-                if Path(out).is_file() and not overwrite:
-                    skipped += 1
-                    continue
-                result = converter.convert_single(f, out)
-                if result.success:
-                    success += 1
-                else:
-                    failed += 1
-                    errors.append(result.error)
-            payload = {
-                "command": "watch",
-                "ok": failed == 0,
-                "mode": "once",
-                "total": len(files),
-                "success": success,
-                "failed": failed,
-                "skipped": skipped,
-                "output_format": output_format.lower(),
-                "quality": quality,
-                "errors": errors,
-            }
-            if as_json:
-                if failed:
-                    emit_json_and_exit(payload, 1)
-                emit_json(payload)
-                return
-            console.print(
-                f"[green]成功: {success}[/green]；"
-                f"[yellow]跳过: {skipped}[/yellow]；[red]失败: {failed}[/red]"
-            )
-            if failed:
-                raise click.exceptions.Exit(1)
-            return
-
-        def on_status(kind: str, message: str) -> None:
-            if kind == "start":
-                console.print(f"\n{mini_logo} [bold]目录监控[/bold]\n")
-            console.print(f"[cyan]{message}[/cyan]")
-
-        def on_new_file(kind: str, filepath: str, result: Any = None) -> None:
-            if kind == "success":
-                console.print(f"[green]处理成功:[/green] {os.path.basename(filepath)}")
-            elif kind == "skipped":
-                console.print(
-                    f"[yellow]已跳过:[/yellow] {os.path.basename(filepath)}（输出已存在）"
-                )
-            elif kind in {"failed", "error"}:
-                err = result.error if hasattr(result, "error") else str(result)
-                console.print(f"[red]处理失败:[/red] {os.path.basename(filepath)}: {err}")
-
-        watcher = watch_ops.create_watcher(config, on_new_file=on_new_file, on_status=on_status)
-        stats = watcher.start()
-        elapsed = max(0.0, time.time() - stats.start_time)
-        console.print(
-            Panel(
-                f"  成功: [bold green]{stats.files_processed}[/bold green]\n"
-                f"  失败: [bold red]{stats.files_failed}[/bold red]\n"
-                f"  跳过: [bold yellow]{stats.files_skipped}[/bold yellow]\n"
-                f"  运行时长: [bold]{elapsed:.1f} 秒[/bold]",
-                title="[bold]监控结束[/bold]",
-                box=box.ROUNDED,
-            )
-        )
-        if stats.files_failed:
             raise click.exceptions.Exit(1)
 
 

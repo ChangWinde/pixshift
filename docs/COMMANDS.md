@@ -123,16 +123,30 @@ pixshift optimize INPUTS... [-r] [--json]
 JSON includes bounded format-size estimates, sampling metadata, and a `plan` object with
 a command plus structured arguments. Large images are sampled to keep analysis fast.
 
-### `watch`
+### `resize`
 
-Watch a directory and auto-convert new files.
+Resize images in batch while keeping their format; outputs `_resized` derivatives.
 
 ```bash
-pixshift watch ./incoming -t webp
-pixshift watch ./incoming --once --json
+pixshift resize INPUTS... (--size WxH | --percent P | --max-size N) \
+  [-o OUT_DIR] [-q high] [-r] [--overwrite] [--dry-run] [--json]
 ```
 
-Watch conversion defaults to WebP at `high` quality. Existing outputs are skipped.
+Exactly one sizing mode is required. `--max-size` bounds the longest side and
+never enlarges. Same-format re-encode applies the selected quality preset to
+lossy formats.
+
+### `rotate`
+
+Rotate clockwise or mirror still images; outputs `_rotated` derivatives.
+
+```bash
+pixshift rotate INPUTS... [--degrees 90|180|270] [--flip horizontal|vertical] \
+  [-o OUT_DIR] [-r] [--overwrite] [--json]
+```
+
+EXIF orientation is normalized exactly once before the transform, so results
+match what viewers display. Animated inputs are rejected.
 
 ## System Commands
 
@@ -227,6 +241,17 @@ Compute content hashes for audits (media files by default).
 ```bash
 pixshift hash INPUTS... [-r] [--algorithm sha256] [--all-files] [--json]
 ```
+
+### `pdf split`
+
+Split a PDF into standalone PDFs.
+
+```bash
+pixshift pdf split report.pdf -o ./pages/ [--pages '1-5,8'] [--single] [--overwrite] [--json]
+```
+
+Default writes one PDF per selected page (`{stem}_page_0001.pdf`); `--single`
+writes one document containing the selected pages.
 
 ## Repeat Runs
 
