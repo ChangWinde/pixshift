@@ -15,8 +15,18 @@ a discoverable catalog, schema-validated contracts, and a plan-to-apply loop.
 
 ## Current Focus
 
-M0-M3 shipped on branch `feat/ai-native`. Next frontier: PyPI trusted publishing,
-coverage climb toward 80%, and MkDocs documentation site.
+M0-M3 shipped in PR #11 (CI green on Python 3.10/3.12/3.13, frozen lockfile).
+Trusted-publishing workflow is in place behind the `pypi` environment.
+
+Next frontier, in order:
+
+1. Merge PR #11.
+2. One-time PyPI setup: trusted publisher (owner `ChangWinde`, repo `pixshift`,
+   workflow `release.yml`, environment `pypi`) plus the GitHub `pypi`
+   environment, then tag `v1.2.0` (see `docs/RELEASING.md`).
+3. Coverage climb toward 80% (watch_engine and watermark_engine are the
+   thinnest areas).
+4. MkDocs documentation site.
 
 ## Milestones
 
