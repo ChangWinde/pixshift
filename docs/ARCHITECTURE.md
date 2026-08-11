@@ -70,6 +70,17 @@ local performance and reproducibility do not depend on network availability.
 `optimize` returns a structured command plan and explicitly marks sampled estimates,
 so agents can act without parsing localized prose or treating estimates as exact facts.
 
+The contract layer (ADR-0003) makes this surface discoverable and verifiable:
+
+- `core/tool_catalog.py` publishes the stable catalog with MCP-aligned
+  side-effect annotations; `pixshift tools --json` exposes it to shell agents.
+- `pixshift apply` executes plans emitted by `optimize` (and future planners)
+  through the same ops wrappers as interactive commands.
+- `docs/schemas/v1/` holds JSON Schema files for command payloads; CI validates
+  live outputs against them, and breaking changes require a `schema_version` bump.
+- `pixshift.mcp` is a thin stdio JSON-RPC adapter that maps catalog entries to
+  CLI invocations; it never reimplements engines or safety policy.
+
 ## Performance Model
 
 - Single-file conversion stays in-process to avoid process startup overhead.
