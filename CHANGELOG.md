@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- Animated-image transforms (the ADR-0004 gap): `convert` and `resize`
+  preserve frames, per-frame timing, loop count, and transparency for GIF /
+  APNG / animated WebP when the target format can animate (`webp`, `gif`,
+  `png`); targets that cannot keep the stable `animated_input_not_supported`
+  error instead of dropping frames.
+- `optimize` classifies animations instead of rejecting them: animated
+  GIF/APNG get an executable `convert -t webp` plan (animation preserved),
+  an already-animated WebP gets an explicit `keep` plan.
+
 ## [1.2.0] - 2026-08-12
 
 ### Removed

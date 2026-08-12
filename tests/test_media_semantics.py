@@ -78,10 +78,9 @@ def test_default_privacy_strip_removes_nested_sensitive_exif(tmp_path: Path) -> 
     assert analysis["has_time"] is True
 
 
-def test_convert_rejects_animation_before_same_path_overwrite(tmp_path: Path) -> None:
+def test_convert_animated_same_path_overwrite_preserves_frames(tmp_path: Path) -> None:
     source = tmp_path / "animation.gif"
     _animated_gif(source)
-    original_digest = _sha256(source)
     assert PixShiftConverter.get_image_info(str(source))["frame_count"] == 3
 
     result = CliRunner().invoke(
@@ -89,13 +88,30 @@ def test_convert_rejects_animation_before_same_path_overwrite(tmp_path: Path) ->
         ["convert", str(source), "--to", "gif", "--overwrite", "--json"],
     )
 
-    assert result.exit_code != 0
+    # Animated conversion is supported now; overwriting the source in place
+    # must stay atomic and keep every frame (frames are copied to memory
+    # before the atomic replace touches the path).
+    assert result.exit_code == 0
     payload = json.loads(result.output)
-    assert payload["ok"] is False
-    assert payload["errors"][0]["error"] == "animated_input_not_supported"
-    assert _sha256(source) == original_digest
+    assert payload["ok"] is True
     with Image.open(source) as image:
         assert image.n_frames == 3
+
+
+def test_convert_animated_without_overwrite_still_skips_same_path(tmp_path: Path) -> None:
+    source = tmp_path / "animation.gif"
+    _animated_gif(source)
+    original_digest = _sha256(source)
+
+    result = CliRunner().invoke(cli, ["convert", str(source), "--to", "gif", "--json"])
+
+    # Same-path target without --overwrite is an idempotent skip; the
+    # source bytes must be untouched.
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["skipped"] == 1
+    assert payload["success"] == 0
+    assert _sha256(source) == original_digest
 
 
 @pytest.mark.parametrize(
@@ -131,7 +147,10 @@ def test_static_image_analyzers_reject_animation(tmp_path: Path) -> None:
     comparison = compare_images(str(source), str(second))
     pdf = pdf_merge_images([str(source)], str(tmp_path / "output.pdf"))
 
-    assert optimize.error == "animated_input_not_supported"
+    # optimize now classifies animations and plans an executable next step.
+    assert optimize.error == ""
+    assert optimize.image_type == "animation"
+    assert optimize.plan["command"] == "convert"
     assert comparison.success is False
     assert comparison.error == "animated_input_not_supported"
     assert pdf.success is False

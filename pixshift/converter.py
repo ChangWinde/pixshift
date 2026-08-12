@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from .core.defaults import DEFAULT_CONVERT_QUALITY
+from .core.errors import AnimatedInputNotSupportedError
 from .core.files import (
     atomic_output_path,
     collect_supported_files,
@@ -20,7 +21,6 @@ from .core.files import (
     plan_output_path,
 )
 from .core.metadata import (
-    ensure_static_image,
     flatten_transparency,
     image_frame_count,
     image_has_transparency,
@@ -30,14 +30,14 @@ from .core.metadata import (
 
 try:
     import pillow_heif
-    from PIL import ExifTags, Image, ImageFile
+    from PIL import ExifTags, Image, ImageFile, ImageSequence
 
     pillow_heif.register_heif_opener()
     HEIF_SUPPORT = True
 except ImportError:
     HEIF_SUPPORT = False
     try:
-        from PIL import ExifTags, Image, ImageFile
+        from PIL import ExifTags, Image, ImageFile, ImageSequence
     except ImportError:
         print("请先安装 Pillow: pip install Pillow")
         sys.exit(1)
@@ -104,6 +104,12 @@ FORMAT_ALIASES = {
     "tif": "tiff",
     "heif": "heic",
 }
+
+# 输出端支持动画的格式（png 即 APNG）。动图只允许转到这些目标；
+# 其余格式保持稳定报错，绝不静默丢帧。
+ANIMATED_OUTPUT_FORMATS = {"webp", "gif", "png"}
+
+_DEFAULT_FRAME_DURATION_MS = 100
 
 # 能够存储 CMYK 像素的输出格式（已按 FORMAT_ALIASES 归一化）。
 _CMYK_CAPABLE = {"jpg", "jpeg", "tiff", "tif", "pdf"}
@@ -315,6 +321,73 @@ class PixShiftConverter:
         """根据 EXIF 信息旋转图片，并移除已应用的方向标签。"""
         return normalize_orientation(img)
 
+    def _process_animation_frame(self, frame: Image.Image) -> Image.Image:
+        """Resize and normalise one animation frame.
+
+        EXIF auto-orientation is deliberately skipped: orientation tags on
+        animations are undefined in practice, and rotating frames against
+        inconsistent per-frame EXIF would corrupt the stream.
+        """
+        if frame.mode not in ("RGB", "RGBA"):
+            frame = frame.convert("RGBA" if image_has_transparency(frame) else "RGB")
+        if self.resize:
+            frame = frame.resize(self.resize, Image.Resampling.LANCZOS)
+        elif self.resize_percent:
+            width, height = frame.size
+            new_width = max(1, int(width * self.resize_percent / 100))
+            new_height = max(1, int(height * self.resize_percent / 100))
+            frame = frame.resize((new_width, new_height), Image.Resampling.LANCZOS)
+        elif self.max_size:
+            frame.thumbnail((self.max_size, self.max_size), Image.Resampling.LANCZOS)
+        if self.strip_alpha and image_has_transparency(frame):
+            frame = flatten_transparency(frame, self.background_color)
+        return frame
+
+    def _save_animated(
+        self,
+        frames: list[Image.Image],
+        durations: list[int],
+        loop: int,
+        output_fmt: str,
+        output_path: str,
+    ) -> None:
+        """Encode a multi-frame image preserving frames, timing, and loop."""
+        processed = [self._process_animation_frame(frame) for frame in frames]
+
+        save_params = self.get_save_params(output_fmt)
+        first = processed[0]
+        exif_bytes = None
+        if self.keep_exif:
+            try:
+                exif_bytes = normalized_exif_bytes(first, remove_orientation=False)
+            except Exception:
+                exif_bytes = None
+        icc_profile = first.info.get("icc_profile") if self.keep_icc else None
+        for frame in processed:
+            # 同静态路径：编码器会从 info 回捞元数据，清洗必须显式删除。
+            frame.info.pop("exif", None)
+            frame.getexif().clear()
+            if not self.keep_exif:
+                frame.info.pop("xmp", None)
+            frame.info.pop("icc_profile", None)
+        if exif_bytes:
+            save_params["exif"] = exif_bytes
+        if icc_profile:
+            save_params["icc_profile"] = icc_profile
+
+        save_params.update(
+            save_all=True,
+            append_images=processed[1:],
+            duration=durations,
+            loop=loop,
+        )
+        if output_fmt == "gif":
+            # Full-frame replacement disposal: frames were composited on
+            # decode, so carrying over partial-frame disposal would smear.
+            save_params["disposal"] = 2
+        with atomic_output_path(output_path) as temporary:
+            first.save(temporary, **save_params)
+
     def convert_single(self, input_path: str, output_path: str) -> ConvertResult:
         """转换单个文件"""
         result = ConvertResult(
@@ -347,9 +420,17 @@ class PixShiftConverter:
 
             # 打开图片并复制到内存，避免覆盖源文件时依赖惰性文件句柄。
             with Image.open(input_path) as opened:
-                ensure_static_image(opened)
                 result.width, result.height = opened.size
                 source_mode = opened.mode
+                if image_frame_count(opened) > 1:
+                    if output_fmt not in ANIMATED_OUTPUT_FORMATS:
+                        raise AnimatedInputNotSupportedError()
+                    frames, durations, loop = _extract_animation(opened)
+                    self._save_animated(frames, durations, loop, output_fmt, output_path)
+                    result.output_size = os.path.getsize(output_path)
+                    result.success = True
+                    result.duration = time.time() - start_time
+                    return result
                 img = opened.copy()
                 img.info.update(opened.info)
 
@@ -448,6 +529,29 @@ class PixShiftConverter:
 # ============================================================
 #  工具函数
 # ============================================================
+
+
+def _extract_animation(opened: Image.Image) -> tuple[list[Image.Image], list[int], int]:
+    """Copy every frame with its duration (ms) and the stream's loop count.
+
+    Pillow composites partial GIF frames on seek, so each copy is the full
+    visible frame. Non-positive or missing durations fall back to a sane
+    default rather than producing a zero-length frame.
+    """
+    default_duration = int(opened.info.get("duration") or _DEFAULT_FRAME_DURATION_MS)
+    if default_duration <= 0:
+        default_duration = _DEFAULT_FRAME_DURATION_MS
+    frames: list[Image.Image] = []
+    durations: list[int] = []
+    for frame in ImageSequence.Iterator(opened):
+        # copy() forces load(), and some decoders (WebP) only publish the
+        # frame duration after load — so read timing from the copy.
+        copied = frame.copy()
+        duration = int(copied.info.get("duration") or default_duration)
+        durations.append(duration if duration > 0 else default_duration)
+        frames.append(copied)
+    loop = int(opened.info.get("loop") or 0)
+    return frames, durations, loop
 
 
 def _human_size(size_bytes: int) -> str:
