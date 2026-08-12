@@ -31,7 +31,7 @@ jobs:
           uv run mypy . --ignore-missing-imports
 
       - name: Run tests with coverage gate
-        run: uv run pytest -q --cov=pixshift --cov-report=term-missing --cov-fail-under=75
+        run: uv run pytest -q --cov=pixshift --cov-report=term-missing --cov-fail-under=78
 
       - name: Build package
         run: uv build
