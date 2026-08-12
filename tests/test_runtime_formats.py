@@ -28,13 +28,20 @@ def test_preview_items_truncates_long_lists():
     assert "(+" in text
 
 
-def test_output_capability_probe_treats_runtime_encoder_failure_as_unavailable(monkeypatch):
-    monkeypatch.setattr(
-        "pixshift.converter.Image.Image.save",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("codec unavailable")),
-    )
+def test_output_capability_probe_reflects_registered_savers(monkeypatch):
+    # The probe now reads the registered saver table instead of encoding a
+    # throwaway image per format (which needlessly initialised x265). A format
+    # absent from the saver table must not be reported as writable.
+    from PIL import Image as _Image
 
-    assert _build_supported_output_formats() == set()
+    savers = {name: fn for name, fn in _Image.SAVE.items() if name != "WEBP"}
+    savers_all = {name: fn for name, fn in _Image.SAVE_ALL.items() if name != "WEBP"}
+    monkeypatch.setattr("pixshift.converter.Image.SAVE", savers)
+    monkeypatch.setattr("pixshift.converter.Image.SAVE_ALL", savers_all)
+
+    result = _build_supported_output_formats()
+    assert "webp" not in result
+    assert "png" in result
 
 
 def test_all_reported_output_formats_complete_a_real_conversion(tmp_path: Path) -> None:

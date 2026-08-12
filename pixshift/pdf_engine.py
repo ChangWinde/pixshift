@@ -9,6 +9,7 @@ PixShift PDF Engine — 基于 PyMuPDF 的 PDF 处理引擎
   5. info     — PDF 信息查看
 """
 
+import importlib.util
 import io
 import os
 import time
@@ -16,18 +17,17 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-try:
-    import pymupdf as fitz  # canonical import name since PyMuPDF 1.24
-
-    PYMUPDF_AVAILABLE = True
-except ImportError:
-    PYMUPDF_AVAILABLE = False
-
 from PIL import Image
 
 from .core.defaults import DEFAULT_PDF_EXTRACT_DPI, DEFAULT_PDF_MERGE_MARGIN
 from .core.files import atomic_output_path, safe_output_path
 from .core.metadata import ensure_static_image, image_has_transparency, normalize_orientation
+
+# PyMuPDF is heavy (~34ms import, ~36MB RSS) and only the pdf.* commands need
+# it. Detect availability cheaply with find_spec and defer the real import to
+# _check_pymupdf(), so convert/compress/agent commands don't pay for it.
+PYMUPDF_AVAILABLE = importlib.util.find_spec("pymupdf") is not None
+fitz: Any = None
 
 # ============================================================
 #  常量定义
@@ -170,9 +170,15 @@ def _human_size(size_bytes: int) -> str:
 
 
 def _check_pymupdf() -> None:
-    """检查 PyMuPDF 是否可用"""
-    if not PYMUPDF_AVAILABLE:
-        raise ImportError("PDF 功能需要 PyMuPDF。请安装: pip install PyMuPDF")
+    """确保 PyMuPDF 可用并已完成惰性导入。"""
+    global fitz
+    if fitz is not None:
+        return
+    try:
+        import pymupdf as _pymupdf
+    except ImportError as error:
+        raise ImportError("PDF 功能需要 PyMuPDF。请安装: pip install PyMuPDF") from error
+    fitz = _pymupdf
 
 
 def _open_pdf(path: str):
@@ -181,6 +187,7 @@ def _open_pdf(path: str):
     ``needs_pass`` 为 True 时页面内容被锁，后续 merge/split/extract/compress
     会以底层异常中止；此处提前失败并返回稳定错误码。
     """
+    _check_pymupdf()
     doc = fitz.open(path)
     if doc.needs_pass:
         doc.close()

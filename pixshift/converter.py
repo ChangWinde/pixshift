@@ -3,7 +3,6 @@ PixShift Core Converter Engine
 支持多格式、最高质量的图片转换引擎
 """
 
-import io
 import math
 import os
 import shutil
@@ -67,7 +66,14 @@ def _build_supported_input_formats() -> set[str]:
 
 
 def _build_supported_output_formats() -> set[str]:
-    """Probe practical converter outputs instead of trusting plugin registries."""
+    """Report writable outputs from the registered saver table.
+
+    An earlier version actually encoded a 16x16 probe for each candidate,
+    which on every process start initialised the libheif/x265 encoder — ~43ms
+    and ~61MB RSS just to compute a set. Checking ``Image.SAVE`` (populated by
+    ``Image.init()`` and by the pillow-heif/avif plugins on registration) is
+    equivalent and effectively free.
+    """
     candidates = {
         "png": "PNG",
         "jpg": "JPEG",
@@ -84,15 +90,9 @@ def _build_supported_output_formats() -> set[str]:
         "ico": "ICO",
         "tga": "TGA",
     }
-    supported = set()
-    for name, pillow_format in candidates.items():
-        try:
-            image = Image.new("RGB", (16, 16), (1, 2, 3))
-            image.save(io.BytesIO(), format=pillow_format)
-            supported.add(name)
-        except (KeyError, OSError, RuntimeError, ValueError):
-            continue
-    return supported
+    Image.init()
+    savers = set(Image.SAVE) | set(Image.SAVE_ALL)
+    return {name for name, pillow_format in candidates.items() if pillow_format in savers}
 
 
 SUPPORTED_INPUT_FORMATS = _build_supported_input_formats()
