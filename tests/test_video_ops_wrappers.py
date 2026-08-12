@@ -106,6 +106,21 @@ def test_existing_output_skips_unless_overwrite(monkeypatch, clip, tmp_path):
     assert dst.read_bytes() == b"encoded-output"
 
 
+def test_silent_encoder_failure_is_a_stable_error(monkeypatch, clip, tmp_path):
+    def fake_run_no_output(args, **kwargs):
+        # Exit 0 without writing the planned output: the ffmpeg failure mode
+        # ADR-0005 warns about. It must become a stable per-file error.
+        return 0, ""
+
+    monkeypatch.setattr(video_ops, "run_ffmpeg", fake_run_no_output)
+    dst = tmp_path / "o.webm"
+    result = video_ops.convert_one(str(clip), str(dst), container="webm")
+    assert result.success is False
+    assert result.error == "output_not_created"
+    assert result.detail != ""
+    assert not dst.exists()
+
+
 @pytest.mark.parametrize(
     "operation,kwargs,expected_error",
     [

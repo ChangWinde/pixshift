@@ -69,6 +69,13 @@ def _run_operation(
     except ValueError as error:
         result.error = str(error)
         return result
+    except OSError as error:
+        # ffmpeg can exit 0 without producing its planned output (a failure
+        # mode ADR-0005 calls out); atomic_output_path surfaces that as an
+        # OSError which must stay a stable per-file error, not a traceback.
+        result.error = "output_not_created"
+        result.detail = str(error)
+        return result
     result.output_bytes = os.path.getsize(dst)
     result.success = True
     return result
