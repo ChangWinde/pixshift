@@ -29,8 +29,8 @@ Next frontier, in order:
 2. Coverage climb toward 80% including the new video argv builders.
 3. Video pillar depth: probe-driven `optimize` for video, plan/apply support for
    `video.*`, hardware-accel opt-in.
-4. Animated-image transforms (GIF/APNG to animated WebP) — the image↔video bridge
-   (ADR-0004 gap, ADR-0005 scope).
+4. Animated-image transforms (GIF/APNG to animated WebP) — the image-to-video
+   bridge (ADR-0004 gap, ADR-0005 scope).
 5. MkDocs documentation site organised by the three pillars.
 
 ## Milestones

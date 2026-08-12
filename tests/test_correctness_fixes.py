@@ -30,9 +30,7 @@ def test_compress_lossless_webp_with_resize_succeeds(tmp_path):
     Image.effect_noise((400, 400), 60).convert("RGB").save(src, "WEBP", quality=90)
     out = tmp_path / "small.webp"
 
-    result = compress_single(
-        str(src), str(out), preset="lossless", max_size=100, overwrite=True
-    )
+    result = compress_single(str(src), str(out), preset="lossless", max_size=100, overwrite=True)
 
     assert result.success, result.error
     with Image.open(out) as small:
