@@ -227,8 +227,81 @@ def _collect_pdfs(input_paths: list[str], recursive: bool = False) -> list[str]:
     return list(dict.fromkeys(files))
 
 
+# JPEG 段过滤：保留 SOI/JFIF(APP0)/Adobe(APP14) 与编码数据，丢弃携带
+# EXIF/GPS/XMP/ICC/注释的段。熵编码数据零改动 => 像素无损。
+_JPEG_DROPPED_MARKERS = set(range(0xE1, 0xEE)) | {0xEF, 0xFE}  # APP1-13, APP15, COM
+
+
+def _strip_jpeg_metadata(data: bytes) -> bytes | None:
+    """Drop metadata segments from a JPEG byte stream without re-encoding.
+
+    Returns ``None`` when the stream does not parse as a well-formed JPEG,
+    in which case the caller must fall back to the decode/re-encode path.
+    """
+    if len(data) < 4 or data[0:2] != b"\xff\xd8":
+        return None
+    kept = [b"\xff\xd8"]
+    offset = 2
+    total = len(data)
+    while offset < total:
+        if data[offset] != 0xFF:
+            return None
+        marker = data[offset + 1] if offset + 1 < total else None
+        if marker is None:
+            return None
+        if marker == 0xDA:
+            # Start-of-scan: entropy-coded data follows; copy the rest as-is.
+            kept.append(data[offset:])
+            return b"".join(kept)
+        if marker in (0xD8, 0x01) or 0xD0 <= marker <= 0xD7:
+            kept.append(data[offset : offset + 2])
+            offset += 2
+            continue
+        if offset + 4 > total:
+            return None
+        length = int.from_bytes(data[offset + 2 : offset + 4], "big")
+        if length < 2 or offset + 2 + length > total:
+            return None
+        segment_end = offset + 2 + length
+        if marker not in _JPEG_DROPPED_MARKERS:
+            kept.append(data[offset:segment_end])
+        offset = segment_end
+    return None
+
+
+def _spliceable_jpeg(image_path: str, quality: int) -> tuple[bytes, tuple[int, int]] | None:
+    """Return metadata-stripped original JPEG bytes when no transform is needed.
+
+    Re-encoding an already-encoded JPEG at q95 costs a full decode/encode per
+    page (the dominant cost of ``pdf merge``) and loses a generation for no
+    size benefit. Splicing is only valid when nothing about the pixels must
+    change: baseline RGB/grayscale, no EXIF orientation to apply, and the
+    caller did not ask for recompression (quality below the default 95).
+    """
+    if quality < 95:
+        return None
+    try:
+        with Image.open(image_path) as probe:
+            if probe.format != "JPEG" or probe.mode not in ("RGB", "L"):
+                return None
+            if probe.getexif().get(0x0112, 1) != 1:  # orientation must be neutral
+                return None
+            size = probe.size
+    except Exception:
+        return None
+    data = Path(image_path).read_bytes()
+    stripped = _strip_jpeg_metadata(data)
+    if stripped is None:
+        return None
+    return stripped, size
+
+
 def _image_to_bytes(image_path: str, quality: int = 95) -> tuple[bytes, tuple[int, int]]:
     """将图片转为 JPEG/PNG bytes，供 PyMuPDF 插入"""
+    spliced = _spliceable_jpeg(image_path, quality)
+    if spliced is not None:
+        return spliced
+
     with Image.open(image_path) as source:
         ensure_static_image(source)
         img = normalize_orientation(source).copy()

@@ -15,6 +15,14 @@ All notable changes to this project are documented in this file.
   GIF/APNG get an executable `convert -t webp` plan (animation preserved),
   an already-animated WebP gets an explicit `keep` plan.
 
+### Changed
+
+- `pdf merge` embeds untransformed JPEGs by splicing their original bytes
+  (4.3x faster and ~20% smaller on a JPEG-heavy benchmark, zero generation
+  loss). EXIF/XMP/comment segments are stripped byte-level so no metadata
+  leaks into the PDF; oriented, CMYK, alpha, or `--quality < 95` inputs keep
+  the re-encode path.
+
 ## [1.2.0] - 2026-08-12
 
 ### Removed
