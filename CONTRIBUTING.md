@@ -15,7 +15,7 @@ Quality gates (same as CI):
 uv run ruff check .
 uv run ruff format --check .
 uv run mypy . --ignore-missing-imports
-uv run pytest -q --cov=pixshift --cov-fail-under=70
+uv run pytest -q --cov=pixshift --cov-fail-under=75
 ```
 
 Optional pre-commit hooks:
