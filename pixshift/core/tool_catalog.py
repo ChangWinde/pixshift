@@ -190,14 +190,14 @@ TOOL_CATALOG: list[ToolEntry] = [
         "name": "video.convert",
         "description": "Transcode video to another container/codec (needs ffmpeg).",
         "when_to_use": "Change format for playback compatibility (mp4/webm/mkv/mov).",
-        "input_summary": "paths; -t mp4|webm|mkv|mov; --codec; -r; --json",
+        "input_summary": "paths; -t mp4|webm|mkv|mov; --codec; --hwaccel; -r; --json",
         "annotations": _ann(read_only=False, destructive=False, idempotent=True),
     },
     {
         "name": "video.compress",
         "description": "Reduce video size with CRF presets (needs ffmpeg).",
         "when_to_use": "Shrink a clip for upload or sharing.",
-        "input_summary": "paths; -p web|archive|tiny; --codec h264|h265|vp9|av1; -r; --json",
+        "input_summary": "paths; -p web|archive|tiny; --codec h264|h265|vp9|av1; --hwaccel; -r; --json",
         "annotations": _ann(read_only=False, destructive=False, idempotent=True),
     },
     {

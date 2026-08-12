@@ -20,6 +20,7 @@ from ..video_engine import (
     DEFAULT_VIDEO_CODEC,
     DEFAULT_VIDEO_CONTAINER,
     DEFAULT_VIDEO_PRESET,
+    HWACCEL_BACKENDS,
     VIDEO_CODECS,
     VIDEO_COMPRESS_PRESETS,
     VideoResult,
@@ -153,6 +154,12 @@ def register_video_commands(
         help="目标容器",
     )
     @click.option("--codec", default=None, type=click.Choice(list(VIDEO_CODECS)), help="视频编码器")
+    @click.option(
+        "--hwaccel",
+        default=None,
+        type=click.Choice(list(HWACCEL_BACKENDS)),
+        help="硬件编码后端（显式启用，仅 h264/h265；需 ffmpeg 带对应编码器）",
+    )
     @click.option("-o", "--output", "output_dir", default=None, type=click.Path(), help="输出目录")
     @click.option("-r", "--recursive", is_flag=True, default=False, help="递归子目录")
     @click.option("--overwrite", is_flag=True, default=False, help="覆盖已存在输出")
@@ -161,6 +168,7 @@ def register_video_commands(
         inputs: tuple,
         container: str,
         codec: str | None,
+        hwaccel: str | None,
         output_dir: str | None,
         recursive: bool,
         overwrite: bool,
@@ -176,7 +184,12 @@ def register_video_commands(
             dst = _video_output(path, name, output_dir, list(inputs))
             results.append(
                 video_ops.convert_one(
-                    path, dst, container=container, codec=codec, overwrite=overwrite
+                    path,
+                    dst,
+                    container=container,
+                    codec=codec,
+                    hwaccel=hwaccel,
+                    overwrite=overwrite,
                 )
             )
         _emit_batch("video.convert", results, as_json, console)
@@ -197,6 +210,12 @@ def register_video_commands(
         help="视频编码器",
     )
     @click.option("--crf", default=None, type=click.IntRange(0, 63), help="覆盖预设 CRF")
+    @click.option(
+        "--hwaccel",
+        default=None,
+        type=click.Choice(list(HWACCEL_BACKENDS)),
+        help="硬件编码后端（显式启用，仅 h264/h265；需 ffmpeg 带对应编码器）",
+    )
     @click.option("-o", "--output", "output_dir", default=None, type=click.Path(), help="输出目录")
     @click.option("-r", "--recursive", is_flag=True, default=False, help="递归子目录")
     @click.option("--overwrite", is_flag=True, default=False, help="覆盖已存在输出")
@@ -206,6 +225,7 @@ def register_video_commands(
         preset: str,
         codec: str,
         crf: int | None,
+        hwaccel: str | None,
         output_dir: str | None,
         recursive: bool,
         overwrite: bool,
@@ -222,7 +242,13 @@ def register_video_commands(
             dst = _video_output(path, name, output_dir, list(inputs))
             results.append(
                 video_ops.compress_one(
-                    path, dst, preset=preset, codec=codec, crf=crf, overwrite=overwrite
+                    path,
+                    dst,
+                    preset=preset,
+                    codec=codec,
+                    crf=crf,
+                    hwaccel=hwaccel,
+                    overwrite=overwrite,
                 )
             )
         _emit_batch("video.compress", results, as_json, console)

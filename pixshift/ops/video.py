@@ -101,12 +101,18 @@ def _run_operation(
 
 
 def convert_one(
-    src: str, dst: str, *, container: str, codec: str | None = None, overwrite: bool = False
+    src: str,
+    dst: str,
+    *,
+    container: str,
+    codec: str | None = None,
+    hwaccel: str | None = None,
+    overwrite: bool = False,
 ) -> VideoResult:
     return _run_operation(
         src,
         dst,
-        lambda tmp: build_convert_args(src, tmp, container=container, codec=codec),
+        lambda tmp: build_convert_args(src, tmp, container=container, codec=codec, hwaccel=hwaccel),
         overwrite=overwrite,
     )
 
@@ -118,12 +124,15 @@ def compress_one(
     preset: str,
     codec: str,
     crf: int | None = None,
+    hwaccel: str | None = None,
     overwrite: bool = False,
 ) -> VideoResult:
     return _run_operation(
         src,
         dst,
-        lambda tmp: build_compress_args(src, tmp, preset=preset, codec=codec, crf=crf),
+        lambda tmp: build_compress_args(
+            src, tmp, preset=preset, codec=codec, crf=crf, hwaccel=hwaccel
+        ),
         overwrite=overwrite,
     )
 

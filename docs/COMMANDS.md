@@ -193,6 +193,44 @@ pixshift pdf info input.pdf [--pages] [--json]
 Page extraction defaults to 150 DPI. Pass `--dpi 300` when print-level raster output is
 more important than speed and file size.
 
+## Video Commands
+
+All video commands need ffmpeg/ffprobe on the PATH (optional, reported by
+`doctor`); without them each command fails with a stable `ffmpeg_missing`
+error. Outputs are written atomically and existing outputs are idempotent
+skips unless `--overwrite` is set.
+
+```bash
+pixshift video info FILES... [--json]
+pixshift video convert INPUTS... [-t mp4|webm|mkv|mov] [--codec h264|h265|vp9|av1] \
+  [--hwaccel videotoolbox|nvenc|qsv] [-o OUT_DIR] [-r] [--overwrite] [--json]
+pixshift video compress INPUTS... [-p web|archive|tiny] [--codec h264|h265|vp9|av1] \
+  [--crf N] [--hwaccel videotoolbox|nvenc|qsv] [-o OUT_DIR] [-r] [--overwrite] [--json]
+pixshift video trim SOURCE --start TS [--end TS | --duration SEC] [--reencode] \
+  [-o OUT_FILE] [--overwrite] [--json]
+pixshift video thumbnail INPUTS... [--at 25% | --at TS] [-t jpg|png|webp] \
+  [-o OUT_DIR] [-r] [--overwrite] [--json]
+pixshift video extract-audio INPUTS... [-t mp3|aac|m4a|opus|flac|wav] \
+  [-o OUT_DIR] [-r] [--overwrite] [--json]
+pixshift video gif SOURCE [--start TS] [--duration SEC] [--fps N] [--width N] \
+  [-o OUT_FILE] [--overwrite] [--json]
+```
+
+`convert` picks the container's default codec (mp4/mov: h264, mkv: h265,
+webm: vp9) unless `--codec` overrides it. `compress` writes `_compressed`
+derivatives in the codec's native container. `trim` stream-copies at keyframes
+by default; `--reencode` cuts precisely at the cost of a re-encode. `thumbnail`
+accepts a percentage of the probed duration or an absolute timecode. `gif`
+uses a palette filter graph for quality output.
+
+`--hwaccel` opts in to the platform's hardware encoder (h264/h265 families
+only): `videotoolbox` on macOS, `nvenc` on NVIDIA GPUs, `qsv` on Intel.
+The CRF-style quality target is translated onto each backend's own knobs
+(`-cq`, `-global_quality`, `-q:v`). Hardware encoders trade some quality per
+bit for large speed gains; verify availability with `ffmpeg -encoders`.
+Plans emitted by `optimize` never include `hwaccel`, so they stay portable
+across hosts.
+
 ## Agent Tools
 
 ### `tools`
