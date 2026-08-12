@@ -26,8 +26,10 @@ from ..ops import compare as compare_ops
 from ..ops import crop as crop_ops
 from ..ops import montage as montage_ops
 from ..ops import optimize as optimize_ops
+from ..ops import video as video_ops
 from ..ops import watermark as watermark_ops
 from ..presenters.json_presenters import emit_json, emit_json_and_exit
+from ..video_engine import VideoOptimizeResult, collect_video_files
 from .common import validate_tasks_or_exit
 
 _WATERMARK_POSITIONS = [
@@ -528,23 +530,27 @@ def register_advanced_commands(
     @click.option("-r", "--recursive", is_flag=True, default=False, help="递归处理目录")
     @click.option("--json", "as_json", is_flag=True, default=False, help="以 JSON 输出结果")
     def optimize_cmd(inputs: tuple[str, ...], recursive: bool, as_json: bool) -> None:
-        """分析图片并推荐输出格式。"""
+        """分析图片/视频并推荐输出格式。"""
         files = collect_supported_files(list(inputs), SUPPORTED_INPUT_FORMATS, recursive=recursive)
-        if not files:
+        video_files = collect_video_files(list(inputs), recursive)
+        if not files and not video_files:
             if as_json:
                 emit_json({"command": "optimize", "ok": True, "total": 0, "message": "no_files"})
             else:
-                console.print("[yellow]未找到可分析的图片文件。[/yellow]")
+                console.print("[yellow]未找到可分析的图片或视频文件。[/yellow]")
             return
         analyses = [optimize_ops.analyze(f) for f in files]
+        video_analyses = [video_ops.analyze_one(f) for f in video_files]
+        ok = all(not r.error for r in analyses) and all(not v.error for v in video_analyses)
         if as_json:
             payload = {
                 "command": "optimize",
-                "ok": all(not r.error for r in analyses),
-                "total": len(analyses),
+                "ok": ok,
+                "total": len(analyses) + len(video_analyses),
                 "results": [
                     {
                         "input": r.input_path,
+                        "media_type": "image",
                         "input_bytes": r.input_size,
                         "image_type": r.image_type,
                         "recommended_format": r.recommended_format,
@@ -574,7 +580,8 @@ def register_advanced_commands(
                         "error": r.error or "",
                     }
                     for r in analyses
-                ],
+                ]
+                + [_video_optimize_payload(v) for v in video_analyses],
             }
             if not payload["ok"]:
                 emit_json_and_exit(payload, 1)
@@ -586,20 +593,71 @@ def register_advanced_commands(
         table.add_column("推荐格式", style="green")
         table.add_column("下一步", style="cyan")
         table.add_column("原因")
-        for r in analyses[:50]:
-            table.add_row(
+        rows = [
+            (
                 Path(r.input_path).name,
                 r.image_type or "-",
                 r.recommended_format or "-",
                 _format_optimization_plan(r.plan),
                 r.recommended_reason or r.error,
             )
+            for r in analyses
+        ] + [
+            (
+                Path(v.input_path).name,
+                "video",
+                v.recommended or "-",
+                _format_optimization_plan(v.plan),
+                v.reason or v.error,
+            )
+            for v in video_analyses
+        ]
+        for row in rows[:50]:
+            table.add_row(*row)
         console.print(table)
-        if len(analyses) > 50:
-            console.print(f"[dim]... 还有 {len(analyses) - 50} 个文件[/dim]")
+        if len(rows) > 50:
+            console.print(f"[dim]... 还有 {len(rows) - 50} 个文件[/dim]")
         console.print()
-        if any(result.error for result in analyses):
+        if not ok:
             raise click.exceptions.Exit(1)
+
+
+def _video_optimize_payload(result: VideoOptimizeResult) -> dict[str, Any]:
+    """JSON entry for one video analysis, shaped like the image entries."""
+    return {
+        "input": result.input_path,
+        "media_type": "video",
+        "input_bytes": result.input_bytes,
+        "recommended_format": result.recommended,
+        "recommended_reason": result.reason,
+        "analysis": {
+            "video_codec": result.video_codec,
+            "duration_sec": round(result.duration_sec, 3),
+            "dimensions": [result.width, result.height],
+            "bits_per_pixel": result.bits_per_pixel,
+        },
+        "estimates": (
+            [
+                {
+                    "format": result.recommended,
+                    "estimated_bytes": result.estimated_bytes,
+                    "compression_ratio": (
+                        round(result.estimated_bytes / result.input_bytes, 4)
+                        if result.input_bytes > 0
+                        else 0.0
+                    ),
+                    "quality_note": "基于码率的确定性估算（web CRF 预设）",
+                    "lossless": False,
+                    "supports_alpha": False,
+                    "recommended": True,
+                }
+            ]
+            if result.estimated_bytes > 0
+            else []
+        ),
+        "plan": result.plan,
+        "error": result.error or "",
+    }
 
 
 def _format_optimization_plan(plan: dict[str, Any]) -> str:
@@ -608,6 +666,18 @@ def _format_optimization_plan(plan: dict[str, Any]) -> str:
     arguments = plan.get("arguments", {})
     if not command or not isinstance(arguments, dict):
         return "-"
+    if command == "keep":
+        return "保持现状"
+    if command == "video.compress":
+        return (
+            f"video compress -p {arguments.get('preset', 'web')} "
+            f"--codec {arguments.get('codec', 'h264')}"
+        )
+    if command == "video.convert":
+        rendered = f"video convert -t {arguments.get('to', 'mp4')}"
+        if arguments.get("codec"):
+            rendered += f" --codec {arguments['codec']}"
+        return rendered
     if command == "compress":
         if "quality" in arguments:
             return f"compress --quality {arguments['quality']}"

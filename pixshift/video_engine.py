@@ -341,6 +341,181 @@ def build_gif_args(
 
 
 # ============================================================
+#  Probe-driven optimize analysis (pure; no I/O)
+# ============================================================
+
+# Source codecs a modern CRF encode roughly halves (or better).
+LEGACY_VIDEO_CODECS = {
+    "cinepak",
+    "flv1",
+    "h263",
+    "indeo3",
+    "indeo5",
+    "mpeg1video",
+    "mpeg2video",
+    "mpeg4",
+    "msmpeg4v1",
+    "msmpeg4v2",
+    "msmpeg4v3",
+    "rv10",
+    "rv20",
+    "rv30",
+    "rv40",
+    "svq1",
+    "svq3",
+    "theora",
+    "vc1",
+    "vp6",
+    "vp6f",
+    "vp8",
+    "wmv1",
+    "wmv2",
+    "wmv3",
+}
+
+# ffprobe codec_name -> our encoder key for same-family re-encodes.
+_MODERN_CODEC_KEYS = {"h264": "h264", "hevc": "h265", "vp9": "vp9", "av1": "av1"}
+
+# Above this many encoded bits per pixel per frame a re-encode pays off ...
+WORTHWHILE_BPP = {"h264": 0.15, "h265": 0.11, "vp9": 0.11, "av1": 0.09}
+# ... and this is roughly where a "web" CRF encode lands (size estimate).
+TARGET_BPP = {"h264": 0.10, "h265": 0.07, "vp9": 0.07, "av1": 0.06}
+
+# Anything this fat that is neither legacy nor modern is an editing
+# intermediate (ProRes, DNxHD, MJPEG, raw): H.264 is the safe universal move.
+INTERMEDIATE_BPP = 0.5
+
+# Containers our convert path targets; other extensions get modernised to mp4.
+MODERN_CONTAINER_SUFFIXES = {".mp4", ".mov", ".webm", ".mkv"}
+
+_AUDIO_ESTIMATE_BPS = 128_000.0
+
+
+@dataclass
+class VideoOptimizeResult:
+    """Probe-driven optimize recommendation for one video."""
+
+    input_path: str = ""
+    input_bytes: int = 0
+    duration_sec: float = 0.0
+    width: int = 0
+    height: int = 0
+    video_codec: str = ""
+    bits_per_pixel: float = 0.0
+    action: str = ""  # video.convert / video.compress / keep
+    recommended: str = ""
+    reason: str = ""
+    estimated_bytes: int = 0
+    plan: dict[str, Any] = field(default_factory=dict)
+    error: str = ""
+
+
+def _pixel_rate(info: VideoInfo) -> float:
+    """Pixels encoded per second, or 0 when the probe lacks a signal."""
+    if info.width <= 0 or info.height <= 0 or info.fps <= 0:
+        return 0.0
+    return float(info.width * info.height) * info.fps
+
+
+def _estimate_video_bytes(info: VideoInfo, target_codec: str) -> int:
+    """Deterministic size estimate for a re-encode at the target's web CRF."""
+    pixel_rate = _pixel_rate(info)
+    if pixel_rate <= 0 or info.duration_sec <= 0:
+        return 0
+    video_bps = TARGET_BPP[target_codec] * pixel_rate
+    audio_bps = _AUDIO_ESTIMATE_BPS if info.audio_codec else 0.0
+    return int((video_bps + audio_bps) * info.duration_sec / 8.0)
+
+
+def _compress_plan(info: VideoInfo, codec_key: str, reason: str) -> VideoOptimizeResult:
+    result = _base_analysis(info)
+    result.action = "video.compress"
+    result.recommended = f"{codec_key} (web preset)"
+    result.reason = reason
+    result.estimated_bytes = _estimate_video_bytes(info, codec_key)
+    result.plan = {
+        "command": "video.compress",
+        "arguments": {"preset": "web", "codec": codec_key},
+    }
+    return result
+
+
+def _convert_plan(info: VideoInfo, codec_key: str, reason: str) -> VideoOptimizeResult:
+    result = _base_analysis(info)
+    container = VIDEO_CODECS[codec_key][1]
+    result.action = "video.convert"
+    result.recommended = f"{codec_key}/{container}"
+    result.reason = reason
+    result.estimated_bytes = _estimate_video_bytes(info, codec_key)
+    result.plan = {
+        "command": "video.convert",
+        "arguments": {"to": container, "codec": codec_key},
+    }
+    return result
+
+
+def _keep_plan(info: VideoInfo, reason: str) -> VideoOptimizeResult:
+    result = _base_analysis(info)
+    result.action = "keep"
+    result.recommended = "keep"
+    result.reason = reason
+    result.plan = {"command": "keep", "arguments": {}}
+    return result
+
+
+def _base_analysis(info: VideoInfo) -> VideoOptimizeResult:
+    pixel_rate = _pixel_rate(info)
+    bpp = info.bit_rate / pixel_rate if pixel_rate > 0 and info.bit_rate > 0 else 0.0
+    return VideoOptimizeResult(
+        input_path=info.path,
+        input_bytes=info.size_bytes,
+        duration_sec=info.duration_sec,
+        width=info.width,
+        height=info.height,
+        video_codec=info.video_codec,
+        bits_per_pixel=round(bpp, 4),
+    )
+
+
+def analyze_video_info(info: VideoInfo) -> VideoOptimizeResult:
+    """Turn one ffprobe result into a deterministic optimize recommendation.
+
+    Pure decision logic (unit-testable without ffmpeg): legacy codecs are
+    modernised, wasteful bitrates are re-encoded in the same codec family,
+    fat unknown intermediates go to H.264, and everything else is kept
+    untouched — re-encoding an already-efficient file only loses quality.
+    """
+    codec = info.video_codec
+    bpp = _base_analysis(info).bits_per_pixel
+
+    if codec in LEGACY_VIDEO_CODECS:
+        # vp8 lives in webm land; everything else modernises to h264.
+        codec_key = "vp9" if codec == "vp8" else "h264"
+        reason = f"陈旧编码 {codec}，现代化转码可大幅瘦身"
+        if Path(info.path).suffix.lower() in MODERN_CONTAINER_SUFFIXES:
+            # The container is already fine: a compress derivative avoids
+            # colliding with the source name the way convert-to-same-ext would.
+            return _compress_plan(info, codec_key, reason)
+        return _convert_plan(info, codec_key, reason)
+
+    codec_key = _MODERN_CODEC_KEYS.get(codec, "")
+    if codec_key:
+        if bpp <= 0:
+            return _keep_plan(info, "探测信号不足（缺码率或帧率），保守起见不重编码")
+        if bpp > WORTHWHILE_BPP[codec_key]:
+            saving = 1.0 - TARGET_BPP[codec_key] / bpp
+            reason = f"码率偏高（{bpp:.2f} bpp，{codec}），web 预设重压预计可省约 {saving:.0%}"
+            return _compress_plan(info, codec_key, reason)
+        return _keep_plan(info, f"编码效率已良好（{bpp:.2f} bpp，{codec}），重压收益有限")
+
+    if bpp > INTERMEDIATE_BPP:
+        return _convert_plan(
+            info, "h264", f"高码率中间格式 {codec}（{bpp:.2f} bpp），转 H.264 通用且小"
+        )
+    return _keep_plan(info, f"未识别的编码 {codec or '?'} 且码率不高，保守起见不重编码")
+
+
+# ============================================================
 #  Runtime (needs ffmpeg/ffprobe)
 # ============================================================
 

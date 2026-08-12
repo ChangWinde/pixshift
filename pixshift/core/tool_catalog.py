@@ -111,8 +111,8 @@ TOOL_CATALOG: list[ToolEntry] = [
     },
     {
         "name": "optimize",
-        "description": "Recommend output format and emit executable plans.",
-        "when_to_use": "Decide convert/compress next steps for agents.",
+        "description": "Recommend output format for images and videos and emit executable plans.",
+        "when_to_use": "Decide convert/compress/keep next steps for agents.",
         "input_summary": "paths; -r; --json",
         "annotations": _ann(read_only=True, destructive=False, idempotent=True),
     },
@@ -237,7 +237,7 @@ TOOL_CATALOG: list[ToolEntry] = [
     },
     {
         "name": "apply",
-        "description": "Execute machine plans from optimize or explicit plan files.",
+        "description": "Execute machine plans (image and video.* steps) from optimize or files.",
         "when_to_use": "Run a previously emitted plan without re-parsing prose.",
         "input_summary": "--plan file|- ; optional --output; --dry-run; --json",
         "annotations": _ann(read_only=False, destructive=False, idempotent=True),

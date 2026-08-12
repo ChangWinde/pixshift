@@ -158,12 +158,19 @@ Delete dry-run mode (`--delete --dry-run`):
 
 - `total`
 - `results[*].input`
+- `results[*].media_type` (`image` or `video`)
 - `results[*].recommended_format`
 - `results[*].recommended_reason`
-- `results[*].analysis` (dimensions, sampling basis, alpha and classification reason)
+- `results[*].analysis` (images: dimensions, sampling basis, alpha and
+  classification reason; videos: codec, duration, dimensions, bits per pixel)
 - `results[*].estimates` (format, estimated bytes, ratio and quality properties)
-- `results[*].plan.command`
+- `results[*].plan.command` (`convert`, `compress`, `strip`, `video.convert`,
+  `video.compress`, or `keep`; empty object on per-file errors)
 - `results[*].plan.arguments` (structured CLI option values)
+
+Video analysis is probe-driven and deterministic — nothing is encoded. A
+`keep` plan states that re-encoding would not pay off; `apply` treats it as an
+explicit skip.
 
 ## Agent Command Payloads
 
@@ -181,6 +188,9 @@ Delete dry-run mode (`--delete --dry-run`):
   `skipped`, `error`, `detail`)
 - Accepted plan documents: an `optimize --json` payload, a single plan object,
   a `{"plans": [...]}` wrapper, or a JSON array of plan objects.
+- Video steps (`video.convert`, `video.compress`) report `ffmpeg_missing`
+  when ffmpeg is absent; `keep` steps count as `skipped` with detail
+  `plan_keep`.
 
 ### `prep --json`
 

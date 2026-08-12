@@ -10,7 +10,9 @@ from ..video_engine import (
     FFMPEG_AVAILABLE,
     FFmpegNotAvailableError,
     VideoInfo,
+    VideoOptimizeResult,
     VideoResult,
+    analyze_video_info,
     build_compress_args,
     build_convert_args,
     build_extract_audio_args,
@@ -34,6 +36,23 @@ def available() -> bool:
 def info(path: str) -> VideoInfo:
     """Probe one video file."""
     return probe(path)
+
+
+def analyze_one(path: str) -> VideoOptimizeResult:
+    """Probe one video and derive an optimize recommendation.
+
+    ffmpeg being optional, its absence and probe failures become stable
+    per-file errors so a mixed optimize batch can keep analysing images.
+    """
+    if not os.path.exists(path):
+        return VideoOptimizeResult(input_path=path, error="input_not_found")
+    size = os.path.getsize(path)
+    if not FFMPEG_AVAILABLE:
+        return VideoOptimizeResult(input_path=path, input_bytes=size, error="ffmpeg_missing")
+    probed = probe(path)
+    if probed.error:
+        return VideoOptimizeResult(input_path=path, input_bytes=size, error=probed.error)
+    return analyze_video_info(probed)
 
 
 def _run_operation(

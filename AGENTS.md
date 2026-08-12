@@ -1,17 +1,21 @@
 # Agent Notes for PixShift
 
-PixShift is a local-first, agent-safe image and PDF toolkit.
+PixShift is a local-first, agent-safe image, PDF, and video toolkit.
 
 ## How to call
 
 1. Discover: `pixshift tools --json`
-2. Inspect: `pixshift info PATH --json` or `pixshift manifest PATH -r --json`
-3. Plan: `pixshift optimize PATH --json` (each result includes `plan`)
+2. Inspect: `pixshift info PATH --json`, `pixshift video info PATH --json`,
+   or `pixshift manifest PATH -r --json`
+3. Plan: `pixshift optimize PATH --json` (each result includes `plan`;
+   videos are analysed from probe metadata and may plan `keep` = no action)
 4. Apply: `pixshift apply --plan plan.json --json` (supports `--dry-run`)
 5. Prepare assets: `pixshift prep PATH -o OUT --max-size 2048 -t webp --json`
 6. Verify: `pixshift hash PATH --json` / `pixshift compare A B --json` / `pixshift doctor --json`
 
 Always pass `--json` for machine use. Failures set `ok: false` and exit non-zero.
+Video commands need ffmpeg (optional, reported by `doctor`); without it they
+fail with a stable `ffmpeg_missing` error.
 
 ## Safety
 
