@@ -16,9 +16,13 @@ from ..core.files import (
     derivative_output_name,
     plan_output_path,
 )
+from ..video_engine import VIDEO_CODECS, VIDEO_COMPRESS_PRESETS
 from . import compress as compress_ops
 from . import convert as convert_ops
 from . import strip as strip_ops
+from . import video as video_ops
+
+_VIDEO_CONVERT_CONTAINERS = {"mp4", "webm", "mkv", "mov"}
 
 
 @dataclass
@@ -180,6 +184,21 @@ def _apply_one(
                 dry_run=dry_run,
                 claimed=claimed,
             )
+        if command == "keep":
+            # An optimize verdict of "already efficient": succeed explicitly
+            # without touching the file so batch counts stay meaningful.
+            applied.skipped = True
+            applied.success = True
+            applied.detail = "plan_keep"
+            return applied
+        if command in ("video.convert", "video.compress"):
+            return _apply_video(
+                applied,
+                output_dir=output_dir,
+                overwrite=overwrite,
+                dry_run=dry_run,
+                claimed=claimed,
+            )
         applied.error = "unsupported_plan_command"
         return applied
     except OperationPolicyError as error:
@@ -309,6 +328,87 @@ def _apply_compress(
     )
     applied.success = bool(result.success)
     applied.error = result.error or ""
+    return applied
+
+
+def _apply_video(
+    applied: AppliedStep,
+    *,
+    output_dir: str | None,
+    overwrite: bool,
+    dry_run: bool,
+    claimed: set[str],
+) -> AppliedStep:
+    """Execute one video.convert / video.compress plan step.
+
+    Argument validation and output planning stay pure so ``--dry-run``
+    verifies a plan (names, collisions, vocabulary) on hosts without ffmpeg;
+    only real execution requires the optional dependency.
+    """
+    arguments = applied.arguments
+    codec = str(arguments.get("codec") or "")
+    preset = str(arguments.get("preset") or "web")
+    if applied.command == "video.convert":
+        container = str(arguments.get("to") or "").lower().lstrip(".")
+        if container not in _VIDEO_CONVERT_CONTAINERS:
+            applied.error = f"unsupported_target_container:{container or '?'}"
+            return applied
+        if codec and codec not in VIDEO_CODECS:
+            applied.error = f"unsupported_video_codec:{codec}"
+            return applied
+        output_name = conversion_output_name(applied.input_path, container)
+    else:
+        codec = codec or "h264"
+        if preset not in VIDEO_COMPRESS_PRESETS:
+            applied.error = f"unsupported_video_preset:{preset}"
+            return applied
+        if codec not in VIDEO_CODECS:
+            applied.error = f"unsupported_video_codec:{codec}"
+            return applied
+        container = VIDEO_CODECS[codec][1]
+        stem = Path(applied.input_path).stem
+        output_name = f"{stem}_compressed.{container}"
+
+    output_path, skipped = _output_for(
+        applied.input_path,
+        output_dir=output_dir,
+        output_name=output_name,
+        overwrite=overwrite,
+        claimed=claimed,
+    )
+    applied.output_path = output_path
+    if skipped:
+        applied.skipped = True
+        applied.success = True
+        applied.detail = "existing_output_skipped"
+        return applied
+    if dry_run:
+        applied.success = True
+        return applied
+    if not video_ops.available():
+        applied.error = "ffmpeg_missing"
+        return applied
+    if applied.command == "video.convert":
+        result = video_ops.convert_one(
+            applied.input_path,
+            output_path,
+            container=container,
+            codec=codec or None,
+            overwrite=overwrite,
+        )
+    else:
+        crf_raw = arguments.get("crf")
+        result = video_ops.compress_one(
+            applied.input_path,
+            output_path,
+            preset=preset,
+            codec=codec,
+            crf=int(crf_raw) if crf_raw is not None else None,
+            overwrite=overwrite,
+        )
+    applied.success = bool(result.success)
+    applied.error = result.error or ""
+    applied.detail = applied.detail or result.detail
     return applied
 
 
