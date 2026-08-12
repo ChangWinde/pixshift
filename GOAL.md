@@ -18,21 +18,20 @@ and the largest remaining gap for agent-driven media pipelines.
 
 ## Current Focus
 
-M0-M3 shipped; the deep audit remediation, the startup/dedup performance work, and the
-ffmpeg-backed video pillar (ADR-0005) are in. The video pillar now closes the full
-discover -> plan -> apply loop: probe-driven `optimize` recommendations
-(convert/compress/keep) and `apply` execution of `video.*` steps, with coverage at 82%
-(gate 78).
+Everything for `v1.2.0` is merged to a green `main`: the deep audit remediation, the
+startup/dedup performance work, the ffmpeg-backed video pillar with its full
+discover -> plan -> apply loop (probe-driven `optimize`, `apply` for `video.*`/`keep`,
+opt-in `--hwaccel`), coverage 83% (gate 78), and a MkDocs site behind a Pages deploy
+workflow.
 
 Next frontier, in order:
 
-1. Merge the stacked PRs #18 -> #19 -> #20 -> #21 -> #23; then one-time PyPI
-   trusted-publisher setup and tag `v1.2.0` (see `docs/RELEASING.md`).
-2. Video pillar: hardware-accel opt-in (the remaining slice of the depth item).
-3. Animated-image transforms (GIF/APNG to animated WebP) — the image-to-video
+1. Release `v1.2.0` — maintainer web steps: PyPI trusted publisher + `pypi`
+   environment, enable Pages (Source: GitHub Actions), then tag and push
+   `v1.2.0` (see `docs/RELEASING.md`).
+2. Animated-image transforms (GIF/APNG to animated WebP) — the image-to-video
    bridge (ADR-0004 gap, ADR-0005 scope).
-4. MkDocs documentation site organised by the three pillars.
-5. Deferred audit P2/P3 items (error-code unification, JSON contract polish,
+3. Deferred audit P2/P3 items (error-code unification, JSON contract polish,
    PDF merge byte-splice performance, terminal UI consistency).
 
 ## Milestones
@@ -47,6 +46,7 @@ Next frontier, in order:
 | M5 | Performance: lazy startup (RSS 132MB to 41MB), parallel + draft dedup | COMPLETE |
 | M6 | Video pillar MVP: `video info/convert/compress/trim/thumbnail/extract-audio/gif`; ffmpeg in `doctor`; catalog + tests (ADR-0005) | COMPLETE |
 | M7 | Video plan loop: probe-driven `optimize`, `apply` for `video.*`/`keep`; coverage 82% (gate 78) | COMPLETE |
+| M8 | Release readiness: `--hwaccel` opt-in, video command docs, MkDocs site + Pages workflow, v1.2.0 release commit | COMPLETE |
 
 ## In Scope
 
