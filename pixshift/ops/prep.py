@@ -17,6 +17,7 @@ from ..core.files import (
     filter_generated_inputs,
     partition_existing_outputs,
     plan_output_path,
+    validate_unique_output_paths,
 )
 from . import convert as convert_ops
 from . import strip as strip_ops
@@ -88,6 +89,10 @@ def prep_files(
             source_paths=input_paths,
         )
         tasks.append((path, destination))
+
+    # Two sources (e.g. a.png and a.jpg) can map to the same prepared name and
+    # would silently overwrite each other; fail the batch as convert does.
+    validate_unique_output_paths(tasks)
 
     pending, skipped = partition_existing_outputs(tasks, overwrite=overwrite)
     for source, dest in skipped:

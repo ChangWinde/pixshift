@@ -17,6 +17,7 @@ from .commands.convert_command import register_convert_command
 from .commands.pdf_commands import register_pdf_commands
 from .commands.system_commands import register_system_commands
 from .commands.transform_commands import register_transform_commands
+from .commands.video_commands import register_video_commands
 from .commands.workflow_commands import register_workflow_commands
 from .converter import _human_size
 from .logo import MINI_LOGO, get_banner
@@ -101,7 +102,7 @@ def _command_identifier(args: Sequence[str]) -> str:
     if not tokens:
         return "cli"
     command = tokens[0]
-    if command in {"pdf", "watermark"} and len(tokens) > 1:
+    if command in {"pdf", "watermark", "video"} and len(tokens) > 1:
         return f"{command}.{tokens[1]}"
     return command
 
@@ -170,6 +171,12 @@ register_agent_commands(
     human_size=_human_size,
 )
 register_transform_commands(
+    cli_group=cli,
+    console=console,
+    mini_logo=MINI_LOGO,
+    human_size=_human_size,
+)
+register_video_commands(
     cli_group=cli,
     console=console,
     mini_logo=MINI_LOGO,

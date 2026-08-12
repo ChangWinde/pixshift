@@ -7,10 +7,10 @@
 [![CI](https://img.shields.io/github/actions/workflow/status/ChangWinde/pixshift/ci.yml?branch=main&label=CI)](https://github.com/ChangWinde/pixshift/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/actions/workflow/status/ChangWinde/pixshift/release.yml?label=Release)](https://github.com/ChangWinde/pixshift/actions/workflows/release.yml)
 
-PixShift is an AI-native, local-first CLI toolkit for daily image and PDF
-workflows. Humans get fast commands with rich output; agents and scripts get a
-discoverable tool catalog, schema-validated JSON contracts, and executable plans
-over the same deterministic engines.
+PixShift is an AI-native, local-first CLI toolkit for daily media work across three
+pillars — images, PDFs, and video. Humans get fast commands with rich output; agents and
+scripts get a discoverable tool catalog, schema-validated JSON contracts, and executable
+plans over the same deterministic engines.
 
 ## Why PixShift
 
@@ -55,13 +55,21 @@ pixshift
 ├─ prep         Prepare delivery-ready assets (resize + convert + privacy strip)
 ├─ manifest     Inventory media with hashes and properties
 ├─ hash         Compute content hashes for audits
-└─ pdf
-   ├─ merge     Merge images into PDF
-   ├─ extract   Extract PDF pages as images
-   ├─ split     Split PDF into separate PDFs
-   ├─ compress  Compress PDF
-   ├─ concat    Concatenate multiple PDFs
-   └─ info      Show PDF details
+├─ pdf
+│  ├─ merge     Merge images into PDF
+│  ├─ extract   Extract PDF pages as images
+│  ├─ split     Split PDF into separate PDFs
+│  ├─ compress  Compress PDF
+│  ├─ concat    Concatenate multiple PDFs
+│  └─ info      Show PDF details
+└─ video        (needs ffmpeg)
+   ├─ info          Inspect container/codecs/duration
+   ├─ convert       Transcode to mp4/webm/mkv/mov
+   ├─ compress      Shrink with CRF presets (h264/h265/vp9/av1)
+   ├─ trim          Cut a time range (stream-copy by default)
+   ├─ thumbnail     Extract a still frame
+   ├─ extract-audio Export the audio track
+   └─ gif           Convert a clip to animated GIF
 ```
 
 ## Quick Start
@@ -81,7 +89,14 @@ pixshift montage ./photos/ -o board.png --cols 4
 pixshift optimize ./photos/ -r
 pixshift pdf merge ./photos/ -o album.pdf
 pixshift pdf split ./report.pdf -o ./pages/
+pixshift video compress ./clips/ -p web -r      # needs ffmpeg
+pixshift video thumbnail demo.mp4 --at 25%
+pixshift video gif demo.mp4 -o demo.gif --fps 15 --width 480
 ```
+
+Video commands require a system `ffmpeg`/`ffprobe` (`brew install ffmpeg` or
+`apt install ffmpeg`); `pixshift doctor` reports availability. They are never required
+for the image and PDF pillars.
 
 Common defaults favor everyday speed without hiding control: conversion uses `high`
 quality, PDF extraction uses 150 DPI, text-watermark size adapts to the image, and
@@ -162,6 +177,8 @@ Script templates:
 - Safety boundary ADR: `docs/adr/0001-safe-operation-boundaries.md`
 - Command reference: `docs/COMMANDS.md`
 - AI-native surface ADR: `docs/adr/0003-ai-native-tool-surface.md`
+- Feature surface audit ADR: `docs/adr/0004-feature-surface-audit.md`
+- Video pillar ADR: `docs/adr/0005-video-pillar.md`
 - JSON Schema contracts: `docs/schemas/v1/`
 - Agent guide: `AGENTS.md`
 - Project goal and milestones: `GOAL.md`

@@ -8,6 +8,7 @@ invocations and returns the emitted document verbatim.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from typing import Any
@@ -17,6 +18,8 @@ from ..core.tool_catalog import TOOL_CATALOG, ToolEntry
 
 PROTOCOL_VERSION = "2025-06-18"
 _JSON_UNSUPPORTED: frozenset[str] = frozenset()
+# A wedged CLI subprocess must not hang the whole MCP session; bound it.
+_TOOL_TIMEOUT = float(os.environ.get("PIXSHIFT_MCP_TIMEOUT", "120"))
 
 
 def _mcp_tool_name(catalog_name: str) -> str:
@@ -70,12 +73,20 @@ def call_tool(name: str, arguments: dict[str, Any] | None) -> dict[str, Any]:
     cli_args = _catalog_command(entry["name"]) + list(args_value)
     if "--json" not in cli_args and entry["name"] not in _JSON_UNSUPPORTED:
         cli_args.append("--json")
-    completed = subprocess.run(
-        [sys.executable, "-m", "pixshift", *cli_args],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        completed = subprocess.run(
+            [sys.executable, "-m", "pixshift", *cli_args],
+            capture_output=True,
+            text=True,
+            check=False,
+            # The child must never inherit this server's stdio: a tool such as
+            # ``apply --plan -`` would otherwise read the JSON-RPC stream and
+            # deadlock the session.
+            stdin=subprocess.DEVNULL,
+            timeout=_TOOL_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        return _tool_error(f"tool_timeout_after_{_TOOL_TIMEOUT:g}s:{entry['name']}")
     # Import-time warnings from optional codecs may precede the JSON document;
     # the CLI contract emits exactly one JSON line, so keep the last one.
     stdout_lines = [line for line in completed.stdout.splitlines() if line.strip()]
@@ -153,7 +164,16 @@ def serve() -> None:
                 "error": {"code": -32700, "message": "parse error"},
             }
         else:
-            response = handle_request(message)
+            if isinstance(message, dict):
+                response = handle_request(message)
+            else:
+                # A valid-JSON but non-object payload (e.g. ``[1]``) must not
+                # crash the loop on the later ``.get`` calls.
+                response = {
+                    "jsonrpc": "2.0",
+                    "id": None,
+                    "error": {"code": -32600, "message": "invalid request"},
+                }
         if response is not None:
             sys.stdout.write(json.dumps(response, ensure_ascii=False) + "\n")
             sys.stdout.flush()

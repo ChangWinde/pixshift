@@ -2,6 +2,7 @@
 
 import os
 import shutil
+import sys
 import uuid
 from collections.abc import Iterable, Iterator, Sequence
 from contextlib import contextmanager, suppress
@@ -245,11 +246,24 @@ def safe_output_path(output_root: Path | str, relative_path: Path | str) -> str:
     return str(candidate)
 
 
+def _output_collision_key(output: str) -> str:
+    """Normalise an output path for collision detection.
+
+    ``os.path.normcase`` lowercases on Windows but is identity on POSIX, so on
+    macOS (case-insensitive APFS by default) ``Photo.webp`` and ``photo.webp``
+    would otherwise pass the check and then clobber the same physical file.
+    """
+    key = os.path.normcase(str(Path(output).resolve(strict=False)))
+    if sys.platform == "darwin":
+        key = key.casefold()
+    return key
+
+
 def validate_unique_output_paths(tasks: Sequence[tuple[str, str]]) -> None:
     """Fail a batch when two sources resolve to the same destination."""
     destinations: dict[str, str] = {}
     for source, output in tasks:
-        key = os.path.normcase(str(Path(output).resolve(strict=False)))
+        key = _output_collision_key(output)
         previous = destinations.get(key)
         if previous is not None and Path(previous).resolve() != Path(source).resolve():
             raise OutputCollisionError(

@@ -34,8 +34,8 @@ def test_load_plan_accepts_plans_key_and_single_command():
     ("raw", "message"),
     [
         ("42", "plan_must_be_object_or_array"),
-        (json.dumps({"results": [17]}), "invalid_optimize_result"),
-        (json.dumps({"results": [{"input": "a.png"}]}), "missing_plan"),
+        (json.dumps({"results": 17}), "invalid_optimize_result"),
+        (json.dumps({"plans": 5}), "invalid_plans_list"),
         (json.dumps({"neither": True}), "unrecognized_plan_document"),
         (json.dumps(_step(input=None)), "missing_input"),
         (json.dumps(_step(command=None)), "missing_command"),
@@ -45,6 +45,22 @@ def test_load_plan_accepts_plans_key_and_single_command():
 def test_load_plan_rejects_malformed_documents(raw, message):
     with pytest.raises(ValueError, match=message):
         load_plan_document(raw)
+
+
+def test_load_plan_skips_failed_entries_in_a_mixed_optimize_batch():
+    # A mixed batch must apply its healthy entries, not reject wholesale:
+    # non-dict noise and plan-less failures are skipped, not fatal.
+    document = json.dumps(
+        {
+            "results": [
+                17,
+                {"input": "failed.png"},
+                {"input": "ok.png", "plan": {"command": "convert", "arguments": {"to": "webp"}}},
+            ]
+        }
+    )
+    steps = load_plan_document(document)
+    assert [step["input"] for step in steps] == ["ok.png"]
 
 
 def test_apply_reports_a_missing_input(tmp_path):

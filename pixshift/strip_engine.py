@@ -107,6 +107,9 @@ DEVICE_TAGS = {
     "LensMake",
     "LensModel",
     "LensSpecification",
+    # MakerNote 常含厂商序列号/固件，部分机型还嵌 GPS；ImageUniqueID 可追踪单张照片。
+    "MakerNote",
+    "ImageUniqueID",
 }
 
 # 个人信息标签
@@ -207,8 +210,7 @@ def strip_metadata(
 
         if strip_exif:
             # 完全清除所有 EXIF
-            save_kwargs = _get_clean_save_kwargs(img, input_path, strip_icc)
-            _save_atomic(img, output_path, save_kwargs)
+            _save_clean(img, output_path, input_path, strip_icc=strip_icc)
             result.exif_removed = True
             result.fields_removed = original_fields
         else:
@@ -241,40 +243,67 @@ def _apply_orientation(img: Image.Image) -> Image.Image:
     return normalize_orientation(img)
 
 
-def _get_clean_save_kwargs(
+# 编码器会从 img.info 回捞的元数据通道；隐私清洗必须显式删除它们，
+# 只是"不传对应 kwarg"并不能阻止 Pillow 把它们写回（HEIC 的 EXIF/XMP、
+# PNG 的 ICC、JPEG 的注释此前都因此泄漏）。
+_AUTO_METADATA_KEYS = ("exif", "xmp", "comment", "photoshop", "iptc")
+
+# 各扩展名的干净编码参数（不含任何元数据）。
+_STRIP_SAVE_KWARGS: dict[str, dict[str, Any]] = {
+    ".jpg": {"format": "JPEG", "quality": 95, "optimize": True},
+    ".jpeg": {"format": "JPEG", "quality": 95, "optimize": True},
+    ".png": {"format": "PNG", "optimize": True},
+    ".webp": {"format": "WEBP", "quality": 95},
+    ".tiff": {"format": "TIFF", "compression": "tiff_lzw"},
+    ".tif": {"format": "TIFF", "compression": "tiff_lzw"},
+    ".heic": {"format": "HEIF"},
+    ".heif": {"format": "HEIF"},
+    ".avif": {"format": "AVIF"},
+}
+
+
+def _save_clean(
     img: Image.Image,
+    output_path: str,
     input_path: str,
+    *,
     strip_icc: bool,
-) -> dict:
-    """获取干净的保存参数（不含 EXIF）"""
+    exif_bytes: bytes | None = None,
+) -> None:
+    """清除所有会被编码器回捞的元数据通道后原子保存。
+
+    ``exif_bytes`` 为 None 表示完全清除 EXIF；非 None 表示选择性清除后重建的
+    EXIF（经 kwarg 显式写回）。XMP/IPTC/Photoshop 这些非 EXIF 通道同样可能携带
+    GPS/作者信息，且无法逐字段编辑，隐私清洗一律整体删除。
+    """
     ext = Path(input_path).suffix.lower()
-    kwargs: dict = {}
+    save = img
+    if ext in (".jpg", ".jpeg") and save.mode in ("RGBA", "LA", "PA", "P"):
+        save = save.convert("RGB")
 
-    if ext in (".jpg", ".jpeg"):
-        if img.mode in ("RGBA", "LA", "PA"):
-            img = img.convert("RGB")
-        kwargs = {"format": "JPEG", "quality": 95, "optimize": True}
-    elif ext == ".png":
-        kwargs = {"format": "PNG", "optimize": True}
-    elif ext == ".webp":
-        kwargs = {"format": "WEBP", "quality": 95}
-    elif ext in (".tiff", ".tif"):
-        kwargs = {"format": "TIFF", "compression": "tiff_lzw"}
+    icc = None if strip_icc else save.info.get("icc_profile")
+    for key in _AUTO_METADATA_KEYS:
+        save.info.pop(key, None)
+    save.info.pop("icc_profile", None)
+    # exif_transpose()/getexif() cache the EXIF block on the image object, and
+    # encoders such as HEIF read that cache rather than info["exif"]. Clearing
+    # info alone let HEIC keep its GPS/device tags; empty the cache too. When a
+    # rebuilt EXIF is supplied it is written explicitly via the kwarg below.
+    save.getexif().clear()
+
+    kwargs = _STRIP_SAVE_KWARGS.get(ext)
+    if kwargs is None:
+        fmt = img.format
+        kwargs = {"format": fmt} if fmt else {}
     else:
-        orig_format = img.format
-        if orig_format:
-            kwargs = {"format": orig_format}
+        kwargs = dict(kwargs)
+    if exif_bytes:
+        kwargs["exif"] = exif_bytes
+    if icc:
+        kwargs["icc_profile"] = icc
 
-    # 保留 ICC（如果不需要清除）
-    if not strip_icc:
-        try:
-            icc = img.info.get("icc_profile")
-            if icc:
-                kwargs["icc_profile"] = icc
-        except Exception:
-            pass
-
-    return kwargs
+    with atomic_output_path(output_path) as temporary:
+        save.save(temporary, **kwargs)
 
 
 def _selective_strip(
@@ -293,8 +322,7 @@ def _selective_strip(
     try:
         exif = img.getexif()
         if not exif:
-            save_kwargs = _get_clean_save_kwargs(img, input_path, strip_icc)
-            _save_atomic(img, output_path, save_kwargs)
+            _save_clean(img, output_path, input_path, strip_icc=strip_icc)
             return 0
 
         # 构建要删除的标签集合
@@ -325,16 +353,13 @@ def _selective_strip(
                 del exif[gps_ifd_key]
                 fields_removed += 1
 
-        # 保存
-        save_kwargs = _get_clean_save_kwargs(img, input_path, strip_icc)
-        if exif:
-            save_kwargs["exif"] = exif.tobytes()
-        _save_atomic(img, output_path, save_kwargs)
+        # 保存（重建后的 EXIF 经 kwarg 显式写回）
+        exif_bytes = exif.tobytes() if exif else None
+        _save_clean(img, output_path, input_path, strip_icc=strip_icc, exif_bytes=exif_bytes)
 
     except Exception:
         # 如果选择性清除失败，回退到完全清除
-        save_kwargs = _get_clean_save_kwargs(img, input_path, strip_icc)
-        _save_atomic(img, output_path, save_kwargs)
+        _save_clean(img, output_path, input_path, strip_icc=strip_icc)
         fields_removed = -1  # 标记为完全清除
 
     return fields_removed
@@ -363,12 +388,6 @@ def _remove_named_tags(exif_fields: Any, tags_to_remove: set[str]) -> int:
     for key in keys:
         del exif_fields[key]
     return len(keys)
-
-
-def _save_atomic(img: Image.Image, output_path: str, save_kwargs: dict) -> None:
-    """Save a metadata-cleaned image without exposing partial output."""
-    with atomic_output_path(output_path) as temporary:
-        img.save(temporary, **save_kwargs)
 
 
 def analyze_metadata(filepath: str) -> dict[str, Any]:
