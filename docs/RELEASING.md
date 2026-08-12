@@ -12,7 +12,7 @@ PixShift follows semantic versioning (`MAJOR.MINOR.PATCH`).
    uv run ruff check .
    uv run ruff format --check .
    uv run mypy . --ignore-missing-imports
-   uv run pytest -q --cov=pixshift --cov-report=term-missing --cov-fail-under=75
+   uv run pytest -q --cov=pixshift --cov-report=term-missing --cov-fail-under=78
    uv build
    uv run twine check dist/*
    ```
@@ -45,5 +45,5 @@ page on PyPI after the `publish` job succeeds.
 
 ## Coverage Policy
 
-The current repository-wide gate is `70%` (measured coverage is above 75%).
-Increase this threshold gradually as module coverage improves; the next target is `80%`.
+The current repository-wide gate is `78%` (measured coverage is above 82%).
+Increase this threshold gradually as module coverage improves; the next target is `85%`.
