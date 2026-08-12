@@ -14,6 +14,7 @@ import os
 import stat
 import time
 from collections import defaultdict
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -140,7 +141,9 @@ def _perceptual_hash(img: Image.Image, hash_size: int = 8) -> int:
     return bits
 
 
-def _hash_one_file(filepath: str, hash_func, hash_size: int) -> tuple[str, int | None, int | None]:
+def _hash_one_file(
+    filepath: str, hash_func: Callable[[Image.Image, int], int], hash_size: int
+) -> tuple[str, int | None, int | None]:
     """Return ``(path, size, perceptual_hash)`` for one file, worker-safe.
 
     ``size`` is None when the file cannot be stat-ed; ``hash`` is None when the

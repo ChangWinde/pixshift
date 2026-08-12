@@ -153,7 +153,15 @@ def register_video_commands(
     @click.option("-r", "--recursive", is_flag=True, default=False, help="递归子目录")
     @click.option("--overwrite", is_flag=True, default=False, help="覆盖已存在输出")
     @click.option("--json", "as_json", is_flag=True, default=False, help="以 JSON 输出结果")
-    def video_convert(inputs, container, codec, output_dir, recursive, overwrite, as_json):
+    def video_convert(
+        inputs: tuple,
+        container: str,
+        codec: str | None,
+        output_dir: str | None,
+        recursive: bool,
+        overwrite: bool,
+        as_json: bool,
+    ) -> None:
         """转码视频到另一容器/编码。"""
         if not video_ops.available():
             _ffmpeg_missing("video.convert", as_json, console)
@@ -189,7 +197,16 @@ def register_video_commands(
     @click.option("-r", "--recursive", is_flag=True, default=False, help="递归子目录")
     @click.option("--overwrite", is_flag=True, default=False, help="覆盖已存在输出")
     @click.option("--json", "as_json", is_flag=True, default=False, help="以 JSON 输出结果")
-    def video_compress(inputs, preset, codec, crf, output_dir, recursive, overwrite, as_json):
+    def video_compress(
+        inputs: tuple,
+        preset: str,
+        codec: str,
+        crf: int | None,
+        output_dir: str | None,
+        recursive: bool,
+        overwrite: bool,
+        as_json: bool,
+    ) -> None:
         """按预设压缩视频体积。"""
         if not video_ops.available():
             _ffmpeg_missing("video.compress", as_json, console)
@@ -215,7 +232,16 @@ def register_video_commands(
     @click.option("-o", "--output", "output_path", default=None, type=click.Path(), help="输出文件")
     @click.option("--overwrite", is_flag=True, default=False, help="覆盖已存在输出")
     @click.option("--json", "as_json", is_flag=True, default=False, help="以 JSON 输出结果")
-    def video_trim(source, start, end, duration, reencode, output_path, overwrite, as_json):
+    def video_trim(
+        source: str,
+        start: str,
+        end: str | None,
+        duration: str | None,
+        reencode: bool,
+        output_path: str | None,
+        overwrite: bool,
+        as_json: bool,
+    ) -> None:
         """截取时间片段到新文件（默认流拷贝，秒级完成）。"""
         if not video_ops.available():
             _ffmpeg_missing("video.trim", as_json, console)
@@ -259,7 +285,15 @@ def register_video_commands(
     @click.option("-r", "--recursive", is_flag=True, default=False, help="递归子目录")
     @click.option("--overwrite", is_flag=True, default=False, help="覆盖已存在输出")
     @click.option("--json", "as_json", is_flag=True, default=False, help="以 JSON 输出结果")
-    def video_thumbnail(inputs, at_spec, image_format, output_dir, recursive, overwrite, as_json):
+    def video_thumbnail(
+        inputs: tuple,
+        at_spec: str,
+        image_format: str,
+        output_dir: str | None,
+        recursive: bool,
+        overwrite: bool,
+        as_json: bool,
+    ) -> None:
         """在指定时间点导出一帧静态图。"""
         if not video_ops.available():
             _ffmpeg_missing("video.thumbnail", as_json, console)
@@ -293,7 +327,14 @@ def register_video_commands(
     @click.option("-r", "--recursive", is_flag=True, default=False, help="递归子目录")
     @click.option("--overwrite", is_flag=True, default=False, help="覆盖已存在输出")
     @click.option("--json", "as_json", is_flag=True, default=False, help="以 JSON 输出结果")
-    def video_extract_audio(inputs, audio_format, output_dir, recursive, overwrite, as_json):
+    def video_extract_audio(
+        inputs: tuple,
+        audio_format: str,
+        output_dir: str | None,
+        recursive: bool,
+        overwrite: bool,
+        as_json: bool,
+    ) -> None:
         """导出音频轨道。"""
         if not video_ops.available():
             _ffmpeg_missing("video.extract-audio", as_json, console)
@@ -318,7 +359,16 @@ def register_video_commands(
     @click.option("-o", "--output", "output_path", default=None, type=click.Path(), help="输出文件")
     @click.option("--overwrite", is_flag=True, default=False, help="覆盖已存在输出")
     @click.option("--json", "as_json", is_flag=True, default=False, help="以 JSON 输出结果")
-    def video_gif(source, start, duration, fps, width, output_path, overwrite, as_json):
+    def video_gif(
+        source: str,
+        start: str,
+        duration: str | None,
+        fps: int,
+        width: int,
+        output_path: str | None,
+        overwrite: bool,
+        as_json: bool,
+    ) -> None:
         """把视频片段转成动画 GIF。"""
         if not video_ops.available():
             _ffmpeg_missing("video.gif", as_json, console)

@@ -181,7 +181,7 @@ def _check_pymupdf() -> None:
     fitz = _pymupdf
 
 
-def _open_pdf(path: str):
+def _open_pdf(path: str) -> Any:
     """打开待处理的 PDF，对需要口令的加密文件给出清晰错误而非生涩崩溃。
 
     ``needs_pass`` 为 True 时页面内容被锁，后续 merge/split/extract/compress

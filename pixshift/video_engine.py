@@ -77,8 +77,8 @@ AUDIO_CODECS: dict[str, tuple[str, str]] = {
     "wav": ("pcm_s16le", ""),
 }
 
-# preset -> codec -> crf/effort knobs
-VIDEO_COMPRESS_PRESETS: dict[str, dict[str, dict[str, Any]]] = {
+# preset -> {"description": str, codec: {crf/effort knobs}}
+VIDEO_COMPRESS_PRESETS: dict[str, dict[str, Any]] = {
     "web": {
         "description": "Balanced size/quality for web and sharing.",
         "h264": {"crf": 23, "preset": "medium"},
