@@ -6,11 +6,14 @@
 
 [![CI](https://img.shields.io/github/actions/workflow/status/ChangWinde/pixshift/ci.yml?branch=main&label=CI)](https://github.com/ChangWinde/pixshift/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/actions/workflow/status/ChangWinde/pixshift/release.yml?label=Release)](https://github.com/ChangWinde/pixshift/actions/workflows/release.yml)
+[![Docs](https://img.shields.io/github/actions/workflow/status/ChangWinde/pixshift/docs.yml?label=Docs)](https://changwinde.github.io/pixshift/)
 
 PixShift is an AI-native, local-first CLI toolkit for daily media work across three
 pillars — images, PDFs, and video. Humans get fast commands with rich output; agents and
 scripts get a discoverable tool catalog, schema-validated JSON contracts, and executable
 plans over the same deterministic engines.
+
+Full documentation: **<https://changwinde.github.io/pixshift/>**
 
 ## Why PixShift
 

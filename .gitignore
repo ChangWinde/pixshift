@@ -9,6 +9,7 @@ build/
 dist/
 *.egg-info/
 *.egg
+site/
 
 # Test artifacts
 .pytest_cache/

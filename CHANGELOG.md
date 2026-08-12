@@ -11,6 +11,8 @@ All notable changes to this project are documented in this file.
   translating CRF-style quality onto each backend's knobs; unsupported
   combinations fail with stable `unsupported_hwaccel:*` errors.
 - `docs/COMMANDS.md` now documents the whole `video` command group.
+- MkDocs documentation site (Material theme) built from `docs/` and deployed
+  to GitHub Pages on every push to `main` (`docs.yml` workflow).
 
 ## [1.2.0] - 2026-08-12
 
