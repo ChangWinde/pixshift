@@ -103,30 +103,32 @@ def register_video_commands(
         if not video_ops.available():
             _ffmpeg_missing("video.info", as_json, console)
         infos = [video_ops.info(str(path)) for path in files]
+        ok = all(item.error == "" for item in infos)
         if as_json:
-            emit_json(
-                {
-                    "command": "video.info",
-                    "ok": all(item.error == "" for item in infos),
-                    "files": [
-                        {
-                            "path": item.path,
-                            "duration_sec": round(item.duration_sec, 3),
-                            "width": item.width,
-                            "height": item.height,
-                            "video_codec": item.video_codec,
-                            "audio_codec": item.audio_codec,
-                            "fps": round(item.fps, 3),
-                            "bit_rate": item.bit_rate,
-                            "container": item.container,
-                            "stream_count": item.stream_count,
-                            "size_bytes": item.size_bytes,
-                            "error": item.error,
-                        }
-                        for item in infos
-                    ],
-                }
-            )
+            payload = {
+                "command": "video.info",
+                "ok": ok,
+                "files": [
+                    {
+                        "path": item.path,
+                        "duration_sec": round(item.duration_sec, 3),
+                        "width": item.width,
+                        "height": item.height,
+                        "video_codec": item.video_codec,
+                        "audio_codec": item.audio_codec,
+                        "fps": round(item.fps, 3),
+                        "bit_rate": item.bit_rate,
+                        "container": item.container,
+                        "stream_count": item.stream_count,
+                        "size_bytes": item.size_bytes,
+                        "error": item.error,
+                    }
+                    for item in infos
+                ],
+            }
+            if not ok:
+                emit_json_and_exit(payload, 1)
+            emit_json(payload)
             return
         for item in infos:
             console.print(f"\n[bold]{Path(item.path).name}[/bold]")
@@ -137,6 +139,8 @@ def register_video_commands(
                 f"  {item.width}x{item.height} · {item.video_codec or '?'} · "
                 f"{item.duration_sec:.1f}s · {item.fps:.2f}fps · {human_size(item.size_bytes)}"
             )
+        if not ok:
+            raise click.exceptions.Exit(1)
 
     @video.command("convert")
     @click.argument("inputs", nargs=-1, required=True, type=click.Path(exists=True))
