@@ -2,6 +2,8 @@
 
 import multiprocessing
 import os
+import shutil
+import subprocess
 import sys
 from io import BytesIO
 
@@ -283,6 +285,21 @@ def _collect_doctor_checks() -> list[tuple[str, str, bool, bool]]:
     except ImportError:
         checks.append(("PyMuPDF（PDF 处理）", "未安装（pip install PyMuPDF）", False, True))
 
+    # ffmpeg backs the optional video pillar; report it but never require it.
+    ffmpeg_path = shutil.which("ffmpeg")
+    ffprobe_path = shutil.which("ffprobe")
+    if ffmpeg_path and ffprobe_path:
+        checks.append(("ffmpeg（视频处理）", _ffmpeg_version(ffmpeg_path), True, False))
+    else:
+        checks.append(
+            (
+                "ffmpeg（视频处理）",
+                "未安装（brew install ffmpeg / apt install ffmpeg）",
+                False,
+                False,
+            )
+        )
+
     try:
         from importlib.metadata import version as pkg_version
 
@@ -299,6 +316,24 @@ def _collect_doctor_checks() -> list[tuple[str, str, bool, bool]]:
 
     checks.append(("CPU 核心数", str(multiprocessing.cpu_count()), True, True))
     return checks
+
+
+def _ffmpeg_version(ffmpeg_path: str) -> str:
+    """Return the ffmpeg version token, or a generic label on any failure."""
+    try:
+        completed = subprocess.run(
+            [ffmpeg_path, "-version"],
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
+            timeout=5,
+            check=False,
+        )
+        first_line = completed.stdout.splitlines()[0] if completed.stdout else ""
+        tokens = first_line.split()
+        return tokens[2] if len(tokens) >= 3 else "已安装"
+    except (OSError, subprocess.SubprocessError):
+        return "已安装"
 
 
 def _preview_items(items: list[str], limit: int = 18) -> str:
