@@ -1,0 +1,56 @@
+site_name: PixShift
+site_description: AI-native, local-first CLI toolkit for images, PDFs, and video
+site_url: https://changwinde.github.io/pixshift/
+repo_url: https://github.com/ChangWinde/pixshift
+repo_name: ChangWinde/pixshift
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: teal
+      accent: teal
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: teal
+      accent: teal
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - search.suggest
+
+markdown_extensions:
+  - admonition
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.highlight
+  - pymdownx.superfences
+
+nav:
+  - Home: index.md
+  - User Guide:
+      - Commands: COMMANDS.md
+      - Performance: PERFORMANCE.md
+  - Machine Interface:
+      - JSON Output: JSON_OUTPUT.md
+  - Architecture:
+      - Overview: ARCHITECTURE.md
+      - "ADR-0001: Safe operation boundaries": adr/0001-safe-operation-boundaries.md
+      - "ADR-0002: Opinionated defaults and AI plans": adr/0002-opinionated-defaults-and-ai-plans.md
+      - "ADR-0003: AI-native tool surface": adr/0003-ai-native-tool-surface.md
+      - "ADR-0004: Feature surface audit": adr/0004-feature-surface-audit.md
+      - "ADR-0005: Video pillar": adr/0005-video-pillar.md
+  - Project:
+      - Releasing: RELEASING.md
+      - Label strategy: LABEL_STRATEGY.md
+      - Phase 1 checklist: PHASE1_CHECKLIST.md
