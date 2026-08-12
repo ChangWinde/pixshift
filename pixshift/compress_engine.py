@@ -82,8 +82,11 @@ LOSSLESS_COMPRESSION_FORMATS = {".png", ".tif", ".tiff"}
 # 压缩预设
 COMPRESS_PRESETS: dict[str, dict[str, Any]] = {
     "lossless": {
+        # 无缩放时有损源按字节复制（见 exact_copy_formats）；一旦被迫重编码
+        # （--max-size 缩放），JPEG 用 q95 subsampling0 作归档级近无损，避免 q100
+        # 体积暴涨，WebP 则走真·无损（见 _encode_compressed 的 lossless 分支）。
         "description": "严格无损 — 有损源格式按字节复制，避免再次编码",
-        "jpg_quality": 100,
+        "jpg_quality": 95,
         "png_level": 9,
         "webp_quality": 100,
     },
@@ -222,9 +225,24 @@ def compress_single(
                     )
                 else:
                     actual_quality = _get_quality(ext, quality, preset)
-                    _save_compressed(img, output_path, ext, fmt_config, actual_quality)
+                    lossless = preset == "lossless" and quality is None
+                    _save_compressed(
+                        img, output_path, ext, fmt_config, actual_quality, lossless=lossless
+                    )
                     result.quality_used = actual_quality
                     result.iterations = 1
+
+        # compress 的语义是"减小体积"，绝不应把文件改大。未缩放时若重编码结果
+        # 不比原文件小（常见于已高度优化的 JPEG），保留原始字节——同格式下严格
+        # 更优且零质量损失。
+        if (
+            not result.error
+            and max_size is None
+            and os.path.exists(output_path)
+            and os.path.getsize(output_path) >= result.input_size
+            and os.path.getsize(input_path) == result.input_size
+        ):
+            atomic_copy_file(input_path, output_path)
 
         if os.path.exists(output_path):
             result.output_size = os.path.getsize(output_path)
@@ -266,9 +284,12 @@ def _save_compressed(
     ext: str,
     fmt_config: dict[str, Any],
     quality_val: int,
+    lossless: bool = False,
 ) -> None:
     """按指定质量保存压缩后的图片"""
-    atomic_write_bytes(output_path, _encode_compressed(img, ext, fmt_config, quality_val))
+    atomic_write_bytes(
+        output_path, _encode_compressed(img, ext, fmt_config, quality_val, lossless=lossless)
+    )
 
 
 def _encode_compressed(
@@ -276,6 +297,7 @@ def _encode_compressed(
     ext: str,
     fmt_config: dict[str, Any],
     quality_val: int,
+    lossless: bool = False,
 ) -> bytes:
     """Encode one image using the exact payload used for final output."""
     save_kwargs: dict[str, Any] = {}
@@ -299,11 +321,12 @@ def _encode_compressed(
             "optimize": True,
         }
     elif ext == ".webp":
-        save_kwargs = {
-            "format": "WEBP",
-            "quality": quality_val,
-            "method": 6,
-        }
+        # lossless 预设走 WebP 真·无损，而非 quality=100 的有损近似。
+        save_kwargs = (
+            {"format": "WEBP", "lossless": True, "method": 6}
+            if lossless
+            else {"format": "WEBP", "quality": quality_val, "method": 6}
+        )
     elif ext == ".avif":
         if save_img.mode not in ("RGB", "RGBA"):
             save_img = save_img.convert("RGB")
