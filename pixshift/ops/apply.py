@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+import os
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from ..core.defaults import DEFAULT_COMPRESS_PRESET, DEFAULT_CONVERT_QUALITY
+from ..core.errors import OperationPolicyError, OutputCollisionError
 from ..core.files import (
     conversion_output_name,
     derivative_output_name,
@@ -56,13 +59,19 @@ def load_plan_document(raw: str) -> list[dict[str, Any]]:
         raise ValueError("plan_must_be_object_or_array")
 
     if "results" in document:
+        results = document["results"]
+        if not isinstance(results, list):
+            raise ValueError("invalid_optimize_result")
         steps: list[dict[str, Any]] = []
-        for item in document["results"]:
+        for item in results:
             if not isinstance(item, dict):
-                raise ValueError("invalid_optimize_result")
+                continue
             plan = item.get("plan")
             if not isinstance(plan, dict):
-                raise ValueError("missing_plan")
+                # A failed optimize entry carries no plan; skip it so the
+                # healthy items in a mixed batch still apply, rather than
+                # rejecting the whole document.
+                continue
             steps.append(
                 {
                     "input": item.get("input") or item.get("input_path"),
@@ -73,7 +82,10 @@ def load_plan_document(raw: str) -> list[dict[str, Any]]:
         return [_normalize_step(step) for step in steps]
 
     if "plans" in document:
-        return [_normalize_step(item) for item in document["plans"]]
+        plans = document["plans"]
+        if not isinstance(plans, list):
+            raise ValueError("invalid_plans_list")
+        return [_normalize_step(item) for item in plans]
 
     if "command" in document:
         return [_normalize_step(document)]
@@ -82,6 +94,10 @@ def load_plan_document(raw: str) -> list[dict[str, Any]]:
 
 
 def _normalize_step(item: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(item, dict):
+        # Guard bare-list payloads like ``[1]`` so a bad step becomes a stable
+        # ValueError (JSON error document) instead of an uncaught TypeError.
+        raise ValueError("invalid_plan_step")
     input_path = item.get("input") or item.get("input_path")
     command = item.get("command")
     arguments = item.get("arguments") or {}
@@ -103,6 +119,7 @@ def apply_plans(
 ) -> ApplyResult:
     """Apply normalized plan steps sequentially."""
     result = ApplyResult()
+    claimed: set[str] = set()
     for step in steps:
         applied = _apply_one(
             input_path=step["input"],
@@ -111,6 +128,7 @@ def apply_plans(
             output_dir=output_dir,
             overwrite=overwrite,
             dry_run=dry_run,
+            claimed=claimed,
         )
         result.steps.append(applied)
     return result
@@ -124,6 +142,7 @@ def _apply_one(
     output_dir: str | None,
     overwrite: bool,
     dry_run: bool,
+    claimed: set[str],
 ) -> AppliedStep:
     applied = AppliedStep(
         input_path=input_path,
@@ -139,17 +158,33 @@ def _apply_one(
     try:
         if command == "convert":
             return _apply_convert(
-                applied, output_dir=output_dir, overwrite=overwrite, dry_run=dry_run
+                applied,
+                output_dir=output_dir,
+                overwrite=overwrite,
+                dry_run=dry_run,
+                claimed=claimed,
             )
         if command == "compress":
             return _apply_compress(
-                applied, output_dir=output_dir, overwrite=overwrite, dry_run=dry_run
+                applied,
+                output_dir=output_dir,
+                overwrite=overwrite,
+                dry_run=dry_run,
+                claimed=claimed,
             )
         if command == "strip":
             return _apply_strip(
-                applied, output_dir=output_dir, overwrite=overwrite, dry_run=dry_run
+                applied,
+                output_dir=output_dir,
+                overwrite=overwrite,
+                dry_run=dry_run,
+                claimed=claimed,
             )
         applied.error = "unsupported_plan_command"
+        return applied
+    except OperationPolicyError as error:
+        applied.error = error.code
+        applied.detail = str(error)
         return applied
     except Exception as error:
         applied.error = "apply_failed"
@@ -163,6 +198,7 @@ def _output_for(
     output_dir: str | None,
     output_name: str,
     overwrite: bool,
+    claimed: set[str],
 ) -> tuple[str, bool]:
     target = plan_output_path(
         input_path,
@@ -171,8 +207,18 @@ def _output_for(
         flatten=False,
         source_paths=[input_path],
     )
+    # A key already in ``claimed`` means an earlier step this run targeted the
+    # same destination. Check that before the existing-output skip, otherwise
+    # the first step's fresh write makes the second look like an idempotent
+    # skip and the collision is masked.
+    key = os.path.normcase(str(Path(target).resolve(strict=False)))
+    if sys.platform == "darwin":
+        key = key.casefold()
+    if key in claimed:
+        raise OutputCollisionError(f"multiple plan steps map to the same output: {target}")
     if Path(target).exists() and not overwrite:
         return target, True
+    claimed.add(key)
     return target, False
 
 
@@ -182,6 +228,7 @@ def _apply_convert(
     output_dir: str | None,
     overwrite: bool,
     dry_run: bool,
+    claimed: set[str],
 ) -> AppliedStep:
     target_format = str(
         applied.arguments.get("to") or applied.arguments.get("format") or ""
@@ -197,6 +244,7 @@ def _apply_convert(
         output_dir=output_dir,
         output_name=conversion_output_name(applied.input_path, target_format),
         overwrite=overwrite,
+        claimed=claimed,
     )
     applied.output_path = output_path
     if skipped:
@@ -223,12 +271,14 @@ def _apply_compress(
     output_dir: str | None,
     overwrite: bool,
     dry_run: bool,
+    claimed: set[str],
 ) -> AppliedStep:
     output_path, skipped = _output_for(
         applied.input_path,
         output_dir=output_dir,
         output_name=derivative_output_name(applied.input_path, "_compressed"),
         overwrite=overwrite,
+        claimed=claimed,
     )
     applied.output_path = output_path
     if skipped:
@@ -268,12 +318,14 @@ def _apply_strip(
     output_dir: str | None,
     overwrite: bool,
     dry_run: bool,
+    claimed: set[str],
 ) -> AppliedStep:
     output_path, skipped = _output_for(
         applied.input_path,
         output_dir=output_dir,
         output_name=derivative_output_name(applied.input_path, "_clean"),
         overwrite=overwrite,
+        claimed=claimed,
     )
     applied.output_path = output_path
     if skipped:
