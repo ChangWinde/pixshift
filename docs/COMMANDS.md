@@ -114,7 +114,7 @@ pixshift montage INPUTS... -o board.png [--cols 4] [-r] [--json]
 
 ### `optimize`
 
-Analyze images and get format recommendations.
+Analyze images and videos and get format recommendations.
 
 ```bash
 pixshift optimize INPUTS... [-r] [--json]
@@ -122,6 +122,11 @@ pixshift optimize INPUTS... [-r] [--json]
 
 JSON includes bounded format-size estimates, sampling metadata, and a `plan` object with
 a command plus structured arguments. Large images are sampled to keep analysis fast.
+
+Video files are analysed from ffprobe metadata only (no encoding): legacy codecs get a
+`video.convert` plan, wasteful bitrates a same-family `video.compress` plan, and
+already-efficient files an explicit `keep` plan. Requires ffmpeg; without it each video
+entry carries a stable `ffmpeg_missing` error.
 
 ### `resize`
 
@@ -210,10 +215,14 @@ pixshift apply --plan plan.json [-o OUT_DIR] [--overwrite] [--dry-run] [--json]
 pixshift optimize ./photos --json | pixshift apply --plan - --json
 ```
 
-Supported plan commands: `convert`, `compress`, `strip`. Existing outputs are
-idempotent skips unless `--overwrite` is set. Without `-o`, outputs follow the
-CLI naming conventions next to the source: `convert` swaps the extension,
-`compress` appends `_compressed`, and `strip` appends `_clean`.
+Supported plan commands: `convert`, `compress`, `strip`, `video.convert`,
+`video.compress`, and `keep` (an explicit no-op for already-efficient files).
+Existing outputs are idempotent skips unless `--overwrite` is set. Without `-o`,
+outputs follow the CLI naming conventions next to the source: `convert` swaps
+the extension, `compress` appends `_compressed`, and `strip` appends `_clean`;
+video steps mirror the `video` command naming. Video steps validate their
+vocabulary and plan outputs under `--dry-run` even without ffmpeg; real
+execution reports `ffmpeg_missing` when the optional dependency is absent.
 
 ### `prep`
 

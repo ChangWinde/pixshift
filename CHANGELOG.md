@@ -12,6 +12,16 @@ All notable changes to this project are documented in this file.
 
 ### Added
 
+- Video pillar (ADR-0005): optional ffmpeg-backed `video info / convert /
+  compress / trim / thumbnail / extract-audio / gif` commands with pure,
+  unit-testable argv builders, atomic outputs, stable `ffmpeg_missing`
+  errors, and `doctor` reporting.
+- Probe-driven `optimize` for videos: deterministic codec/bitrate analysis
+  (no encoding) recommends `video.convert`, `video.compress`, or an explicit
+  `keep` plan with a size estimate; results carry `media_type`.
+- `apply` executes `video.convert` / `video.compress` plan steps under the
+  image-step safety envelope (collision detection, idempotent skips,
+  offline `--dry-run`) and treats `keep` as an explicit skip.
 - `resize`: first-class same-format batch resizing (`--size`, `--percent`,
   `--max-size`) with `_resized` derivatives.
 - `rotate`: clockwise rotation and mirroring with EXIF orientation normalized
