@@ -18,20 +18,22 @@ and the largest remaining gap for agent-driven media pipelines.
 
 ## Current Focus
 
-M0-M3 shipped; the deep audit remediation (privacy/metadata, compress/PDF correctness,
-apply/MCP hardening) and the startup/dedup performance work are landed with tests, and the
-optional ffmpeg-backed video pillar (ADR-0005) is in.
+M0-M3 shipped; the deep audit remediation, the startup/dedup performance work, and the
+ffmpeg-backed video pillar (ADR-0005) are in. The video pillar now closes the full
+discover -> plan -> apply loop: probe-driven `optimize` recommendations
+(convert/compress/keep) and `apply` execution of `video.*` steps, with coverage at 82%
+(gate 78).
 
 Next frontier, in order:
 
-1. Merge PR #18 (surface audit) and the audit-remediation branch; then one-time PyPI
+1. Merge the stacked PRs #18 -> #19 -> #20 -> #21 -> #23; then one-time PyPI
    trusted-publisher setup and tag `v1.2.0` (see `docs/RELEASING.md`).
-2. Coverage climb toward 80% including the new video argv builders.
-3. Video pillar depth: probe-driven `optimize` for video, plan/apply support for
-   `video.*`, hardware-accel opt-in.
-4. Animated-image transforms (GIF/APNG to animated WebP) — the image-to-video
+2. Video pillar: hardware-accel opt-in (the remaining slice of the depth item).
+3. Animated-image transforms (GIF/APNG to animated WebP) — the image-to-video
    bridge (ADR-0004 gap, ADR-0005 scope).
-5. MkDocs documentation site organised by the three pillars.
+4. MkDocs documentation site organised by the three pillars.
+5. Deferred audit P2/P3 items (error-code unification, JSON contract polish,
+   PDF merge byte-splice performance, terminal UI consistency).
 
 ## Milestones
 
@@ -44,6 +46,7 @@ Next frontier, in order:
 | M4 | Deep-audit remediation: metadata/privacy, compress/PDF correctness, apply/MCP hardening | COMPLETE |
 | M5 | Performance: lazy startup (RSS 132MB to 41MB), parallel + draft dedup | COMPLETE |
 | M6 | Video pillar MVP: `video info/convert/compress/trim/thumbnail/extract-audio/gif`; ffmpeg in `doctor`; catalog + tests (ADR-0005) | COMPLETE |
+| M7 | Video plan loop: probe-driven `optimize`, `apply` for `video.*`/`keep`; coverage 82% (gate 78) | COMPLETE |
 
 ## In Scope
 
