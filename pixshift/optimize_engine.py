@@ -19,8 +19,8 @@ from PIL import Image, ImageStat
 
 from .converter import _human_size
 from .core.metadata import (
-    ensure_static_image,
     flatten_transparency,
+    image_frame_count,
     image_has_transparency,
     normalize_orientation,
 )
@@ -185,7 +185,11 @@ def analyze_image(input_path: str) -> OptimizeResult:
         result.input_format = Path(input_path).suffix.lower().lstrip(".")
 
         with Image.open(input_path) as source:
-            ensure_static_image(source)
+            frame_total = image_frame_count(source)
+            if frame_total > 1:
+                _analyze_animation(result, source, frame_total)
+                result.duration = time.time() - start_time
+                return result
             img = normalize_orientation(source).copy()
         result.width, result.height = img.size
         result.has_alpha = image_has_transparency(img)
@@ -313,6 +317,31 @@ def analyze_image(input_path: str) -> OptimizeResult:
 
     result.duration = time.time() - start_time
     return result
+
+
+def _analyze_animation(result: OptimizeResult, source: Image.Image, frame_total: int) -> None:
+    """Fill an OptimizeResult for a multi-frame image without re-encoding it.
+
+    Deterministic, probe-style analysis (mirroring the video pillar): animated
+    GIF/APNG get an executable convert-to-WebP plan — animation preserved by
+    the converter — while an already-animated WebP is kept as-is because
+    re-encoding it would only lose quality.
+    """
+    result.width, result.height = source.size
+    result.has_alpha = image_has_transparency(source)
+    result.image_type = "animation"
+    result.image_type_reason = f"{frame_total} 帧动画"
+    result.analysis_size = source.size
+    if result.input_format == "webp":
+        result.recommended_format = "keep"
+        result.recommended_reason = "已是动画 WebP，重编码只会损失质量"
+        result.plan = {"command": "keep", "arguments": {}}
+        return
+    result.recommended_format = "WebP (动画)"
+    result.recommended_reason = (
+        f"动画 {result.input_format.upper() or '?'} 转 WebP 通常可减 30-60% 体积且保留动画"
+    )
+    result.plan = {"command": "convert", "arguments": {"to": "webp", "quality": "high"}}
 
 
 def _estimate_format(

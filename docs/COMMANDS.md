@@ -25,6 +25,12 @@ The default `high` quality preset balances visual quality, output size, and enco
 speed. Use `-q max` explicitly for archival-oriented encoding. Directory discovery
 ignores files already in the target format; an explicit file argument is always honored.
 
+Animated inputs (GIF, APNG, animated WebP) keep their animation — frames,
+per-frame timing, loop count, and transparency — when the target format can
+animate (`webp`, `gif`, `png`). Targets that cannot (jpg, heic, avif, ...)
+fail with a stable `animated_input_not_supported` error rather than silently
+dropping frames. Resize options apply to every frame.
+
 ### `compress`
 
 Compress images without changing format.
@@ -128,6 +134,10 @@ Video files are analysed from ffprobe metadata only (no encoding): legacy codecs
 already-efficient files an explicit `keep` plan. Requires ffmpeg; without it each video
 entry carries a stable `ffmpeg_missing` error.
 
+Animated images classify as `animation`: GIF/APNG get an executable
+`convert -t webp` plan (animation preserved, typically 30-60% smaller), an
+already-animated WebP gets an explicit `keep` plan.
+
 ### `resize`
 
 Resize images in batch while keeping their format; outputs `_resized` derivatives.
@@ -139,7 +149,8 @@ pixshift resize INPUTS... (--size WxH | --percent P | --max-size N) \
 
 Exactly one sizing mode is required. `--max-size` bounds the longest side and
 never enlarges. Same-format re-encode applies the selected quality preset to
-lossy formats.
+lossy formats. Animated GIF/APNG/WebP inputs are resized frame by frame with
+timing and loop preserved.
 
 ### `rotate`
 

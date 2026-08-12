@@ -41,7 +41,7 @@ def _ann(
 TOOL_CATALOG: list[ToolEntry] = [
     {
         "name": "convert",
-        "description": "Convert images to another format with optional resize.",
+        "description": "Convert images to another format; animations keep frames for webp/gif/png.",
         "when_to_use": "Need a different format or bounded dimensions.",
         "input_summary": "paths; -t format; optional --resize/--max-size; -r; --json",
         "annotations": _ann(read_only=False, destructive=False, idempotent=True),

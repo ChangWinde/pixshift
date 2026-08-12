@@ -18,6 +18,7 @@ use ffmpeg (optional system dependency, reported by `pixshift doctor`).
 
 ```bash
 pixshift convert photo.heic -t webp        # convert one file
+pixshift convert banner.gif -t webp        # animated GIF -> animated WebP
 pixshift compress ./exports -p web -r      # batch-compress a folder
 pixshift strip secret.jpg                  # remove privacy metadata
 pixshift pdf merge scans/*.png -o doc.pdf  # images into a PDF
