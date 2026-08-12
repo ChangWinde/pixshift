@@ -105,6 +105,25 @@ FORMAT_ALIASES = {
     "heif": "heic",
 }
 
+# 能够存储 CMYK 像素的输出格式（已按 FORMAT_ALIASES 归一化）。
+_CMYK_CAPABLE = {"jpg", "jpeg", "tiff", "tif", "pdf"}
+
+
+def _color_family(mode: str) -> str:
+    """Group a Pillow mode into an ICC-compatible colour family.
+
+    An embedded ICC profile describes one colour space; once the pixels move
+    to another family (notably CMYK -> RGB) the profile is meaningless and
+    must be dropped. RGB/RGBA/L/P all share device-RGB handling, so flatten or
+    palette changes keep the profile valid.
+    """
+    if mode in ("CMYK", "YCCK"):
+        return "cmyk"
+    if mode == "LAB":
+        return "lab"
+    return "rgb"
+
+
 # 每种输出格式的最佳质量参数
 QUALITY_PRESETS: dict[str, dict[str, dict[str, Any]]] = {
     "max": {
@@ -285,6 +304,11 @@ class PixShiftConverter:
             elif img.mode not in ("RGB", "L"):
                 img = img.convert("RGB")
 
+        # 只有 JPEG/TIFF/PDF 能存 CMYK；其余格式（PNG/WEBP/HEIC…）直接保存
+        # CMYK 会失败，需先转 RGB。
+        if img.mode in ("CMYK", "YCCK") and output_fmt_lower not in _CMYK_CAPABLE:
+            img = img.convert("RGB")
+
         return img, orientation_normalized
 
     def _auto_orient(self, img: Image.Image) -> Image.Image:
@@ -325,6 +349,7 @@ class PixShiftConverter:
             with Image.open(input_path) as opened:
                 ensure_static_image(opened)
                 result.width, result.height = opened.size
+                source_mode = opened.mode
                 img = opened.copy()
                 img.info.update(opened.info)
 
@@ -334,26 +359,35 @@ class PixShiftConverter:
             # 获取保存参数
             save_params = self.get_save_params(output_fmt)
 
-            # 保留 EXIF
+            # 计算 EXIF/ICC，必须在清理 img.info 之前完成（getexif 读的是 info）。
+            exif_bytes = None
             if self.keep_exif:
                 try:
-                    exif_data = normalized_exif_bytes(
+                    exif_bytes = normalized_exif_bytes(
                         img,
                         remove_orientation=orientation_normalized,
                     )
-                    if exif_data:
-                        save_params["exif"] = exif_data
                 except Exception:
-                    pass
+                    exif_bytes = None
+            # CMYK→RGB 之类的色彩模型变换会让内嵌 ICC 失效，必须丢弃。
+            color_space_changed = _color_family(source_mode) != _color_family(img.mode)
+            icc_profile = None
+            if self.keep_icc and not color_space_changed:
+                icc_profile = img.info.get("icc_profile")
 
-            # 保留 ICC Profile
-            if self.keep_icc:
-                try:
-                    icc_profile = img.info.get("icc_profile")
-                    if icc_profile:
-                        save_params["icc_profile"] = icc_profile
-                except Exception:
-                    pass
+            # Pillow 各编码器（PNG/WEBP/TIFF/HEIF…）会从 img.info 回捞
+            # exif/xmp/icc 即使未传对应 kwarg，因此清洗元数据必须显式删除这些键，
+            # 而非只是"不传"——否则 --no-exif/--no-icc 对这些格式静默失效。
+            img.info.pop("exif", None)
+            img.getexif().clear()  # 清缓存的 EXIF，否则 HEIF/WebP 编码器会回写
+            if not self.keep_exif:
+                img.info.pop("xmp", None)
+            img.info.pop("icc_profile", None)
+
+            if exif_bytes:
+                save_params["exif"] = exif_bytes
+            if icc_profile:
+                save_params["icc_profile"] = icc_profile
 
             # 保存到同目录临时文件，编码成功后原子替换。
             with atomic_output_path(output_path) as temporary:
