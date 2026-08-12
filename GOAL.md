@@ -2,34 +2,36 @@
 
 ## Destination
 
-Agent (Cursor, Claude, scripts) and humans share one local-first media toolkit:
-discover tools, plan transforms, apply them safely, and verify results with stable JSON.
+Agents (Cursor, Claude, scripts) and humans share one local-first media toolkit across
+three pillars — images, PDFs, and video: discover tools, plan transforms, apply them
+safely, and verify results with stable JSON.
 
-PixShift is an **AI-native, agent-safe** image and PDF CLI: deterministic, auditable,
-idempotent, and offline in the media hot path.
+PixShift is an **AI-native, agent-safe** media CLI: deterministic, auditable, idempotent,
+and offline in the media hot path.
 
 ## Why Now
 
-v1.1.0 already ships `--json`, safety ADRs, and optimize plans, but agents still lack
-a discoverable catalog, schema-validated contracts, and a plan-to-apply loop.
+The image and PDF pillars ship `--json`, safety ADRs, optimize plans, a discoverable tool
+catalog, schema-validated contracts, and a plan-to-apply loop. Everyday video work
+(transcode, compress, trim, thumbnail, GIF) is the same kind of deterministic one-shot job
+and the largest remaining gap for agent-driven media pipelines.
 
 ## Current Focus
 
-M0-M3 shipped in PR #11 (CI green on Python 3.10/3.12/3.13, frozen lockfile).
-Trusted-publishing workflow is in place behind the `pypi` environment.
+M0-M3 shipped; the deep audit remediation (privacy/metadata, compress/PDF correctness,
+apply/MCP hardening) and the startup/dedup performance work are landed with tests, and the
+optional ffmpeg-backed video pillar (ADR-0005) is in.
 
 Next frontier, in order:
 
-1. Merge PR #18 (feature surface audit: remove watch; add resize, rotate,
-   pdf split).
-2. One-time PyPI setup: trusted publisher (owner `ChangWinde`, repo `pixshift`,
-   workflow `release.yml`, environment `pypi`) plus the GitHub `pypi`
-   environment, then tag `v1.2.0` (see `docs/RELEASING.md`).
-3. Coverage climb toward 80% (currently 76%; the thinnest areas are the
-   command layers - agent, pdf, workflow - and `ops/apply`).
-4. MkDocs documentation site.
-5. Animated-image transforms (GIF/APNG to animated WebP) - the largest
-   remaining daily-workflow gap (ADR-0004).
+1. Merge PR #18 (surface audit) and the audit-remediation branch; then one-time PyPI
+   trusted-publisher setup and tag `v1.2.0` (see `docs/RELEASING.md`).
+2. Coverage climb toward 80% including the new video argv builders.
+3. Video pillar depth: probe-driven `optimize` for video, plan/apply support for
+   `video.*`, hardware-accel opt-in.
+4. Animated-image transforms (GIF/APNG to animated WebP) — the image↔video bridge
+   (ADR-0004 gap, ADR-0005 scope).
+5. MkDocs documentation site organised by the three pillars.
 
 ## Milestones
 
@@ -38,7 +40,10 @@ Next frontier, in order:
 | M0 | GOAL, ADR-0003, README AI-native positioning | COMPLETE |
 | M1 | JSON Schema + CI; `tools`; `apply`; thin MCP | COMPLETE |
 | M2 | pre-commit, stricter ruff, coverage 70%, uv CONTRIBUTING, shell completion | COMPLETE |
-| M3 | `prep`, `manifest`, `hash`/`verify` for agent workflows | COMPLETE |
+| M3 | `prep`, `manifest`, `hash` for agent workflows | COMPLETE |
+| M4 | Deep-audit remediation: metadata/privacy, compress/PDF correctness, apply/MCP hardening | COMPLETE |
+| M5 | Performance: lazy startup (RSS 132MB to 41MB), parallel + draft dedup | COMPLETE |
+| M6 | Video pillar MVP: `video info/convert/compress/trim/thumbnail/extract-audio/gif`; ffmpeg in `doctor`; catalog + tests (ADR-0005) | COMPLETE |
 
 ## In Scope
 
@@ -48,8 +53,10 @@ Next frontier, in order:
 
 ## Out of Scope
 
-- Generative / caption / LoRA models in the media hot path
-- Matching ImageMagick feature breadth
+- Generative / caption / LoRA models in the media hot path (all three pillars)
+- Matching ImageMagick or the full ffmpeg flag surface
+- Video timeline/NLE editing, filter/effect chains, subtitle burn-in
+- Cloud transcoding, render farms, live-streaming protocols (RTMP/HLS)
 - Breaking safety invariants for convenience
 - A single opaque mega-run pipeline (see ADR-0002)
 
