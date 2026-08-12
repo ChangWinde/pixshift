@@ -199,25 +199,91 @@ def _safe_path(path: str) -> str:
 #  Pure argv builders (no I/O; unit-tested without ffmpeg)
 # ============================================================
 
+# Opt-in hardware encode backends: (backend, codec key) -> ffmpeg encoder.
+# VA-API is deliberately absent (device/filter-graph plumbing); vp9/av1
+# hardware encoders are too niche to promise portable behaviour.
+HWACCEL_BACKENDS = ("videotoolbox", "nvenc", "qsv")
+_HW_ENCODERS: dict[tuple[str, str], str] = {
+    ("nvenc", "h264"): "h264_nvenc",
+    ("nvenc", "h265"): "hevc_nvenc",
+    ("qsv", "h264"): "h264_qsv",
+    ("qsv", "h265"): "hevc_qsv",
+    ("videotoolbox", "h264"): "h264_videotoolbox",
+    ("videotoolbox", "h265"): "hevc_videotoolbox",
+}
+# x264/x265-style speed presets translated onto NVENC's p1(fast)..p7(slow).
+_NVENC_PRESETS = {"fast": "p4", "medium": "p5", "slow": "p6"}
+
+
+def _hw_encoder(codec_key: str, hwaccel: str) -> str:
+    encoder = _HW_ENCODERS.get((hwaccel, codec_key))
+    if encoder is None:
+        raise ValueError(f"unsupported_hwaccel:{hwaccel}:{codec_key}")
+    return encoder
+
+
+def _hw_quality_args(hwaccel: str, crf: int, preset: str | None) -> list[str]:
+    """Translate a CRF-style quality target onto one backend's own knobs."""
+    if hwaccel == "nvenc":
+        args = ["-rc", "vbr", "-cq", str(crf)]
+        if preset:
+            args += ["-preset", _NVENC_PRESETS.get(preset, "p5")]
+        return args
+    if hwaccel == "qsv":
+        args = ["-global_quality", str(crf)]
+        if preset:
+            args += ["-preset", preset]
+        return args
+    # videotoolbox: -q:v runs 1..100 with higher = better quality; map the
+    # 0..51 CRF scale linearly and clamp. It has no speed presets.
+    quality = max(1, min(100, round((51 - crf) * 2)))
+    return ["-q:v", str(quality)]
+
+
+def _video_encoder_args(
+    codec_key: str, *, crf: int, speed_preset: str | None, hwaccel: str | None
+) -> list[str]:
+    """``-c:v`` and quality knobs for one encode, software or hardware."""
+    if hwaccel is not None:
+        args = ["-c:v", _hw_encoder(codec_key, hwaccel)]
+        args += _hw_quality_args(hwaccel, crf, speed_preset)
+    else:
+        encoder = VIDEO_CODECS[codec_key][0]
+        args = ["-c:v", encoder, "-crf", str(crf)]
+        if codec_key in ("h264", "h265") and speed_preset:
+            args += ["-preset", speed_preset]
+        elif codec_key == "vp9":
+            args += ["-b:v", "0"]
+        elif codec_key == "av1" and speed_preset:
+            args += ["-preset", speed_preset]
+    if codec_key == "h265":
+        args += ["-tag:v", "hvc1"]
+    return args
+
 
 def build_convert_args(
-    src: str, dst: str, *, container: str, codec: str | None = None
+    src: str,
+    dst: str,
+    *,
+    container: str,
+    codec: str | None = None,
+    hwaccel: str | None = None,
 ) -> list[str]:
     """Argv to transcode ``src`` into ``container`` (default codec per container)."""
     container = container.lower().lstrip(".")
     codec_key = codec or CONTAINER_DEFAULT_CODEC.get(container, "h264")
     if codec_key not in VIDEO_CODECS:
         raise ValueError(f"unsupported_video_codec:{codec_key}")
-    encoder, _default_container, audio_encoder = VIDEO_CODECS[codec_key]
-    args = ["-i", _safe_path(src), "-c:v", encoder]
-    if codec_key in ("h264", "h265"):
-        args += ["-crf", "23", "-preset", "medium"]
-        if codec_key == "h265":
-            args += ["-tag:v", "hvc1"]
-    elif codec_key == "vp9":
-        args += ["-crf", "33", "-b:v", "0"]
-    elif codec_key == "av1":
-        args += ["-crf", "35", "-preset", "8"]
+    audio_encoder = VIDEO_CODECS[codec_key][2]
+    defaults: dict[str, tuple[int, str | None]] = {
+        "h264": (23, "medium"),
+        "h265": (23, "medium"),
+        "vp9": (33, None),
+        "av1": (35, "8"),
+    }
+    crf, speed_preset = defaults[codec_key]
+    args = ["-i", _safe_path(src)]
+    args += _video_encoder_args(codec_key, crf=crf, speed_preset=speed_preset, hwaccel=hwaccel)
     args += ["-c:a", audio_encoder, "-b:a", "128k"]
     if container in ("mp4", "mov"):
         args += ["-movflags", "+faststart"]
@@ -226,7 +292,13 @@ def build_convert_args(
 
 
 def build_compress_args(
-    src: str, dst: str, *, preset: str, codec: str, crf: int | None = None
+    src: str,
+    dst: str,
+    *,
+    preset: str,
+    codec: str,
+    crf: int | None = None,
+    hwaccel: str | None = None,
 ) -> list[str]:
     """Argv to compress ``src`` using a preset/codec, optional CRF override."""
     if preset not in VIDEO_COMPRESS_PRESETS:
@@ -234,15 +306,13 @@ def build_compress_args(
     if codec not in VIDEO_CODECS:
         raise ValueError(f"unsupported_video_codec:{codec}")
     knobs = VIDEO_COMPRESS_PRESETS[preset][codec]
-    encoder, _container, audio_encoder = VIDEO_CODECS[codec]
+    audio_encoder = VIDEO_CODECS[codec][2]
     effective_crf = crf if crf is not None else int(knobs["crf"])
-    args = ["-i", _safe_path(src), "-c:v", encoder, "-crf", str(effective_crf)]
-    if "preset" in knobs:
-        args += ["-preset", str(knobs["preset"])]
-    if codec == "vp9":
-        args += ["-b:v", "0"]
-    if codec == "h265":
-        args += ["-tag:v", "hvc1"]
+    speed_preset = str(knobs["preset"]) if "preset" in knobs else None
+    args = ["-i", _safe_path(src)]
+    args += _video_encoder_args(
+        codec, crf=effective_crf, speed_preset=speed_preset, hwaccel=hwaccel
+    )
     if preset == "tiny":
         # Cap the long edge; -2 keeps the other dimension even for the encoder.
         args += ["-vf", "scale='min(1280,iw)':-2"]

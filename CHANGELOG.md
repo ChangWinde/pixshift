@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- Opt-in hardware-accelerated video encoding: `video convert` / `video
+  compress` accept `--hwaccel videotoolbox|nvenc|qsv` (h264/h265 families),
+  translating CRF-style quality onto each backend's knobs; unsupported
+  combinations fail with stable `unsupported_hwaccel:*` errors.
+- `docs/COMMANDS.md` now documents the whole `video` command group.
+
 ## [1.2.0] - 2026-08-12
 
 ### Removed
