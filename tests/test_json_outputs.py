@@ -174,8 +174,6 @@ def test_formats_json_output():
         "pdf_extract_dpi": 150,
         "pdf_merge_margin": 20,
         "strip_mode": "privacy",
-        "watch_format": "webp",
-        "watch_quality": "high",
         "watermark_font_size": "auto",
     }
 

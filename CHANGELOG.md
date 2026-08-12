@@ -4,7 +4,19 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Removed
+
+- **Breaking:** the `watch` command. Long-running directory watching conflicts
+  with the deterministic one-shot design; schedule `pixshift convert` with
+  cron/launchd instead (ADR-0004).
+
 ### Added
+
+- `resize`: first-class same-format batch resizing (`--size`, `--percent`,
+  `--max-size`) with `_resized` derivatives.
+- `rotate`: clockwise rotation and mirroring with EXIF orientation normalized
+  exactly once, producing `_rotated` derivatives.
+- `pdf split`: split a PDF into per-page documents or one sub-range document.
 
 - Forge commit convention (`[scope/op]: title`) documented in CONTRIBUTING and
   enforced via a `commit-msg` pre-commit hook, a CI check on pull-request

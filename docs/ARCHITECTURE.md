@@ -33,8 +33,8 @@ reimplement path, deletion, or metadata safety decisions.
 ## Product Surface
 
 The primary workflows are `convert`, `compress`, `strip`, and `dedup`. Focused
-utilities (`compare`, `crop`, `watermark`, `montage`, `optimize`, `watch`, and the
-`pdf` group) stay independent so users do not need to configure a large pipeline
+utilities (`compare`, `crop`, `resize`, `rotate`, `watermark`, `montage`,
+`optimize`, and the `pdf` group) stay independent so users do not need to configure a large pipeline
 for a single operation. Root help intentionally stays compact; detailed options
 live under each command.
 

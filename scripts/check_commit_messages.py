@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 
 SUBJECT_PATTERN = re.compile(
-    r"^\[[a-z0-9-]+/(feat|fix|refactor|test|docs|chore|perf|style|ci|build|revert)\]!?: \S.*$"
+    r"^\[[a-z0-9-]+/(feat|fix|refactor|test|docs|chore|perf|style|ci|build|revert)!?\]: \S.*$"
 )
 MAX_SUBJECT_LENGTH = 72
 EXEMPT_PREFIXES = ("Merge ",)

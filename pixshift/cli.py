@@ -16,6 +16,7 @@ from .commands.agent_commands import register_agent_commands
 from .commands.convert_command import register_convert_command
 from .commands.pdf_commands import register_pdf_commands
 from .commands.system_commands import register_system_commands
+from .commands.transform_commands import register_transform_commands
 from .commands.workflow_commands import register_workflow_commands
 from .converter import _human_size
 from .logo import MINI_LOGO, get_banner
@@ -163,6 +164,12 @@ register_advanced_commands(
     human_size=_human_size,
 )
 register_agent_commands(
+    cli_group=cli,
+    console=console,
+    mini_logo=MINI_LOGO,
+    human_size=_human_size,
+)
+register_transform_commands(
     cli_group=cli,
     console=console,
     mini_logo=MINI_LOGO,

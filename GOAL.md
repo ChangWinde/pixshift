@@ -20,13 +20,16 @@ Trusted-publishing workflow is in place behind the `pypi` environment.
 
 Next frontier, in order:
 
-1. Merge PR #11.
+1. Merge PR #18 (feature surface audit: remove watch; add resize, rotate,
+   pdf split).
 2. One-time PyPI setup: trusted publisher (owner `ChangWinde`, repo `pixshift`,
    workflow `release.yml`, environment `pypi`) plus the GitHub `pypi`
    environment, then tag `v1.2.0` (see `docs/RELEASING.md`).
-3. Coverage climb toward 80% (watch_engine and watermark_engine are the
-   thinnest areas).
+3. Coverage climb toward 80% (currently 76%; the thinnest areas are the
+   command layers - agent, pdf, workflow - and `ops/apply`).
 4. MkDocs documentation site.
+5. Animated-image transforms (GIF/APNG to animated WebP) - the largest
+   remaining daily-workflow gap (ADR-0004).
 
 ## Milestones
 

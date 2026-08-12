@@ -82,6 +82,20 @@ TOOL_CATALOG: list[ToolEntry] = [
         "annotations": _ann(read_only=False, destructive=False, idempotent=True),
     },
     {
+        "name": "resize",
+        "description": "Resize images keeping their format (WxH, percent, or bounded).",
+        "when_to_use": "Change dimensions without changing container format.",
+        "input_summary": "paths; --size WxH | --percent P | --max-size N; -r; --json",
+        "annotations": _ann(read_only=False, destructive=False, idempotent=True),
+    },
+    {
+        "name": "rotate",
+        "description": "Rotate clockwise (90/180/270) or mirror still images.",
+        "when_to_use": "Fix orientation or mirror images in batch.",
+        "input_summary": "paths; --degrees 90|180|270; --flip horizontal|vertical; --json",
+        "annotations": _ann(read_only=False, destructive=False, idempotent=True),
+    },
+    {
         "name": "watermark",
         "description": "Add text or image watermarks.",
         "when_to_use": "Brand or mark ownership on still images.",
@@ -101,13 +115,6 @@ TOOL_CATALOG: list[ToolEntry] = [
         "when_to_use": "Decide convert/compress next steps for agents.",
         "input_summary": "paths; -r; --json",
         "annotations": _ann(read_only=True, destructive=False, idempotent=True),
-    },
-    {
-        "name": "watch",
-        "description": "Watch a directory and auto-convert new images.",
-        "when_to_use": "Continuous ingest folders; use --once for agents.",
-        "input_summary": "dir; -t format; --once; --json",
-        "annotations": _ann(read_only=False, destructive=False, idempotent=True),
     },
     {
         "name": "info",
@@ -156,6 +163,13 @@ TOOL_CATALOG: list[ToolEntry] = [
         "description": "Concatenate multiple PDFs.",
         "when_to_use": "Join PDF documents in order.",
         "input_summary": "pdfs; -o output; --json",
+        "annotations": _ann(read_only=False, destructive=False, idempotent=True),
+    },
+    {
+        "name": "pdf.split",
+        "description": "Split a PDF into per-page documents or one sub-range document.",
+        "when_to_use": "Extract pages as standalone PDFs.",
+        "input_summary": "pdf; -o dir; optional --pages '1-5,8'; --single; --json",
         "annotations": _ann(read_only=False, destructive=False, idempotent=True),
     },
     {

@@ -19,7 +19,6 @@ from pixshift.crop_engine import crop_single
 from pixshift.dedup_engine import _cluster_by_hash, delete_duplicates, find_duplicates
 from pixshift.montage_engine import create_montage
 from pixshift.optimize_engine import analyze_image
-from pixshift.watch_engine import DirectoryWatcher, WatchConfig
 from pixshift.watermark_engine import add_text_watermark
 
 
@@ -457,48 +456,6 @@ def test_runtime_input_formats_exclude_save_only_and_stub_handlers() -> None:
     assert ".grib" not in SUPPORTED_INPUT_FORMATS
     assert ".h5" not in SUPPORTED_INPUT_FORMATS
     assert ".mpeg" not in SUPPORTED_INPUT_FORMATS
-
-
-def test_recursive_watch_excludes_its_output_tree(tmp_path: Path) -> None:
-    source = tmp_path / "source.png"
-    generated = tmp_path / "converted" / "generated.png"
-    generated.parent.mkdir()
-    Image.new("RGB", (4, 4), "red").save(source)
-    Image.new("RGB", (4, 4), "blue").save(generated)
-    watcher = DirectoryWatcher(
-        WatchConfig(
-            watch_dir=str(tmp_path),
-            output_dir=str(generated.parent),
-            recursive=True,
-        )
-    )
-
-    assert watcher._scan_directory() == [str(source.resolve())]
-
-
-def test_recursive_watch_preserves_relative_paths_for_same_named_files(tmp_path: Path) -> None:
-    first = tmp_path / "first" / "same.png"
-    second = tmp_path / "second" / "same.png"
-    first.parent.mkdir()
-    second.parent.mkdir()
-    Image.new("RGB", (4, 4), "red").save(first)
-    Image.new("RGB", (4, 4), "blue").save(second)
-    output = tmp_path / "converted"
-    watcher = DirectoryWatcher(
-        WatchConfig(
-            watch_dir=str(tmp_path),
-            output_dir=str(output),
-            output_format="png",
-            recursive=True,
-            overwrite=True,
-        )
-    )
-
-    watcher._process_file(str(first))
-    watcher._process_file(str(second))
-
-    assert (output / "first" / "same.png").is_file()
-    assert (output / "second" / "same.png").is_file()
 
 
 def test_doctor_json_fails_only_for_required_checks(monkeypatch) -> None:

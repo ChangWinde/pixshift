@@ -11,6 +11,7 @@ from ..pdf_engine import (
     pdf_extract_pages,
     pdf_get_info,
     pdf_merge_images,
+    pdf_split,
 )
 
 
@@ -98,3 +99,20 @@ def concat(pdf_paths: list[str], output_path: str, overwrite: bool) -> PDFResult
 def info(pdf_path: str) -> PDFInfo:
     """Read PDF information."""
     return pdf_get_info(pdf_path)
+
+
+def split(
+    pdf_path: str,
+    output_dir: str,
+    pages: str | None,
+    single: bool,
+    overwrite: bool,
+) -> PDFResult:
+    """Split a PDF into separate documents."""
+    return pdf_split(
+        pdf_path=pdf_path,
+        output_dir=output_dir,
+        pages=pages,
+        single=single,
+        overwrite=overwrite,
+    )

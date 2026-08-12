@@ -164,6 +164,79 @@ def register_pdf_commands(
             raise click.exceptions.Exit(1)
         console.print()
 
+    @pdf.command("split")
+    @click.argument(
+        "pdf_file", type=click.Path(exists=True, file_okay=True, dir_okay=False, readable=True)
+    )
+    @click.option(
+        "-o", "--output", "output_dir", required=True, type=click.Path(), help="[必填] 输出目录路径"
+    )
+    @click.option("--pages", default=None, type=str, help="指定页码, 如 '1-5,8'；默认全部")
+    @click.option(
+        "--single", is_flag=True, default=False, help="所选页合并输出为一个 PDF（默认每页一个）"
+    )
+    @click.option("--overwrite", is_flag=True, default=False, help="覆盖已存在输出文件")
+    @click.option("--json", "as_json", is_flag=True, default=False, help="以 JSON 输出结果")
+    def pdf_split_cmd(
+        pdf_file: str,
+        output_dir: str,
+        pages: str | None,
+        single: bool,
+        overwrite: bool,
+        as_json: bool,
+    ) -> None:
+        """将 PDF 拆分为独立的 PDF 文件。"""
+        _require_pdf("pdf.split", as_json)
+
+        result = pdf_ops.split(
+            pdf_path=pdf_file,
+            output_dir=output_dir,
+            pages=pages,
+            single=single,
+            overwrite=overwrite,
+        )
+
+        if as_json:
+            payload = {
+                "command": "pdf.split",
+                "ok": result.success,
+                "input": pdf_file,
+                "output_dir": output_dir,
+                "mode": "single" if single else "each",
+                "total_pages": result.details.get("total_pages"),
+                "requested_pages": result.details.get("requested_pages"),
+                "written_files": result.details.get("written_files", 0),
+                "skipped_existing": result.details.get("skipped_existing", 0),
+                "input_bytes": result.input_size,
+                "output_bytes": result.output_size,
+                "duration_sec": round(result.duration, 4),
+                "error": result.error or "",
+            }
+            if not result.success:
+                emit_json_and_exit(payload, 1)
+            emit_json(payload)
+            return
+
+        console.print(f"\n{mini_logo} [bold]PDF 拆分[/bold]\n")
+        if result.success:
+            console.print(
+                Panel(
+                    f"  PDF 总页数: [bold]{result.details.get('total_pages', '?')}[/bold]\n"
+                    f"  选中页数: [bold green]{result.details.get('requested_pages', 0)}[/bold green]\n"
+                    f"  写出文件: [bold green]{result.details.get('written_files', 0)}[/bold green]\n"
+                    f"  跳过已存在: [bold yellow]{result.details.get('skipped_existing', 0)}[/bold yellow]\n"
+                    f"  输出目录: {output_dir}\n"
+                    f"  耗时: [bold]{result.duration:.2f} 秒[/bold]",
+                    title="[bold]PDF 拆分完成[/bold]",
+                    border_style="green",
+                    box=box.ROUNDED,
+                )
+            )
+        else:
+            console.print(f"[red]PDF 拆分失败: {result.error}[/red]")
+            raise click.exceptions.Exit(1)
+        console.print()
+
     @pdf.command("extract")
     @click.argument(
         "pdf_file", type=click.Path(exists=True, file_okay=True, dir_okay=False, readable=True)

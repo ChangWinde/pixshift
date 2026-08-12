@@ -439,6 +439,84 @@ def pdf_extract_pages(
     return result
 
 
+def pdf_split(
+    pdf_path: str,
+    output_dir: str,
+    pages: str | None = None,
+    single: bool = False,
+    overwrite: bool = False,
+) -> PDFResult:
+    """Split a PDF into per-page documents or one sub-range document.
+
+    Args:
+        pdf_path: Input PDF path.
+        output_dir: Destination directory for the split documents.
+        pages: Page selection such as "1-5,8"; None selects every page.
+        single: Write one document containing the selected pages instead of
+            one document per page.
+        overwrite: Replace existing outputs instead of skipping them.
+    """
+    _check_pymupdf()
+    result = PDFResult(output_path=output_dir)
+    start_time = time.time()
+
+    try:
+        result.input_size = os.path.getsize(pdf_path)
+        stem = Path(pdf_path).stem
+        doc = fitz.open(pdf_path)
+        total_pages = doc.page_count
+        page_indices = _parse_page_range(pages, total_pages)
+
+        os.makedirs(output_dir, exist_ok=True)
+
+        written = 0
+        skipped_existing = 0
+        output_total_size = 0
+
+        if single:
+            spec = (pages or f"1-{total_pages}").replace(",", "_").replace(" ", "")
+            out_path = safe_output_path(output_dir, f"{stem}_pages_{spec}.pdf")
+            if os.path.exists(out_path) and not overwrite:
+                skipped_existing += 1
+            else:
+                new_doc = fitz.open()
+                for page_idx in page_indices:
+                    new_doc.insert_pdf(doc, from_page=page_idx, to_page=page_idx)
+                with atomic_output_path(out_path) as temporary:
+                    new_doc.save(temporary)
+                new_doc.close()
+                output_total_size += os.path.getsize(out_path)
+                written += 1
+        else:
+            for page_idx in page_indices:
+                out_path = safe_output_path(output_dir, f"{stem}_page_{page_idx + 1:04d}.pdf")
+                if os.path.exists(out_path) and not overwrite:
+                    skipped_existing += 1
+                    continue
+                new_doc = fitz.open()
+                new_doc.insert_pdf(doc, from_page=page_idx, to_page=page_idx)
+                with atomic_output_path(out_path) as temporary:
+                    new_doc.save(temporary)
+                new_doc.close()
+                output_total_size += os.path.getsize(out_path)
+                written += 1
+
+        doc.close()
+        result.output_size = output_total_size
+        result.page_count = len(page_indices)
+        result.success = True
+        result.details["total_pages"] = total_pages
+        result.details["requested_pages"] = len(page_indices)
+        result.details["written_files"] = written
+        result.details["skipped_existing"] = skipped_existing
+
+    except Exception as e:
+        result.error = str(e)
+
+    result.duration = time.time() - start_time
+    return result
+
+
 def _parse_page_range(pages_str: str | None, total: int) -> list[int]:
     """
     解析页码范围字符串

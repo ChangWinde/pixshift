@@ -35,17 +35,6 @@ def test_convert_defaults_to_high_quality(tmp_path: Path) -> None:
     assert PixShiftConverter().quality == "high"
 
 
-def test_watch_once_reports_balanced_defaults(tmp_path: Path) -> None:
-    Image.new("RGB", (16, 16), "red").save(tmp_path / "source.png")
-
-    result = CliRunner().invoke(cli, ["watch", str(tmp_path), "--once", "--json"])
-
-    assert result.exit_code == 0, result.output
-    payload = json.loads(result.output)
-    assert payload["output_format"] == "webp"
-    assert payload["quality"] == "high"
-
-
 def test_lossless_formats_ignore_lossy_quality_with_warning(tmp_path: Path) -> None:
     source = tmp_path / "source.png"
     output = tmp_path / "output.png"
@@ -149,23 +138,6 @@ def test_batch_commands_are_idempotent_when_outputs_exist(
     assert second.exit_code == 0, second.output
     payload = json.loads(second.output)
     assert payload["ok"] is True
-    assert payload["success"] == 0
-    assert payload["failed"] == 0
-    assert payload["skipped"] == 1
-
-
-def test_watch_once_skips_existing_outputs(tmp_path: Path) -> None:
-    source = tmp_path / "source.png"
-    output = tmp_path / "converted"
-    Image.new("RGB", (16, 16), "red").save(source)
-    argv = ["watch", str(tmp_path), "--once", "--output", str(output), "--json"]
-    runner = CliRunner()
-
-    assert runner.invoke(cli, argv).exit_code == 0
-    repeated = runner.invoke(cli, argv)
-
-    assert repeated.exit_code == 0, repeated.output
-    payload = json.loads(repeated.output)
     assert payload["success"] == 0
     assert payload["failed"] == 0
     assert payload["skipped"] == 1
