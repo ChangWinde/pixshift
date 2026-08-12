@@ -1,6 +1,7 @@
 """Tests for the video CLI command group (ops layer faked; no ffmpeg needed)."""
 
 import json
+from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
@@ -87,7 +88,10 @@ def ffmpeg_ready(monkeypatch):
 
     def fake_run(args, **kwargs):
         calls.append(list(args))
-        if any("bad" in str(part) for part in args):
+        # Trigger on the input file's own name only: temp output paths embed
+        # a uuid4 hex which can spell "bad" by chance and must not match.
+        source = args[args.index("-i") + 1]
+        if Path(source).name.startswith("bad"):
             return 1, "boom"
         with open(args[-1], "wb") as handle:
             handle.write(b"encoded-output")
