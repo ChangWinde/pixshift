@@ -28,11 +28,11 @@ Next frontier, in order:
 
 1. Release `v1.2.0` — maintainer web steps: PyPI trusted publisher + `pypi`
    environment, enable Pages (Source: GitHub Actions), then tag and push
-   `v1.2.0` (see `docs/RELEASING.md`).
-2. Animated-image transforms (GIF/APNG to animated WebP) — the image-to-video
-   bridge (ADR-0004 gap, ADR-0005 scope).
-3. Deferred audit P2/P3 items (error-code unification, JSON contract polish,
-   PDF merge byte-splice performance, terminal UI consistency).
+   `v1.2.0` (see `docs/RELEASING.md`). The animated-image and pdf-merge work
+   that landed after the release commit ships in `v1.3.0`.
+2. Remaining audit P2/P3 items: error-code/exit-code unification (B2), JSON
+   contract polish (B5), `pdf compress` soft-mask short-circuit (C, ~5.6x),
+   terminal UI consistency (B4).
 
 ## Milestones
 
@@ -47,6 +47,7 @@ Next frontier, in order:
 | M6 | Video pillar MVP: `video info/convert/compress/trim/thumbnail/extract-audio/gif`; ffmpeg in `doctor`; catalog + tests (ADR-0005) | COMPLETE |
 | M7 | Video plan loop: probe-driven `optimize`, `apply` for `video.*`/`keep`; coverage 82% (gate 78) | COMPLETE |
 | M8 | Release readiness: `--hwaccel` opt-in, video command docs, MkDocs site + Pages workflow, v1.2.0 release commit | COMPLETE |
+| M9 | Animated-image transforms (frames preserved through convert/resize/optimize) + pdf merge JPEG byte-splice (4.3x, metadata-clean) | COMPLETE |
 
 ## In Scope
 
