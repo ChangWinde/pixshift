@@ -177,7 +177,7 @@ def test_hash_matches_hashlib(tmp_path):
     assert payload["algorithm"] == "sha256"
     entry = payload["files"][0]
     assert entry["digest"] == hashlib.sha256(src.read_bytes()).hexdigest()
-    assert entry["bytes"] == src.stat().st_size
+    assert entry["size_bytes"] == src.stat().st_size
 
 
 def test_hash_all_files_includes_non_media(tmp_path):

@@ -282,7 +282,7 @@ def register_convert_command(
                                 "output": out,
                                 "action": "skip_existing" if out in skipped_outputs else "convert",
                             }
-                            for inp, out in all_tasks[:50]
+                            for inp, out in all_tasks
                         ],
                     }
                 )

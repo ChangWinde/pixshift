@@ -13,11 +13,11 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["path", "sha256", "bytes", "format", "sensitive_exif_keys", "error"],
+        "required": ["path", "sha256", "size_bytes", "format", "sensitive_exif_keys", "error"],
         "properties": {
           "path": {"type": "string"},
           "sha256": {"type": "string", "pattern": "^$|^[0-9a-f]{64}$"},
-          "bytes": {"type": "integer", "minimum": 0},
+          "size_bytes": {"type": "integer", "minimum": 0},
           "format": {"type": "string"},
           "width": {"type": ["integer", "null"]},
           "height": {"type": ["integer", "null"]},

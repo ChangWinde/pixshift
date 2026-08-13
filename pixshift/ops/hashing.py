@@ -70,7 +70,7 @@ def hash_payload(result: HashResult) -> list[dict[str, Any]]:
             "path": item.path,
             "algorithm": item.algorithm,
             "digest": item.digest,
-            "bytes": item.bytes,
+            "size_bytes": item.bytes,
             "error": item.error,
         }
         for item in result.items

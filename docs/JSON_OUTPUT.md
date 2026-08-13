@@ -5,9 +5,18 @@ PixShift provides stable JSON output for automation with the `--json` flag.
 Formal JSON Schema files for the envelope and command payloads live in
 `docs/schemas/v1/` and are validated against live command output in CI.
 Fields are additive under a given `schema_version`; removing or retyping a
-documented field requires a version bump. The current version is `"1.1"`:
-it retyped the batch commands' `errors` arrays from `"name: code"` strings
-to `{"input", "output", "error"}` objects with full input paths.
+documented field requires a version bump. The current version is `"1.1"`,
+which made four changes:
+
+- batch commands' `errors` arrays are `{"input", "output", "error"}` objects
+  with full input paths instead of `"name: code"` strings;
+- `manifest` / `hash` per-file entries report `size_bytes` (was `bytes`),
+  matching `info` and `video info`;
+- `optimize` estimates carry a stable `format` token (convert's `-t`
+  vocabulary or a video codec key) plus a human `label` (the old display
+  string that previously occupied `format`);
+- dry-run `preview` arrays list every task (previously silently truncated to
+  50) and strip's preview entries use `input` (was `file`).
 
 ## Exit Codes
 
@@ -182,7 +191,8 @@ Delete dry-run mode (`--delete --dry-run`):
 - `results[*].recommended_reason`
 - `results[*].analysis` (images: dimensions, sampling basis, alpha and
   classification reason; videos: codec, duration, dimensions, bits per pixel)
-- `results[*].estimates` (format, estimated bytes, ratio and quality properties)
+- `results[*].estimates` (`format` stable token, `label` display string,
+  estimated bytes, ratio and quality properties)
 - `results[*].plan.command` (`convert`, `compress`, `strip`, `video.convert`,
   `video.compress`, or `keep`; empty object on per-file errors)
 - `results[*].plan.arguments` (structured CLI option values)
@@ -220,13 +230,13 @@ explicit skip.
 ### `manifest --json`
 
 - `total`
-- `files` (array of `path`, `sha256`, `bytes`, `format`, `width`, `height`,
+- `files` (array of `path`, `sha256`, `size_bytes`, `format`, `width`, `height`,
   `mode`, `has_alpha`, `frame_count`, `sensitive_exif_keys`, `error`)
 
 ### `hash --json`
 
 - `total`, `algorithm`
-- `files` (array of `path`, `algorithm`, `digest`, `bytes`, `error`)
+- `files` (array of `path`, `algorithm`, `digest`, `size_bytes`, `error`)
 
 ## Transform Command Payloads
 

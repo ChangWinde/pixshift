@@ -37,6 +37,7 @@ class FormatEstimate:
     """单个格式的预估结果"""
 
     format_name: str = ""
+    format_key: str = ""  # stable machine token matching convert's -t vocabulary
     estimated_size: int = 0
     estimated_size_human: str = ""
     compression_ratio: float = 0.0  # 相对原始大小的比例
@@ -223,6 +224,7 @@ def analyze_image(input_path: str) -> OptimizeResult:
                     result.estimate_scale,
                 )
                 est.format_name = f"JPEG (q={q})"
+                est.format_key = "jpg"
                 est.compression_ratio = (
                     est.estimated_size / result.input_size if result.input_size > 0 else 0
                 )
@@ -239,6 +241,7 @@ def analyze_image(input_path: str) -> OptimizeResult:
             result.estimate_scale,
         )
         est.format_name = "PNG"
+        est.format_key = "png"
         est.compression_ratio = (
             est.estimated_size / result.input_size if result.input_size > 0 else 0
         )
@@ -255,6 +258,7 @@ def analyze_image(input_path: str) -> OptimizeResult:
             result.estimate_scale,
         )
         est.format_name = "WebP (q=90)"
+        est.format_key = "webp"
         est.compression_ratio = (
             est.estimated_size / result.input_size if result.input_size > 0 else 0
         )
@@ -271,6 +275,7 @@ def analyze_image(input_path: str) -> OptimizeResult:
             result.estimate_scale,
         )
         est.format_name = "WebP (无损)"
+        est.format_key = "webp"
         est.compression_ratio = (
             est.estimated_size / result.input_size if result.input_size > 0 else 0
         )
@@ -288,6 +293,7 @@ def analyze_image(input_path: str) -> OptimizeResult:
                 result.estimate_scale,
             )
             est.format_name = "AVIF (q=90)"
+            est.format_key = "avif"
             est.compression_ratio = (
                 est.estimated_size / result.input_size if result.input_size > 0 else 0
             )

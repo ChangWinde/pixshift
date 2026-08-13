@@ -198,7 +198,7 @@ def register_workflow_commands(
                                 "output": out,
                                 "action": "skip_existing" if out in skipped_outputs else "compress",
                             }
-                            for inp, out in all_tasks[:50]
+                            for inp, out in all_tasks
                         ],
                     }
                 )
@@ -387,12 +387,12 @@ def register_workflow_commands(
         if dry_run:
             preview: list[dict[str, Any]] = []
             skipped_outputs = {output for _, output in skipped_tasks}
-            for file_path, output_path in all_tasks[:50]:
+            for file_path, output_path in all_tasks:
                 meta = strip_ops.analyze_one(file_path)
 
                 preview.append(
                     {
-                        "file": file_path,
+                        "input": file_path,
                         "has_exif": bool(meta.get("has_exif")),
                         "has_gps": bool(meta.get("has_gps")),
                         "output": output_path,
@@ -418,10 +418,10 @@ def register_workflow_commands(
                 table.add_column("文件", style="cyan")
                 table.add_column("EXIF", style="yellow")
                 table.add_column("GPS", style="magenta")
-                for idx, item in enumerate(preview, 1):
+                for idx, item in enumerate(preview[:50], 1):
                     table.add_row(
                         str(idx),
-                        os.path.basename(item["file"]),
+                        os.path.basename(item["input"]),
                         "yes" if item["has_exif"] else "no",
                         "yes" if item["has_gps"] else "no",
                     )

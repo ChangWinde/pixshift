@@ -91,7 +91,7 @@ def inventory_payload(result: InventoryResult) -> list[dict[str, Any]]:
         {
             "path": item.path,
             "sha256": item.sha256,
-            "bytes": item.bytes,
+            "size_bytes": item.bytes,
             "format": item.format,
             "width": item.width,
             "height": item.height,
