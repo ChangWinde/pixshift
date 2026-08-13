@@ -241,6 +241,17 @@ def build_corpus(root: Path, rng: random.Random, image_budget: int) -> dict[str,
         _noise_image(rng, (60, 40)).convert("CMYK").save(str(path), format="JPEG")
         groups["cmyk"].append(path)
 
+    try:
+        import pillow_heif
+
+        pillow_heif.register_heif_opener()
+        for index in range(3):
+            path = root / "photos" / f"phone_{index}.heic"
+            _noise_image(rng, (80, 60)).save(str(path), format="HEIF", quality=70)
+            groups["photos"].append(path)
+    except Exception:
+        pass  # HEIF encoder unavailable in this environment; skip the format
+
     broken = root / "broken"
     broken.mkdir()
     text_png = broken / "not_an_image.png"
@@ -640,13 +651,115 @@ def main() -> int:
     if snapshot(root) != before:
         sweep.violation("usage", "usage rejections changed the filesystem")
 
-    # -------- phase 10: video contract without ffmpeg --------
-    if shutil.which("ffmpeg") is None:
+    # -------- phase 10: the video pillar (real ffmpeg when present) --------
+    if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
         fake_clip = root / "clip.mp4"
         fake_clip.write_bytes(b"not a real container")
         code, payload = sweep.run_json("video", "video", "info", str(fake_clip), expect_exit=1)
         if payload.get("error") != "ffmpeg_missing":
             sweep.violation("video", f"expected ffmpeg_missing, got {payload.get('error')}")
+    else:
+        vids = root / "vids"
+        vids.mkdir()
+
+        def _clip(name: str, *, size: str, duration: float, crf: int, audio: bool) -> Path:
+            path = vids / name
+            args = [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                f"testsrc2=size={size}:rate=24:duration={duration}",
+            ]
+            if audio:
+                args += [
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    f"sine=frequency=330:duration={duration}",
+                    "-c:a",
+                    "aac",
+                    "-b:a",
+                    "96k",
+                    "-shortest",
+                ]
+            args += ["-c:v", "libx264", "-preset", "veryfast", "-crf", str(crf), str(path)]
+            subprocess.run(args, check=True, capture_output=True)
+            return path
+
+        first = _clip("part1.mp4", size="320x240", duration=2.0, crf=23, audio=True)
+        second = _clip("part2.mp4", size="320x240", duration=2.0, crf=23, audio=True)
+        odd = _clip("odd.mp4", size="160x120", duration=1.0, crf=23, audio=False)
+        rich = _clip("rich.mp4", size="640x480", duration=4.0, crf=10, audio=True)
+
+        sweep.run_json("video", "video", "info", str(first), str(odd), expect_exit=0)
+
+        video_budget = int(rich.stat().st_size * 0.5)
+        code, _fitted = sweep.run_json(
+            "video",
+            "video",
+            "compress",
+            str(rich),
+            "--target-size",
+            str(video_budget),
+            "-o",
+            str(vids / "fit"),
+            expect_exit=0,
+        )
+        produced = next((vids / "fit").glob("*.mp4"), None)
+        if produced is None or produced.stat().st_size > video_budget:
+            sweep.violation("video", "target-size output missing or over budget")
+
+        joined = vids / "joined.mp4"
+        sweep.run_json(
+            "video",
+            "video",
+            "concat",
+            str(first),
+            str(second),
+            "-o",
+            str(joined),
+            expect_exit=0,
+        )
+        code, info = sweep.run_json("video", "video", "info", str(joined), expect_exit=0)
+        joined_duration = info.get("files", [{}])[0].get("duration_sec", 0)
+        if not 3.4 <= joined_duration <= 4.6:
+            sweep.violation("video", f"concat duration {joined_duration} not ~4s")
+
+        code, mismatch = sweep.run_json(
+            "video",
+            "video",
+            "concat",
+            str(first),
+            str(odd),
+            "-o",
+            str(vids / "no.mp4"),
+            expect_exit=1,
+        )
+        if mismatch.get("error") != "concat_requires_matching_streams":
+            sweep.violation("video", f"mismatched concat gave {mismatch.get('error')}")
+
+        code, planned = sweep.run_json("video", "optimize", str(vids / "rich.mp4"), expect_exit=0)
+        plan_cmd = planned.get("results", [{}])[0].get("plan", {}).get("command")
+        if plan_cmd in ("video.compress", "video.convert"):
+            code, applied_video = sweep.run_json(
+                "video",
+                "apply",
+                "--plan",
+                "-",
+                "-o",
+                str(vids / "applied"),
+                stdin=json.dumps(planned),
+                expect_exit=0,
+            )
+            for step in applied_video.get("steps", []):
+                produced_step = step["ok"] and not step["skipped"] and step["output"]
+                if produced_step and not Path(step["output"]).is_file():
+                    sweep.violation("video", f"applied output missing: {step['output']}")
 
     elapsed = time.time() - started
     print(
