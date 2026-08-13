@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file.
 
 ## [1.3.0] - 2026-08-13
 
+### Fixed
+
+- Non-finite numeric inputs are rejected across the video contracts:
+  `"inf"`/`"nan"` timecodes raise `invalid_timecode` instead of flowing into
+  ffmpeg arguments, malformed ffprobe frame rates and durations degrade to
+  "no signal" instead of crashing `optimize` size estimates (previously an
+  `OverflowError`) or serializing invalid JSON (`Infinity`).
+
 ### Added
 
 - Animated-image transforms (the ADR-0004 gap): `convert` and `resize`

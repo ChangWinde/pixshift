@@ -15,6 +15,7 @@ interpolate validated numbers, and ffprobe/ffmpeg run with a timeout and
 from __future__ import annotations
 
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -178,7 +179,9 @@ def parse_timecode(value: str) -> float:
         numbers = [float(part) for part in parts]
     except ValueError as error:
         raise ValueError("invalid_timecode") from error
-    if any(number < 0 for number in numbers):
+    # Reject negatives and non-finite values ("inf"/"nan" parse as floats but
+    # would otherwise flow into ffmpeg arguments as literal inf/nan).
+    if any(number < 0 or not math.isfinite(number) for number in numbers):
         raise ValueError("invalid_timecode")
     seconds = 0.0
     for number in numbers:
@@ -481,8 +484,10 @@ class VideoOptimizeResult:
 
 
 def _pixel_rate(info: VideoInfo) -> float:
-    """Pixels encoded per second, or 0 when the probe lacks a signal."""
+    """Pixels encoded per second, or 0 when the probe lacks a usable signal."""
     if info.width <= 0 or info.height <= 0 or info.fps <= 0:
+        return 0.0
+    if not math.isfinite(info.fps):
         return 0.0
     return float(info.width * info.height) * info.fps
 
@@ -490,7 +495,7 @@ def _pixel_rate(info: VideoInfo) -> float:
 def _estimate_video_bytes(info: VideoInfo, target_codec: str) -> int:
     """Deterministic size estimate for a re-encode at the target's web CRF."""
     pixel_rate = _pixel_rate(info)
-    if pixel_rate <= 0 or info.duration_sec <= 0:
+    if pixel_rate <= 0 or info.duration_sec <= 0 or not math.isfinite(info.duration_sec):
         return 0
     video_bps = TARGET_BPP[target_codec] * pixel_rate
     audio_bps = _AUDIO_ESTIMATE_BPS if info.audio_codec else 0.0
@@ -598,13 +603,15 @@ def _ffprobe_fps(rate: str) -> float:
         num, _, den = rate.partition("/")
         try:
             denominator = float(den)
-            return float(num) / denominator if denominator else 0.0
+            value = float(num) / denominator if denominator else 0.0
+        except (ValueError, OverflowError):
+            return 0.0
+    else:
+        try:
+            value = float(rate)
         except ValueError:
             return 0.0
-    try:
-        return float(rate)
-    except ValueError:
-        return 0.0
+    return value if math.isfinite(value) and value >= 0 else 0.0
 
 
 def probe(path: str) -> VideoInfo:
@@ -653,6 +660,10 @@ def probe(path: str) -> VideoInfo:
     try:
         info.duration_sec = float(container_format.get("duration", 0.0))
     except (TypeError, ValueError):
+        info.duration_sec = 0.0
+    if not math.isfinite(info.duration_sec) or info.duration_sec < 0:
+        # Non-finite durations would crash size estimates and serialize as
+        # invalid JSON (Infinity); treat them as "no signal".
         info.duration_sec = 0.0
     try:
         info.bit_rate = int(container_format.get("bit_rate", 0))
