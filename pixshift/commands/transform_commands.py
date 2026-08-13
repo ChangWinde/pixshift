@@ -23,6 +23,7 @@ from ..core.files import (
     plan_output_path,
 )
 from ..ops import transform as transform_ops
+from ..presenters.cli_presenters import batch_progress
 from ..presenters.json_presenters import emit_json, emit_json_and_exit
 from .common import failure_entry, usage_error_or_exit, validate_tasks_or_exit
 
@@ -202,15 +203,18 @@ def register_transform_commands(
         input_bytes = 0
         output_bytes = 0
         success = 0
-        for inp, out in tasks:
-            result = transform_ops.resize_one(inp, out, converter_kwargs)
-            results.append((inp, out, result))
-            if result.success:
-                success += 1
-                input_bytes += result.input_size
-                output_bytes += result.output_size
-            else:
-                errors.append(failure_entry(inp, result.error, out))
+        with batch_progress(console, disable=as_json) as progress:
+            task_id = progress.add_task("缩放中", total=len(tasks))
+            for inp, out in tasks:
+                result = transform_ops.resize_one(inp, out, converter_kwargs)
+                results.append((inp, out, result))
+                if result.success:
+                    success += 1
+                    input_bytes += result.input_size
+                    output_bytes += result.output_size
+                else:
+                    errors.append(failure_entry(inp, result.error, out))
+                progress.advance(task_id)
 
         payload = {
             "command": "resize",
@@ -246,8 +250,9 @@ def register_transform_commands(
                 "[green]完成[/green]" if result.success else f"[red]{result.error}[/red]",
             )
         console.print(table)
-        if skipped_tasks:
-            console.print(f"[dim]  {len(skipped_tasks)} 个已有输出跳过[/dim]")
+        if len(results) > 50:
+            console.print(f"[dim]... 还有 {len(results) - 50} 个文件[/dim]")
+        console.print(f"\n成功 {success} · 跳过 {len(skipped_tasks)} · 失败 {len(errors)}")
         console.print()
         if errors:
             raise click.exceptions.Exit(1)
@@ -328,13 +333,18 @@ def register_transform_commands(
         results = []
         errors: list[dict[str, str]] = []
         success = 0
-        for inp, out in tasks:
-            result = transform_ops.rotate_one(inp, out, degrees=degrees, flip=flip, overwrite=True)
-            results.append((inp, out, result))
-            if result.success:
-                success += 1
-            else:
-                errors.append(failure_entry(inp, result.error, out))
+        with batch_progress(console, disable=as_json) as progress:
+            task_id = progress.add_task("旋转中", total=len(tasks))
+            for inp, out in tasks:
+                result = transform_ops.rotate_one(
+                    inp, out, degrees=degrees, flip=flip, overwrite=True
+                )
+                results.append((inp, out, result))
+                if result.success:
+                    success += 1
+                else:
+                    errors.append(failure_entry(inp, result.error, out))
+                progress.advance(task_id)
 
         payload = {
             "command": "rotate",
@@ -367,8 +377,9 @@ def register_transform_commands(
                 "[green]完成[/green]" if result.success else f"[red]{result.error}[/red]",
             )
         console.print(table)
-        if skipped_tasks:
-            console.print(f"[dim]  {len(skipped_tasks)} 个已有输出跳过[/dim]")
+        if len(results) > 50:
+            console.print(f"[dim]... 还有 {len(results) - 50} 个文件[/dim]")
+        console.print(f"\n成功 {success} · 跳过 {len(skipped_tasks)} · 失败 {len(errors)}")
         console.print()
         if errors:
             raise click.exceptions.Exit(1)
