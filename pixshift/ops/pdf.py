@@ -7,6 +7,7 @@ from ..pdf_engine import (
     _collect_images,
     _collect_pdfs,
     pdf_compress,
+    pdf_compress_to_target,
     pdf_concat,
     pdf_extract_pages,
     pdf_get_info,
@@ -86,6 +87,23 @@ def compress(
         output_path=output_path,
         preset=preset,
         image_quality=image_quality,
+        max_image_dpi=max_image_dpi,
+        overwrite=overwrite,
+    )
+
+
+def compress_to_target(
+    input_path: str,
+    output_path: str,
+    target_size: int,
+    max_image_dpi: int | None,
+    overwrite: bool,
+) -> PDFResult:
+    """Compress one PDF to fit under a byte budget at the best quality."""
+    return pdf_compress_to_target(
+        input_path=input_path,
+        output_path=output_path,
+        target_size=target_size,
         max_image_dpi=max_image_dpi,
         overwrite=overwrite,
     )

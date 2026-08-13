@@ -195,7 +195,8 @@ pixshift doctor [--json]
 ```bash
 pixshift pdf merge INPUTS... -o out.pdf [--json]
 pixshift pdf extract input.pdf -o out_dir [--json]
-pixshift pdf compress input.pdf [-o out.pdf] [--json]
+pixshift pdf compress input.pdf [-p preset | --target-size 2MB] [--max-dpi N] \
+  [-o out.pdf] [--json]
 pixshift pdf concat INPUTS... -o out.pdf [--json]
 pixshift pdf info input.pdf [--pages] [--json]
 ```
@@ -203,6 +204,13 @@ pixshift pdf info input.pdf [--pages] [--json]
 `pdf merge` converts images into a PDF; `pdf concat` joins existing PDF documents.
 Page extraction defaults to 150 DPI. Pass `--dpi 300` when print-level raster output is
 more important than speed and file size.
+
+`pdf compress --target-size` fits the document under a byte budget at the best
+quality: it tries lossless structure optimisation first, then walks a
+descending image-quality ladder and publishes the first candidate that fits
+(bounded attempts). An input already within budget is copied untouched; an
+unreachable target fails with `target_size_unreachable` and leaves no output.
+Mutually exclusive with `-p`/`--image-quality`.
 
 ## Video Commands
 
@@ -216,7 +224,9 @@ pixshift video info FILES... [--json]
 pixshift video convert INPUTS... [-t mp4|webm|mkv|mov] [--codec h264|h265|vp9|av1] \
   [--hwaccel videotoolbox|nvenc|qsv] [-o OUT_DIR] [-r] [--overwrite] [--json]
 pixshift video compress INPUTS... [-p web|archive|tiny] [--codec h264|h265|vp9|av1] \
-  [--crf N] [--hwaccel videotoolbox|nvenc|qsv] [-o OUT_DIR] [-r] [--overwrite] [--json]
+  [--crf N | --target-size 25MB] [--hwaccel videotoolbox|nvenc|qsv] \
+  [-o OUT_DIR] [-r] [--overwrite] [--json]
+pixshift video concat CLIPS... -o joined.mp4 [--reencode] [--overwrite] [--json]
 pixshift video trim SOURCE --start TS [--end TS | --duration SEC] [--reencode] \
   [-o OUT_FILE] [--overwrite] [--json]
 pixshift video thumbnail INPUTS... [--at 25% | --at TS] [-t jpg|png|webp] \
@@ -233,6 +243,19 @@ derivatives in the codec's native container. `trim` stream-copies at keyframes
 by default; `--reencode` cuts precisely at the cost of a re-encode. `thumbnail`
 accepts a percentage of the probed duration or an absolute timecode. `gif`
 uses a palette filter graph for quality output.
+
+`compress --target-size` answers the most common ask — *stay under this size
+with the best possible quality*: the byte budget converts into a video bitrate
+(audio and container overhead reserved) and encodes in two passes for the
+software h264/h265/vp9 paths (single-pass ABR for av1 and hardware encoders).
+Inputs already within budget are copied untouched; one bounded retry absorbs
+rate-control overshoot, and a second miss fails honestly with
+`target_size_missed` and no output. Mutually exclusive with `-p`/`--crf`.
+
+`concat` joins clips end to end. By default it stream-copies (lossless and
+instant) and requires matching codecs/dimensions — mixed inputs fail with
+`concat_requires_matching_streams`; pass `--reencode` to normalise everything
+to h264 instead.
 
 `--hwaccel` opts in to the platform's hardware encoder (h264/h265 families
 only): `videotoolbox` on macOS, `nvenc` on NVIDIA GPUs, `qsv` on Intel.

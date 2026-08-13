@@ -29,6 +29,16 @@ All notable changes to this project are documented in this file.
 - `optimize` classifies animations instead of rejecting them: animated
   GIF/APNG get an executable `convert -t webp` plan (animation preserved),
   an already-animated WebP gets an explicit `keep` plan.
+- The size-budget idiom on every pillar: `video compress --target-size`
+  (two-pass bitrate encoding for h264/h265/vp9, single-pass ABR for av1 and
+  hardware encoders, bounded overshoot retry, honest `target_size_missed`)
+  and `pdf compress --target-size` (lossless-first quality-ladder search,
+  `target_size_unreachable` with no output when impossible) join the
+  existing image `compress --target-size`; inputs already within budget are
+  copied untouched.
+- `video concat`: end-to-end concatenation with lossless stream copy by
+  default (matching codecs/dimensions enforced via probe) and `--reencode`
+  to normalise mixed inputs.
 - Verification tooling: `scripts/e2e_sweep.py` drives the whole CLI over a
   seeded synthetic corpus and validates every JSON payload against the
   schemas plus the exit-code/idempotency invariants; the property suite

@@ -12,6 +12,8 @@ PixShift PDF Engine — 基于 PyMuPDF 的 PDF 处理引擎
 import importlib.util
 import io
 import os
+import shutil
+import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -746,6 +748,106 @@ def pdf_compress(
         result.details["images_skipped"] = stats["images_skipped"]
         result.details["images_replaced"] = stats["images_replaced"]
         result.details["preset"] = normalized_preset
+
+    except Exception as e:
+        result.error = str(e)
+
+    result.duration = time.time() - start_time
+    return result
+
+
+# Descending quality ladder for target-size search: the first candidate that
+# fits is the highest-quality one that satisfies the constraint.
+PDF_TARGET_QUALITY_LADDER = (85, 70, 55, 40, 30, 20)
+
+
+def pdf_compress_to_target(
+    input_path: str,
+    output_path: str,
+    target_size: int,
+    max_image_dpi: int | None = None,
+    overwrite: bool = False,
+) -> PDFResult:
+    """Compress a PDF to fit under ``target_size`` bytes at the best quality.
+
+    Strategy (bounded, deterministic): if the input already fits, copy it
+    untouched; otherwise try lossless structure optimisation, then walk a
+    descending image-quality ladder and publish the first candidate that
+    fits. If even the lowest rung exceeds the target, fail with a stable
+    error and leave no output behind.
+    """
+    _check_pymupdf()
+    result = PDFResult(output_path=output_path)
+    start_time = time.time()
+
+    try:
+        if target_size <= 0:
+            raise ValueError("target_size_must_be_positive")
+        if max_image_dpi is not None and not 72 <= max_image_dpi <= 1200:
+            raise ValueError("max_image_dpi_must_be_between_72_and_1200")
+        if os.path.exists(output_path) and not overwrite:
+            result.error = "输出文件已存在（使用 --overwrite 覆盖）"
+            return result
+
+        result.input_size = os.path.getsize(input_path)
+        with fitz.open(input_path) as probe_doc:
+            result.page_count = probe_doc.page_count
+
+        if result.input_size <= target_size:
+            with atomic_output_path(output_path) as temporary:
+                shutil.copyfile(input_path, temporary)
+            result.output_size = os.path.getsize(output_path)
+            result.success = True
+            result.details["strategy"] = "already_within_target"
+            result.details["target_size"] = target_size
+            return result
+
+        save_opts = {"garbage": 4, "deflate": True, "clean": True}
+        attempts: list[tuple[int | None, int]] = []
+
+        def _encode_candidate(image_quality: int | None, destination: str) -> int:
+            doc = _open_pdf(input_path)
+            try:
+                if image_quality is None:
+                    doc.save(destination, **save_opts)
+                else:
+                    _compress_rebuild(doc, destination, image_quality, max_image_dpi, save_opts)
+            finally:
+                doc.close()
+            return os.path.getsize(destination)
+
+        candidates_dir = tempfile.mkdtemp(
+            prefix=".pixshift-target-", dir=os.path.dirname(output_path) or "."
+        )
+        try:
+            winner: str | None = None
+            for image_quality in (None, *PDF_TARGET_QUALITY_LADDER):
+                label = "lossless" if image_quality is None else f"q{image_quality}"
+                candidate = os.path.join(candidates_dir, f"cand_{label}.pdf")
+                size = _encode_candidate(image_quality, candidate)
+                attempts.append((image_quality, size))
+                if size <= target_size:
+                    winner = candidate
+                    break
+            if winner is None:
+                result.error = "target_size_unreachable"
+                result.details["target_size"] = target_size
+                result.details["closest_size"] = min(size for _, size in attempts)
+                result.details["attempts"] = len(attempts)
+                return result
+            with atomic_output_path(output_path) as temporary:
+                shutil.copyfile(winner, temporary)
+        finally:
+            shutil.rmtree(candidates_dir, ignore_errors=True)
+
+        result.output_size = os.path.getsize(output_path)
+        result.success = True
+        quality_label, _ = attempts[-1]
+        result.details["strategy"] = (
+            "lossless" if quality_label is None else f"image_quality_{quality_label}"
+        )
+        result.details["target_size"] = target_size
+        result.details["attempts"] = len(attempts)
 
     except Exception as e:
         result.error = str(e)

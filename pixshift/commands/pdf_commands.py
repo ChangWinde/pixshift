@@ -10,6 +10,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from ..compress_engine import parse_target_size
 from ..core.defaults import DEFAULT_PDF_EXTRACT_DPI, DEFAULT_PDF_MERGE_MARGIN
 from ..core.files import filter_generated_inputs
 from ..ops import pdf as pdf_ops
@@ -18,7 +19,7 @@ from ..pdf_engine import (
     PDF_COMPRESS_PRESETS,
 )
 from ..presenters.json_presenters import emit_json, emit_json_and_exit
-from .common import validate_affixes_or_exit
+from .common import usage_error_or_exit, validate_affixes_or_exit
 
 
 def _require_pdf(command: str, as_json: bool) -> None:
@@ -354,32 +355,75 @@ def register_pdf_commands(
     @click.option(
         "--max-dpi", default=None, type=click.IntRange(72, 1200), help="自定义最大图片 DPI"
     )
+    @click.option(
+        "--target-size",
+        "target_size",
+        default=None,
+        type=str,
+        help="目标大小上限（如 2MB）：预算内保留最高质量（质量阶梯搜索）",
+    )
     @click.option("--overwrite", is_flag=True, default=False, help="覆盖已存在输出文件")
     @click.option("--json", "as_json", is_flag=True, default=False, help="以 JSON 输出结果")
+    @click.pass_context
     def pdf_compress_cmd(
+        ctx: click.Context,
         pdf_file: str,
         output_path: str | None,
         preset: str,
         image_quality: int | None,
         max_dpi: int | None,
+        target_size: str | None,
         overwrite: bool,
         as_json: bool,
     ) -> None:
-        """压缩并优化 PDF。"""
+        """压缩并优化 PDF，或压到目标大小内保最高质量。"""
         _require_pdf("pdf.compress", as_json)
+
+        target_bytes: int | None = None
+        if target_size is not None:
+            preset_explicit = (
+                ctx.get_parameter_source("preset") is click.core.ParameterSource.COMMANDLINE
+            )
+            if image_quality is not None or preset_explicit:
+                usage_error_or_exit(
+                    command="pdf.compress",
+                    as_json=as_json,
+                    error="conflicting_options",
+                    detail="--target-size cannot be combined with --preset or --image-quality",
+                    human_message="--target-size 与 --preset / --image-quality 不能同时使用",
+                )
+            try:
+                target_bytes = parse_target_size(target_size)
+            except ValueError:
+                usage_error_or_exit(
+                    command="pdf.compress",
+                    as_json=as_json,
+                    error="invalid_target_size",
+                    detail="--target-size expects a size like 500KB or 2MB",
+                    human_message="--target-size 需要 500KB / 2MB 这样的大小格式",
+                )
 
         if output_path is None:
             p = Path(pdf_file)
             output_path = str(p.parent / f"{p.stem}_compressed.pdf")
 
-        result = pdf_ops.compress(
-            input_path=pdf_file,
-            output_path=output_path,
-            preset=preset,
-            image_quality=image_quality,
-            max_image_dpi=max_dpi,
-            overwrite=overwrite,
-        )
+        if target_bytes is not None:
+            result = pdf_ops.compress_to_target(
+                input_path=pdf_file,
+                output_path=output_path,
+                target_size=target_bytes,
+                max_image_dpi=max_dpi,
+                overwrite=overwrite,
+            )
+        else:
+            result = pdf_ops.compress(
+                input_path=pdf_file,
+                output_path=output_path,
+                preset=preset,
+                image_quality=image_quality,
+                max_image_dpi=max_dpi,
+                overwrite=overwrite,
+            )
 
         if as_json:
             payload = {

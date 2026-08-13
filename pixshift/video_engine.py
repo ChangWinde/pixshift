@@ -414,6 +414,118 @@ def build_gif_args(
 
 
 # ============================================================
+#  Target-size encoding and concatenation (pure; no I/O)
+# ============================================================
+
+# Reserve a slice of the byte budget for container/mux overhead.
+TARGET_SIZE_OVERHEAD = 0.02
+# Below this video bitrate the output is unusable; fail instead of encoding.
+MIN_TARGET_VIDEO_BPS = 8_000
+TARGET_AUDIO_BPS = 128_000
+
+
+def compute_target_video_bitrate(target_bytes: int, duration_sec: float, *, has_audio: bool) -> int:
+    """Video bitrate (bps) that fits ``target_bytes`` over ``duration_sec``.
+
+    Deterministic budget math: total bits over the duration, minus a fixed
+    container-overhead reserve, minus the audio track's share. The caller is
+    responsible for rejecting values below ``MIN_TARGET_VIDEO_BPS``.
+    """
+    if target_bytes <= 0 or duration_sec <= 0 or not math.isfinite(duration_sec):
+        return 0
+    total_bps = target_bytes * 8.0 / duration_sec
+    video_bps = total_bps * (1.0 - TARGET_SIZE_OVERHEAD)
+    if has_audio:
+        video_bps -= TARGET_AUDIO_BPS
+    if not math.isfinite(video_bps) or video_bps <= 0:
+        return 0
+    return int(video_bps)
+
+
+def build_bitrate_pass_args(
+    src: str,
+    dst: str,
+    *,
+    codec: str,
+    video_bps: int,
+    has_audio: bool,
+    pass_number: int | None,
+    passlog: str,
+    hwaccel: str | None = None,
+) -> list[str]:
+    """Argv for one bitrate-targeted encode pass.
+
+    ``pass_number`` of 1/2 drives classic two-pass encoding (pass 1 analyses
+    into ``passlog`` and writes to the null sink); ``None`` means single-pass
+    ABR (used for av1 and hardware encoders, which have no portable two-pass).
+    """
+    if codec not in VIDEO_CODECS:
+        raise ValueError(f"unsupported_video_codec:{codec}")
+    if video_bps <= 0:
+        raise ValueError("target_bitrate_must_be_positive")
+    audio_encoder = VIDEO_CODECS[codec][2]
+    args = ["-i", _safe_path(src)]
+    if hwaccel is not None:
+        args += ["-c:v", _hw_encoder(codec, hwaccel)]
+        if hwaccel == "nvenc":
+            args += ["-rc", "vbr"]
+    else:
+        args += ["-c:v", VIDEO_CODECS[codec][0]]
+    args += ["-b:v", str(video_bps), "-maxrate", str(int(video_bps * 1.2))]
+    args += ["-bufsize", str(int(video_bps * 2))]
+    if codec == "h265":
+        args += ["-tag:v", "hvc1"]
+    if pass_number is not None:
+        args += ["-pass", str(pass_number), "-passlogfile", passlog]
+    if pass_number == 1:
+        # Analysis pass: no audio, no container, discard the output.
+        args += ["-an", "-f", "null", os.devnull]
+        return args
+    if has_audio:
+        args += ["-c:a", audio_encoder, "-b:a", str(TARGET_AUDIO_BPS)]
+    else:
+        args += ["-an"]
+    container = VIDEO_CODECS[codec][1]
+    if container in ("mp4", "mov"):
+        args += ["-movflags", "+faststart"]
+    args.append(_safe_path(dst))
+    return args
+
+
+def concat_list_content(paths: list[str]) -> str:
+    """The ffmpeg concat-demuxer list document for ``paths``.
+
+    Single quotes inside a path use the demuxer's ``'\\''`` escape; paths are
+    absolutised so the list file's own location cannot change resolution.
+    """
+    lines = []
+    for path in paths:
+        resolved = _safe_path(path)
+        if "\n" in resolved or "\r" in resolved:
+            # The demuxer parses one entry per line and quotes do not span
+            # lines, so a newline in a (legal on Linux) filename would inject
+            # extra list entries. Reject it with a stable error instead.
+            raise ValueError("unsupported_path_character")
+        escaped = resolved.replace("'", "'\\''")
+        lines.append(f"file '{escaped}'")
+    return "\n".join(lines) + "\n"
+
+
+def build_concat_args(list_path: str, dst: str, *, reencode: bool = False) -> list[str]:
+    """Argv to concatenate the clips listed in ``list_path`` into ``dst``."""
+    args = ["-f", "concat", "-safe", "0", "-i", _safe_path(list_path)]
+    if reencode:
+        args += ["-c:v", "libx264", "-crf", "23", "-preset", "medium", "-c:a", "aac"]
+        args += ["-b:a", "128k"]
+    else:
+        args += ["-c", "copy"]
+    if Path(dst).suffix.lower() in (".mp4", ".mov"):
+        args += ["-movflags", "+faststart"]
+    args.append(_safe_path(dst))
+    return args
+
+
+# ============================================================
 #  Probe-driven optimize analysis (pure; no I/O)
 # ============================================================
 

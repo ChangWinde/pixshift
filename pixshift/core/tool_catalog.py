@@ -153,9 +153,9 @@ TOOL_CATALOG: list[ToolEntry] = [
     },
     {
         "name": "pdf.compress",
-        "description": "Compress a PDF.",
-        "when_to_use": "Shrink PDF size for delivery.",
-        "input_summary": "pdf; -o output; --json",
+        "description": "Compress a PDF with presets or fit a byte budget.",
+        "when_to_use": "Shrink a PDF; --target-size keeps the best quality under a size cap.",
+        "input_summary": "pdf; -p preset | --target-size 2MB; --max-dpi; -o output; --json",
         "annotations": _ann(read_only=False, destructive=False, idempotent=True),
     },
     {
@@ -195,9 +195,16 @@ TOOL_CATALOG: list[ToolEntry] = [
     },
     {
         "name": "video.compress",
-        "description": "Reduce video size with CRF presets (needs ffmpeg).",
-        "when_to_use": "Shrink a clip for upload or sharing.",
-        "input_summary": "paths; -p web|archive|tiny; --codec h264|h265|vp9|av1; --hwaccel; -r; --json",
+        "description": "Reduce video size with CRF presets or fit a byte budget (needs ffmpeg).",
+        "when_to_use": "Shrink a clip; --target-size keeps the best quality under a size cap.",
+        "input_summary": "paths; -p web|archive|tiny | --target-size 25MB; --codec; --hwaccel; -r; --json",
+        "annotations": _ann(read_only=False, destructive=False, idempotent=True),
+    },
+    {
+        "name": "video.concat",
+        "description": "Concatenate clips end to end, stream-copy by default (needs ffmpeg).",
+        "when_to_use": "Join same-codec segments losslessly; --reencode normalises mixed inputs.",
+        "input_summary": "videos...; -o out; --reencode; --overwrite; --json",
         "annotations": _ann(read_only=False, destructive=False, idempotent=True),
     },
     {

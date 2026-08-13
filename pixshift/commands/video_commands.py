@@ -8,6 +8,7 @@ from pathlib import Path
 import click
 from rich.console import Console
 
+from ..compress_engine import parse_target_size
 from ..core.files import plan_output_path
 from ..ops import video as video_ops
 from ..presenters.json_presenters import emit_json, emit_json_and_exit
@@ -211,6 +212,13 @@ def register_video_commands(
     )
     @click.option("--crf", default=None, type=click.IntRange(0, 63), help="覆盖预设 CRF")
     @click.option(
+        "--target-size",
+        "target_size",
+        default=None,
+        type=str,
+        help="目标大小上限（如 25MB）：预算内保留最高质量（两遍编码）",
+    )
+    @click.option(
         "--hwaccel",
         default=None,
         type=click.Choice(list(HWACCEL_BACKENDS)),
@@ -220,38 +228,109 @@ def register_video_commands(
     @click.option("-r", "--recursive", is_flag=True, default=False, help="递归子目录")
     @click.option("--overwrite", is_flag=True, default=False, help="覆盖已存在输出")
     @click.option("--json", "as_json", is_flag=True, default=False, help="以 JSON 输出结果")
+    @click.pass_context
     def video_compress(
+        ctx: click.Context,
         inputs: tuple,
         preset: str,
         codec: str,
         crf: int | None,
+        target_size: str | None,
         hwaccel: str | None,
         output_dir: str | None,
         recursive: bool,
         overwrite: bool,
         as_json: bool,
     ) -> None:
-        """按预设压缩视频体积。"""
+        """按预设压缩视频体积，或压到目标大小内保最高质量。"""
         if not video_ops.available():
             _ffmpeg_missing("video.compress", as_json, console)
+        target_bytes: int | None = None
+        if target_size is not None:
+            if crf is not None:
+                _fail("video.compress", "conflicting_options", as_json, console)
+            preset_source = ctx.get_parameter_source("preset")
+            if preset_source is click.core.ParameterSource.COMMANDLINE:
+                _fail("video.compress", "conflicting_options", as_json, console)
+            try:
+                target_bytes = parse_target_size(target_size)
+            except ValueError:
+                _fail("video.compress", "invalid_target_size", as_json, console)
         container = VIDEO_CODECS[codec][1]
         files = collect_video_files(list(inputs), recursive)
         results = []
         for path in files:
             name = f"{Path(path).stem}_compressed.{container}"
             dst = _video_output(path, name, output_dir, list(inputs))
-            results.append(
-                video_ops.compress_one(
-                    path,
-                    dst,
-                    preset=preset,
-                    codec=codec,
-                    crf=crf,
-                    hwaccel=hwaccel,
-                    overwrite=overwrite,
+            if target_bytes is not None:
+                results.append(
+                    video_ops.compress_to_target_one(
+                        path,
+                        dst,
+                        target_bytes=target_bytes,
+                        codec=codec,
+                        hwaccel=hwaccel,
+                        overwrite=overwrite,
+                    )
                 )
-            )
+            else:
+                results.append(
+                    video_ops.compress_one(
+                        path,
+                        dst,
+                        preset=preset,
+                        codec=codec,
+                        crf=crf,
+                        hwaccel=hwaccel,
+                        overwrite=overwrite,
+                    )
+                )
         _emit_batch("video.compress", results, as_json, console)
+
+    @video.command("concat")
+    @click.argument("inputs", nargs=-1, required=True, type=click.Path(exists=True))
+    @click.option(
+        "-o", "--output", "output_path", required=True, type=click.Path(), help="输出文件"
+    )
+    @click.option(
+        "--reencode",
+        is_flag=True,
+        default=False,
+        help="重编码为 h264 统一各段（默认流拷贝，要求编码/分辨率一致）",
+    )
+    @click.option("--overwrite", is_flag=True, default=False, help="覆盖已存在输出")
+    @click.option("--json", "as_json", is_flag=True, default=False, help="以 JSON 输出结果")
+    def video_concat(
+        inputs: tuple,
+        output_path: str,
+        reencode: bool,
+        overwrite: bool,
+        as_json: bool,
+    ) -> None:
+        """把多段视频首尾拼接为一个文件。"""
+        if not video_ops.available():
+            _ffmpeg_missing("video.concat", as_json, console)
+        if len(inputs) < 2:
+            _fail("video.concat", "concat_requires_two_inputs", as_json, console)
+        result = video_ops.concat_videos(
+            [str(path) for path in inputs],
+            output_path,
+            reencode=reencode,
+            overwrite=overwrite,
+        )
+        if as_json:
+            payload = {
+                "command": "video.concat",
+                "clips": len(inputs),
+                **_result_payload(result),
+            }
+            emit_json_and_exit(payload, 0 if result.success else 1)
+        if result.success:
+            console.print(f"[green]完成[/green] {result.output_path}（{len(inputs)} 段）")
+        else:
+            detail = f"：{result.detail}" if result.detail else ""
+            console.print(f"[red]失败[/red]（{result.error}{detail}）")
+            raise click.exceptions.Exit(1)
 
     @video.command("trim")
     @click.argument("source", type=click.Path(exists=True, dir_okay=False))
