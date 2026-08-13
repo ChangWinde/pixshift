@@ -96,7 +96,7 @@ def test_stdio_round_trip_through_a_real_subprocess(tmp_path):
         [sys.executable, "-m", "pixshift.mcp"],
         input=requests + "\n",
         capture_output=True,
-        text=True,
+        encoding="utf-8",
         timeout=60,
         check=False,
     )

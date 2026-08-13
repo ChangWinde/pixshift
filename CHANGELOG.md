@@ -20,6 +20,14 @@ All notable changes to this project are documented in this file.
   Python 3.14) can decode them: previously a `compress`/`strip` pool child
   failed with "cannot identify image file" on HEIC while `convert` children
   happened to work (found by the sweep's HEIC corpus).
+- Windows works now — the first-ever Windows CI run surfaced three
+  platform bugs, all fixed: `os.fsync` on a read-only handle fails with
+  EBADF there, so every atomic output write failed ("[Errno 9] Bad file
+  descriptor"); the platform code page (cp1252/GBK) crashed any `--json`
+  payload carrying Chinese text, so the machine channel and the MCP server
+  now write UTF-8 bytes; and the animated convert path saved while the
+  source was still open, which Windows' non-POSIX replace semantics
+  reject for in-place `--overwrite`. macOS passed on first contact.
 - `optimize` no longer emits an infinite bits-per-pixel figure when a crafted
   container reports a subnormal frame rate — the overflowing division now
   degrades to "no signal" (found by randomized property fuzzing).

@@ -2,6 +2,7 @@
 
 import json
 import os
+import sys
 
 import pytest
 from click.testing import CliRunner
@@ -319,6 +320,7 @@ def test_concat_stream_copy_success(runner, monkeypatch, tmp_path):
     assert list_path.endswith("clips.txt")
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="NTFS forbids newlines in names")
 def test_concat_rejects_newline_in_filenames(monkeypatch, tmp_path):
     weird = tmp_path / "a\nb.mp4"
     plain = tmp_path / "c.mp4"

@@ -77,7 +77,10 @@ def call_tool(name: str, arguments: dict[str, Any] | None) -> dict[str, Any]:
         completed = subprocess.run(
             [sys.executable, "-m", "pixshift", *cli_args],
             capture_output=True,
-            text=True,
+            # The CLI's --json channel is UTF-8 bytes by contract; decoding
+            # with the platform code page (Windows cp1252/GBK) would mangle it.
+            encoding="utf-8",
+            errors="replace",
             check=False,
             # The child must never inherit this server's stdio: a tool such as
             # ``apply --plan -`` would otherwise read the JSON-RPC stream and
@@ -175,5 +178,9 @@ def serve() -> None:
                     "error": {"code": -32600, "message": "invalid request"},
                 }
         if response is not None:
-            sys.stdout.write(json.dumps(response, ensure_ascii=False) + "\n")
+            # UTF-8 bytes on the binary stream: the platform text encoding
+            # (Windows cp1252/GBK) cannot represent the payload's text.
+            sys.stdout.buffer.write(
+                json.dumps(response, ensure_ascii=False).encode("utf-8") + b"\n"
+            )
             sys.stdout.flush()

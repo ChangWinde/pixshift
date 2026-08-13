@@ -137,7 +137,7 @@ def test_convert_batch_json_success(runner, ffmpeg_ready, tmp_path):
     assert payload["ok"] is True
     assert payload["total"] == 2
     assert payload["succeeded"] == 2
-    outputs = {entry["output"].rsplit("/", 1)[-1] for entry in payload["results"]}
+    outputs = {Path(entry["output"]).name for entry in payload["results"]}
     assert outputs == {"a.webm", "b.webm"}
     assert (tmp_path / "a.webm").read_bytes() == b"encoded-output"
 
@@ -169,7 +169,7 @@ def test_convert_failure_sets_exit_and_detail(runner, ffmpeg_ready, tmp_path):
     assert payload["ok"] is False
     assert payload["failed"] == 1
     assert payload["succeeded"] == 1
-    by_input = {entry["input"].rsplit("/", 1)[-1]: entry for entry in payload["results"]}
+    by_input = {Path(entry["input"]).name: entry for entry in payload["results"]}
     assert by_input["bad.mp4"]["error"] == "ffmpeg_failed"
 
 

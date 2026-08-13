@@ -282,7 +282,10 @@ def atomic_output_path(output_path: str) -> Iterator[str]:
         yield str(temporary)
         if not temporary.is_file():
             raise OSError("encoder did not create its planned output")
-        with temporary.open("rb") as stream:
+        # "rb+" rather than "rb": Windows' os.fsync (_commit) requires a
+        # write-capable handle and fails with EBADF on a read-only one —
+        # which made every single output write fail on Windows.
+        with temporary.open("rb+") as stream:
             os.fsync(stream.fileno())
         os.replace(temporary, target)
     finally:
