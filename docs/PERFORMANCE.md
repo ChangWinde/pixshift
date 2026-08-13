@@ -4,7 +4,7 @@ PixShift optimizes measured hot paths while keeping correctness checks in the
 benchmark. Run the duplicate-clustering benchmark from the repository root:
 
 ```bash
-uv run python benchmarks/dedup_index.py --items 4000 --threshold 5
+uv run python scripts/dedup_index_bench.py --items 4000 --threshold 5
 ```
 
 Reference result on the repair environment (Python 3.13, 4,000 deterministic

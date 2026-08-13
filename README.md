@@ -189,8 +189,7 @@ Script templates:
 - Video pillar ADR: `docs/adr/0005-video-pillar.md`
 - JSON Schema contracts: `docs/schemas/v1/`
 - Agent guide: `AGENTS.md`
-- Project goal and milestones: `GOAL.md`
-- Phase checklist: `docs/PHASE1_CHECKLIST.md`
+- Project goal and milestones: `docs/GOAL.md`
 - JSON output contract: `docs/JSON_OUTPUT.md`
 - Performance evidence: `docs/PERFORMANCE.md`
 - Product defaults ADR: `docs/adr/0002-opinionated-defaults-and-ai-plans.md`
@@ -205,9 +204,9 @@ Script templates:
 Please read:
 
 - `CONTRIBUTING.md`
-- `CODE_OF_CONDUCT.md`
-- `SECURITY.md`
-- `SUPPORT.md`
+- `.github/CODE_OF_CONDUCT.md`
+- `.github/SECURITY.md`
+- `.github/SUPPORT.md`
 - `.github/ISSUE_TEMPLATE/*`
 - `.github/PULL_REQUEST_TEMPLATE.md`
 - `.github/workflows/ci.yml`
