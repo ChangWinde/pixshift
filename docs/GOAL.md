@@ -21,8 +21,8 @@ and the largest remaining gap for agent-driven media pipelines.
 Everything for `v1.2.0` is merged to a green `main`: the deep audit remediation, the
 startup/dedup performance work, the ffmpeg-backed video pillar with its full
 discover -> plan -> apply loop (probe-driven `optimize`, `apply` for `video.*`/`keep`,
-opt-in `--hwaccel`), coverage 83% (gate 78), and a MkDocs site behind a Pages deploy
-workflow.
+opt-in `--hwaccel`), coverage 83% (gate 78), and a MkDocs site published at
+<https://changwinde.github.io/pixshift/>.
 
 The audit backlog is now empty: every P0-P3 finding from the 32-agent deep
 audit is either fixed or explicitly retired.
@@ -31,8 +31,8 @@ Next frontier, in order:
 
 1. Release `v1.3.0` (the first PyPI release of the modern toolkit; `v1.2.0`
    was never tagged and its content ships within 1.3.0) — maintainer web
-   steps: PyPI trusted publisher + `pypi` environment, enable Pages (Source:
-   GitHub Actions), then tag and push `v1.3.0` (see `docs/RELEASING.md`).
+   steps: PyPI trusted publisher + `pypi` environment, then tag and push
+   `v1.3.0` (see `docs/RELEASING.md`). The docs site is already live.
 2. Post-release: gather real-world agent feedback before opening new scope;
    candidate directions live in ADR-0004/0005 non-goals reviews.
 

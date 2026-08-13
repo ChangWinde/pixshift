@@ -112,7 +112,8 @@ All notable changes to this project are documented in this file.
   translating CRF-style quality onto each backend's knobs; unsupported
   combinations fail with stable `unsupported_hwaccel:*` errors.
 - MkDocs documentation site (Material theme) built from `docs/` (now
-  covering the whole `video` command group) and deployed to GitHub Pages on
+  covering the whole `video` command group) and published to GitHub Pages at
+  <https://changwinde.github.io/pixshift/>, redeployed on
   every push to `main` (`docs.yml` workflow).
 - Probe-driven `optimize` for videos: deterministic codec/bitrate analysis
   (no encoding) recommends `video.convert`, `video.compress`, or an explicit
