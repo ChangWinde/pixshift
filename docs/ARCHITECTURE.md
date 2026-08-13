@@ -1,22 +1,25 @@
 # PixShift Architecture
 
 PixShift is a local-first CLI. Click commands translate user intent, operation
-wrappers provide a narrow service boundary, engines perform image/PDF work, and
-shared core modules enforce invariants that must not vary by command.
+wrappers provide a narrow service boundary, engines perform the image, PDF, and
+video work, and shared core modules enforce invariants that must not vary by
+command.
 
 ## Runtime Layers
 
 ```text
 CLI commands
-  ├─ validate options and build complete task plans
-  ├─ Rich presenter (human output)
-  └─ JSON presenter (schema_version 1.0)
+  ├─ validate options and build complete task plans (usage errors exit 2)
+  ├─ Rich presenter (human output, shared batch progress)
+  └─ JSON presenter (schema_version 1.1)
           │
           ▼
 ops wrappers
           │
           ▼
-image/PDF engines
+image / PDF / video engines
+  (PyMuPDF and ffmpeg are optional runtime dependencies, probed lazily and
+   reported by doctor; video argv builders are pure functions)
           │
           ▼
 core policy
@@ -34,9 +37,11 @@ reimplement path, deletion, or metadata safety decisions.
 
 The primary workflows are `convert`, `compress`, `strip`, and `dedup`. Focused
 utilities (`compare`, `crop`, `resize`, `rotate`, `watermark`, `montage`,
-`optimize`, and the `pdf` group) stay independent so users do not need to configure a large pipeline
-for a single operation. Root help intentionally stays compact; detailed options
-live under each command.
+`optimize`, the `pdf` group, and the ffmpeg-backed `video` group) stay
+independent so users do not need to configure a large pipeline for a single
+operation. Agent workflow commands (`tools`, `apply`, `prep`, `manifest`,
+`hash`) close the discover → plan → apply → verify loop. Root help
+intentionally stays compact; detailed options live under each command.
 
 ## Safety Invariants
 
@@ -49,12 +54,16 @@ live under each command.
   after successful completion.
 - Pixel-changing operations normalize EXIF Orientation exactly once and remove the
   consumed tag.
-- Still-image operations reject multi-frame input before output mutation, and opaque
-  encoders use one canonical transparency-compositing policy.
+- Animation is preserved or refused, never silently flattened: `convert` and
+  `resize` carry frames/timing/loop through to animation-capable targets,
+  pixel-compositing operations reject multi-frame input before output
+  mutation, and opaque encoders use one canonical transparency policy.
 - Similar-image groups are advisory. Automatic deletion is limited to byte-identical
   files whose size and SHA-256 digest are revalidated immediately before removal.
 - An impossible target-size request fails without leaving a misleading output.
-- JSON documents with `ok: false` terminate with a non-zero exit code.
+- JSON documents with `ok: false` terminate with a non-zero exit code:
+  `1` after attempted work fails, `2` when the invocation is rejected before
+  any output is written.
 
 The accepted designs and alternatives are recorded in
 [ADR-0001](adr/0001-safe-operation-boundaries.md) and
@@ -65,7 +74,7 @@ The accepted designs and alternatives are recorded in
 AI and scripts use the same deterministic CLI contract as humans. Every JSON
 document contains `schema_version`, `command`, and `ok`; paths and numeric sizes
 are explicit, Click parsing failures use the same JSON channel, and dry-run modes
-expose bounded previews. No model call sits in the media-processing hot path, so
+expose complete previews. No model call sits in the media-processing hot path, so
 local performance and reproducibility do not depend on network availability.
 `optimize` returns a structured command plan and explicitly marks sampled estimates,
 so agents can act without parsing localized prose or treating estimates as exact facts.
@@ -91,10 +100,16 @@ The contract layer (ADR-0003) makes this surface discoverable and verifiable:
 - Exact-file SHA-256 is computed only for equal-size candidates.
 - Target-size compression encodes in memory and atomically writes the exact tested
   payload, avoiding a second unverified encode.
-- Format analysis bounds large images to a 1600 px sample before trial encodes.
+- Format analysis bounds large images to a 1600 px sample before trial encodes;
+  video and animation analysis is probe-driven and never encodes at plan time.
+- `pdf merge` splices untransformed JPEG bytes (metadata-stripped) instead of
+  re-encoding; `pdf compress` resolves image placement rects once per page.
+- Startup defers PyMuPDF and encoder probing so non-PDF commands stay light.
 
 ## Quality Gates
 
-CI runs Ruff lint/format checks, mypy, the full pytest suite, a 60% coverage floor,
-and package build/metadata validation. Dependencies are resolved from `uv.lock`,
-and third-party GitHub Actions are pinned to immutable commit SHAs.
+CI runs Ruff lint/format checks, mypy, the full pytest suite (including
+property-based contract tests), and a 78% coverage floor; the tag-driven
+release workflow adds package build/metadata validation, and the docs workflow
+builds the MkDocs site strictly. Dependencies are resolved from `uv.lock`, and
+third-party GitHub Actions are pinned to immutable commit SHAs.
