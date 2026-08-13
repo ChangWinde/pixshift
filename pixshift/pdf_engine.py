@@ -788,6 +788,19 @@ def _compress_rebuild(
         page = doc[page_idx]
         image_list = page.get_images(full=True)
 
+        # get_image_rects re-parses the page content stream on every call,
+        # which is quadratic on image-heavy pages. One get_image_info pass
+        # yields every placement rect for the page up front.
+        rects_by_xref: dict[int, Any] = {}
+        if max_dpi and image_list:
+            try:
+                for placement in page.get_image_info(xrefs=True):
+                    info_xref = int(placement.get("xref", 0) or 0)
+                    if info_xref and info_xref not in rects_by_xref:
+                        rects_by_xref[info_xref] = fitz.Rect(placement["bbox"])
+            except Exception:
+                rects_by_xref = {}
+
         for img_info in image_list:
             xref = img_info[0]
 
@@ -819,9 +832,8 @@ def _compress_rebuild(
                 # 降低分辨率
                 if max_dpi and img_width > 0 and img_height > 0:
                     try:
-                        img_rects = page.get_image_rects(xref)
-                        if img_rects:
-                            display_rect = img_rects[0]
+                        display_rect = rects_by_xref.get(xref)
+                        if display_rect is not None:
                             display_w_inch = display_rect.width / 72.0
                             display_h_inch = display_rect.height / 72.0
                             if display_w_inch > 0 and display_h_inch > 0:

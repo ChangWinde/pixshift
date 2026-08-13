@@ -135,3 +135,35 @@ def test_png_with_alpha_keeps_the_png_path(tmp_path):
 
     result = pdf_merge_images([str(source)], str(tmp_path / "out.pdf"))
     assert result.success is True
+
+
+def test_compress_extreme_downscales_dense_pages(tmp_path):
+    """The per-page rect index must keep the DPI downscale path working."""
+    from pixshift.pdf_engine import pdf_compress
+
+    buffer = io.BytesIO()
+    big = Image.new("RGB", (1600, 1600))
+    for x in range(0, 1600, 16):
+        for y in range(0, 1600, 16):
+            big.paste(((x * 7) % 255, (y * 5) % 255, (x + y) % 255), (x, y, x + 16, y + 16))
+    big.save(buffer, format="JPEG", quality=92)
+    payload = buffer.getvalue()
+
+    source = tmp_path / "dense.pdf"
+    with fitz.open() as doc:
+        page = doc.new_page(width=595, height=842)
+        # Several placements of the same and distinct images at ~100pt,
+        # which puts the effective resolution far above extreme's DPI cap.
+        for index in range(4):
+            rect = fitz.Rect(20 + index * 140, 20, 120 + index * 140, 120)
+            page.insert_image(rect, stream=payload)
+        doc.save(str(source))
+
+    result = pdf_compress(str(source), str(tmp_path / "small.pdf"), preset="extreme")
+    assert result.success is True
+
+    with fitz.open(str(tmp_path / "small.pdf")) as doc:
+        xref = doc.get_page_images(0)[0][0]
+        replaced = doc.extract_image(xref)
+        assert replaced["width"] < 1600
+    assert (tmp_path / "small.pdf").stat().st_size < source.stat().st_size
