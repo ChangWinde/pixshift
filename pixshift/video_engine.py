@@ -540,7 +540,13 @@ def _keep_plan(info: VideoInfo, reason: str) -> VideoOptimizeResult:
 
 def _base_analysis(info: VideoInfo) -> VideoOptimizeResult:
     pixel_rate = _pixel_rate(info)
-    bpp = info.bit_rate / pixel_rate if pixel_rate > 0 and info.bit_rate > 0 else 0.0
+    bpp = 0.0
+    if pixel_rate > 0 and info.bit_rate > 0:
+        ratio = info.bit_rate / pixel_rate
+        # A subnormal pixel rate (crafted avg_frame_rate fractions can get
+        # arbitrarily close to zero) overflows the division to infinity;
+        # treat that as "no usable signal" rather than emitting inf.
+        bpp = ratio if math.isfinite(ratio) else 0.0
     return VideoOptimizeResult(
         input_path=info.path,
         input_bytes=info.size_bytes,
