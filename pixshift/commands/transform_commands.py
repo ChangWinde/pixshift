@@ -174,7 +174,7 @@ def register_transform_commands(
                 "pending": len(tasks),
                 "skipped": len(skipped_tasks),
                 "ignored_generated": ignored_generated,
-                "preview": [{"input": inp, "output": out} for inp, out in all_tasks[:50]],
+                "preview": [{"input": inp, "output": out} for inp, out in all_tasks],
             }
             if as_json:
                 emit_json(payload)

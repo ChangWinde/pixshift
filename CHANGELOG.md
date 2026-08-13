@@ -23,6 +23,12 @@ All notable changes to this project are documented in this file.
   keep exit `1`; and every batch command reports failures as
   `{"input", "output", "error"}` objects with full paths instead of the
   `"name: code"` strings that only `convert` had escaped.
+- JSON contract polish under the same 1.1 bump (audit B5): dry-run `preview`
+  arrays list every task instead of silently truncating at 50; `manifest` /
+  `hash` per-file entries report `size_bytes` (was `bytes`) matching the
+  `info` commands; strip previews use `input` (was `file`); `optimize`
+  estimates carry a stable `format` token plus a human `label` instead of a
+  display string in the machine field.
 - `pdf merge` embeds untransformed JPEGs by splicing their original bytes
   (4.3x faster and ~20% smaller on a JPEG-heavy benchmark, zero generation
   loss). EXIF/XMP/comment segments are stripped byte-level so no metadata

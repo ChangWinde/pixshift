@@ -204,7 +204,7 @@ def register_advanced_commands(
                         "output": output_path,
                         "action": "skip_existing" if output_path in skipped_outputs else "crop",
                     }
-                    for input_path, output_path in all_tasks[:50]
+                    for input_path, output_path in all_tasks
                 ],
             }
             if as_json:
@@ -566,7 +566,8 @@ def register_advanced_commands(
                         },
                         "estimates": [
                             {
-                                "format": estimate.format_name,
+                                "format": estimate.format_key,
+                                "label": estimate.format_name,
                                 "estimated_bytes": estimate.estimated_size,
                                 "compression_ratio": round(estimate.compression_ratio, 4),
                                 "quality_note": estimate.quality_note,
@@ -639,7 +640,8 @@ def _video_optimize_payload(result: VideoOptimizeResult) -> dict[str, Any]:
         "estimates": (
             [
                 {
-                    "format": result.recommended,
+                    "format": str(result.plan.get("arguments", {}).get("codec", "")),
+                    "label": result.recommended,
                     "estimated_bytes": result.estimated_bytes,
                     "compression_ratio": (
                         round(result.estimated_bytes / result.input_bytes, 4)
@@ -751,7 +753,7 @@ def _run_watermark(
                     "output": output_path,
                     "action": "skip_existing" if output_path in skipped_outputs else "watermark",
                 }
-                for input_path, output_path in all_tasks[:50]
+                for input_path, output_path in all_tasks
             ],
         }
         if as_json:

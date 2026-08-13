@@ -14,12 +14,12 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["path", "algorithm", "digest", "bytes", "error"],
+        "required": ["path", "algorithm", "digest", "size_bytes", "error"],
         "properties": {
           "path": {"type": "string"},
           "algorithm": {"type": "string"},
           "digest": {"type": "string", "pattern": "^$|^[0-9a-f]+$"},
-          "bytes": {"type": "integer", "minimum": 0},
+          "size_bytes": {"type": "integer", "minimum": 0},
           "error": {"type": "string"}
         }
       }
