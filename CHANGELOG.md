@@ -37,6 +37,11 @@ All notable changes to this project are documented in this file.
 - `pdf compress` resolves image placements once per page (`get_image_info`)
   instead of re-parsing the content stream per image; 2.7x measured on dense
   pages and growing with image density.
+- Terminal UI consistency (audit B4): `resize` / `rotate` / `crop` /
+  `watermark` show the shared batch progress bar; `resize` / `rotate` tables
+  state how many rows were truncated and end with a `成功 · 跳过 · 失败`
+  summary; `crop` / `watermark` list failed files with their error codes
+  before the summary panel.
 
 ## [1.2.0] - 2026-08-12
 

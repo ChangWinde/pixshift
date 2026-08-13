@@ -132,3 +132,40 @@ def test_dedup_reports_duplicates_without_deleting(tmp_path):
     assert result.exit_code == 0, result.output
     assert (src_dir / "one.png").is_file()
     assert (src_dir / "two.png").is_file()
+
+
+def test_resize_table_reports_truncation_and_summary(tmp_path):
+    src_dir = tmp_path / "many"
+    for index in range(55):
+        _make_image(src_dir / f"img_{index:03d}.png")
+    result = CliRunner().invoke(cli, ["resize", str(src_dir), "--percent", "50"])
+    assert result.exit_code == 0, result.output
+    assert "还有 5 个文件" in result.output
+    assert "成功 55 · 跳过 0 · 失败 0" in result.output
+
+
+def test_rotate_summary_counts_failures(tmp_path):
+    src_dir = tmp_path / "mixed"
+    _make_image(src_dir / "good.png")
+    (src_dir / "broken.png").write_bytes(b"not a png")
+    result = CliRunner().invoke(cli, ["rotate", str(src_dir), "--degrees", "90"])
+    assert result.exit_code == 1
+    assert "成功 1 · 跳过 0 · 失败 1" in result.output
+
+
+def test_crop_lists_failed_files(tmp_path):
+    broken = tmp_path / "broken.png"
+    broken.write_bytes(b"not a png")
+    result = CliRunner().invoke(cli, ["crop", str(broken), "--crop", "1,1,10,10"])
+    assert result.exit_code == 1
+    assert "失败文件:" in result.output
+    assert "broken.png" in result.output
+
+
+def test_watermark_lists_failed_files(tmp_path):
+    broken = tmp_path / "broken.png"
+    broken.write_bytes(b"not a png")
+    result = CliRunner().invoke(cli, ["watermark", "text", str(broken), "--text", "pix"])
+    assert result.exit_code == 1
+    assert "失败文件:" in result.output
+    assert "broken.png" in result.output

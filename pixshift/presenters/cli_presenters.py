@@ -5,7 +5,28 @@ from collections.abc import Callable
 
 from rich import box
 from rich.console import Console
+from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    TimeElapsedColumn,
+)
 from rich.table import Table
+
+
+def batch_progress(console: Console, *, disable: bool = False) -> Progress:
+    """The standard batch progress bar; pass ``disable=True`` in JSON mode."""
+    return Progress(
+        SpinnerColumn(),
+        TextColumn("[bold blue]{task.description}"),
+        BarColumn(bar_width=40),
+        MofNCompleteColumn(),
+        TimeElapsedColumn(),
+        console=console,
+        disable=disable,
+    )
 
 
 def show_dry_run_table(
