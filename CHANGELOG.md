@@ -11,6 +11,13 @@ All notable changes to this project are documented in this file.
   ffmpeg arguments, malformed ffprobe frame rates and durations degrade to
   "no signal" instead of crashing `optimize` size estimates (previously an
   `OverflowError`) or serializing invalid JSON (`Infinity`).
+- One broken file in a scanned directory no longer poisons the whole
+  `optimize | apply` pipe: error entries carry an empty `plan` object since
+  schema 1.1, and `apply` now skips them instead of rejecting the document
+  with `missing_command` (found by the end-to-end sweep).
+- `optimize` no longer emits an infinite bits-per-pixel figure when a crafted
+  container reports a subnormal frame rate — the overflowing division now
+  degrades to "no signal" (found by randomized property fuzzing).
 
 ### Added
 
@@ -22,6 +29,11 @@ All notable changes to this project are documented in this file.
 - `optimize` classifies animations instead of rejecting them: animated
   GIF/APNG get an executable `convert -t webp` plan (animation preserved),
   an already-animated WebP gets an explicit `keep` plan.
+- Verification tooling: `scripts/e2e_sweep.py` drives the whole CLI over a
+  seeded synthetic corpus and validates every JSON payload against the
+  schemas plus the exit-code/idempotency invariants; the property suite
+  gains a randomized `stress` profile
+  (`PIXSHIFT_HYPOTHESIS_PROFILE=stress`).
 
 ### Changed
 

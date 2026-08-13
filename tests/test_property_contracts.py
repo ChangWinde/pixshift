@@ -9,6 +9,7 @@ malformed structure. The deterministic profile keeps CI stable.
 import io
 import json
 import math
+import os
 
 import pytest
 from hypothesis import HealthCheck, given, settings
@@ -36,7 +37,16 @@ settings.register_profile(
     max_examples=80,
     suppress_health_check=[HealthCheck.too_slow],
 )
-settings.load_profile("pixshift")
+# Randomized deep exploration for manual fuzz campaigns:
+#   PIXSHIFT_HYPOTHESIS_PROFILE=stress uv run pytest tests/test_property_contracts.py
+settings.register_profile(
+    "stress",
+    derandomize=False,
+    max_examples=1500,
+    suppress_health_check=[HealthCheck.too_slow],
+    deadline=None,
+)
+settings.load_profile(os.environ.get("PIXSHIFT_HYPOTHESIS_PROFILE", "pixshift"))
 
 
 # ------------------------------------------------------------------
