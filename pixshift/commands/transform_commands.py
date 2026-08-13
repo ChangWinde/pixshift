@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import os
 import time
 from collections.abc import Callable
@@ -25,7 +26,7 @@ from ..core.files import (
 from ..ops import transform as transform_ops
 from ..presenters.cli_presenters import batch_progress
 from ..presenters.json_presenters import emit_json, emit_json_and_exit
-from .common import failure_entry, usage_error_or_exit, validate_tasks_or_exit
+from .common import failure_entry, run_batch_tasks, usage_error_or_exit, validate_tasks_or_exit
 
 _RESIZE_SUFFIX = "_resized"
 _ROTATE_SUFFIX = "_rotated"
@@ -203,18 +204,18 @@ def register_transform_commands(
         input_bytes = 0
         output_bytes = 0
         success = 0
+        worker = functools.partial(transform_ops.resize_one, converter_kwargs=converter_kwargs)
         with batch_progress(console, disable=as_json) as progress:
             task_id = progress.add_task("缩放中", total=len(tasks))
-            for inp, out in tasks:
-                result = transform_ops.resize_one(inp, out, converter_kwargs)
-                results.append((inp, out, result))
-                if result.success:
-                    success += 1
-                    input_bytes += result.input_size
-                    output_bytes += result.output_size
-                else:
-                    errors.append(failure_entry(inp, result.error, out))
-                progress.advance(task_id)
+            outcomes = run_batch_tasks(tasks, worker, on_result=lambda: progress.advance(task_id))
+        for (inp, out), result in zip(tasks, outcomes, strict=True):
+            results.append((inp, out, result))
+            if result.success:
+                success += 1
+                input_bytes += result.input_size
+                output_bytes += result.output_size
+            else:
+                errors.append(failure_entry(inp, result.error, out))
 
         payload = {
             "command": "resize",
@@ -333,18 +334,18 @@ def register_transform_commands(
         results = []
         errors: list[dict[str, str]] = []
         success = 0
+        worker = functools.partial(
+            transform_ops.rotate_one, degrees=degrees, flip=flip, overwrite=True
+        )
         with batch_progress(console, disable=as_json) as progress:
             task_id = progress.add_task("旋转中", total=len(tasks))
-            for inp, out in tasks:
-                result = transform_ops.rotate_one(
-                    inp, out, degrees=degrees, flip=flip, overwrite=True
-                )
-                results.append((inp, out, result))
-                if result.success:
-                    success += 1
-                else:
-                    errors.append(failure_entry(inp, result.error, out))
-                progress.advance(task_id)
+            outcomes = run_batch_tasks(tasks, worker, on_result=lambda: progress.advance(task_id))
+        for (inp, out), result in zip(tasks, outcomes, strict=True):
+            results.append((inp, out, result))
+            if result.success:
+                success += 1
+            else:
+                errors.append(failure_entry(inp, result.error, out))
 
         payload = {
             "command": "rotate",

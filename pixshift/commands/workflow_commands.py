@@ -1,5 +1,6 @@
 """Registration for high-frequency workflow commands."""
 
+import functools
 import os
 import time
 from collections.abc import Callable
@@ -10,14 +11,6 @@ import click
 from rich import box
 from rich.console import Console
 from rich.panel import Panel
-from rich.progress import (
-    BarColumn,
-    MofNCompleteColumn,
-    Progress,
-    SpinnerColumn,
-    TextColumn,
-    TimeElapsedColumn,
-)
 from rich.table import Table
 
 from ..compress_engine import COMPRESS_PRESETS, LOSSLESS_COMPRESSION_FORMATS
@@ -32,9 +25,20 @@ from ..core.models import OperationSummary
 from ..ops import compress as compress_ops
 from ..ops import dedup as dedup_ops
 from ..ops import strip as strip_ops
-from ..presenters.cli_presenters import print_failures, show_dry_run_table, size_ratio_text
+from ..presenters.cli_presenters import (
+    batch_progress,
+    print_failures,
+    show_dry_run_table,
+    size_ratio_text,
+)
 from ..presenters.json_presenters import emit_json, emit_json_and_exit
-from .common import failure_entry, failure_lines, usage_error_or_exit, validate_tasks_or_exit
+from .common import (
+    failure_entry,
+    failure_lines,
+    run_batch_tasks,
+    usage_error_or_exit,
+    validate_tasks_or_exit,
+)
 
 
 def register_workflow_commands(
@@ -215,44 +219,21 @@ def register_workflow_commands(
         start_time = time.time()
         errors: list[dict[str, str]] = []
 
-        if as_json:
-            for inp, out in tasks:
-                result = compress_ops.compress_one(
-                    input_path=inp,
-                    output_path=out,
-                    quality=quality,
-                    preset=preset,
-                    target_size=target_size,
-                    max_size=max_size,
-                    overwrite=overwrite,
-                )
-                summary.register(result.input_size, result.output_size, result.success)
-                if not result.success:
-                    errors.append(failure_entry(inp, result.error, out))
-        else:
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[bold blue]{task.description}"),
-                BarColumn(bar_width=40),
-                MofNCompleteColumn(),
-                TimeElapsedColumn(),
-                console=console,
-            ) as progress:
-                task_id = progress.add_task("压缩中", total=len(tasks))
-                for inp, out in tasks:
-                    result = compress_ops.compress_one(
-                        input_path=inp,
-                        output_path=out,
-                        quality=quality,
-                        preset=preset,
-                        target_size=target_size,
-                        max_size=max_size,
-                        overwrite=overwrite,
-                    )
-                    summary.register(result.input_size, result.output_size, result.success)
-                    if not result.success:
-                        errors.append(failure_entry(inp, result.error, out))
-                    progress.advance(task_id)
+        worker = functools.partial(
+            compress_ops.compress_one,
+            quality=quality,
+            preset=preset,
+            target_size=target_size,
+            max_size=max_size,
+            overwrite=overwrite,
+        )
+        with batch_progress(console, disable=as_json) as progress:
+            task_id = progress.add_task("压缩中", total=len(tasks))
+            results = run_batch_tasks(tasks, worker, on_result=lambda: progress.advance(task_id))
+        for (inp, out), result in zip(tasks, results, strict=True):
+            summary.register(result.input_size, result.output_size, result.success)
+            if not result.success:
+                errors.append(failure_entry(inp, result.error, out))
 
         duration = time.time() - start_time
         if as_json:
@@ -443,54 +424,26 @@ def register_workflow_commands(
         start_time = time.time()
         errors: list[dict[str, str]] = []
 
-        if as_json:
-            for inp, out in tasks:
-                result = strip_ops.strip_one(
-                    input_path=inp,
-                    output_path=out,
-                    strip_exif=mode_flags[0],
-                    strip_gps=mode_flags[1],
-                    strip_icc=strip_icc,
-                    strip_device=mode_flags[2],
-                    strip_personal=mode_flags[3],
-                    strip_time=mode_flags[4],
-                    keep_orientation=not no_keep_orientation,
-                    overwrite=overwrite,
-                )
-                summary.register(result.input_size, result.output_size, result.success)
-                if result.success and result.fields_removed > 0:
-                    fields_removed += result.fields_removed
-                if not result.success:
-                    errors.append(failure_entry(inp, result.error, out))
-        else:
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[bold blue]{task.description}"),
-                BarColumn(bar_width=40),
-                MofNCompleteColumn(),
-                TimeElapsedColumn(),
-                console=console,
-            ) as progress:
-                task_id = progress.add_task("清理中", total=len(tasks))
-                for inp, out in tasks:
-                    result = strip_ops.strip_one(
-                        input_path=inp,
-                        output_path=out,
-                        strip_exif=mode_flags[0],
-                        strip_gps=mode_flags[1],
-                        strip_icc=strip_icc,
-                        strip_device=mode_flags[2],
-                        strip_personal=mode_flags[3],
-                        strip_time=mode_flags[4],
-                        keep_orientation=not no_keep_orientation,
-                        overwrite=overwrite,
-                    )
-                    summary.register(result.input_size, result.output_size, result.success)
-                    if result.success and result.fields_removed > 0:
-                        fields_removed += result.fields_removed
-                    if not result.success:
-                        errors.append(failure_entry(inp, result.error, out))
-                    progress.advance(task_id)
+        worker = functools.partial(
+            strip_ops.strip_one,
+            strip_exif=mode_flags[0],
+            strip_gps=mode_flags[1],
+            strip_icc=strip_icc,
+            strip_device=mode_flags[2],
+            strip_personal=mode_flags[3],
+            strip_time=mode_flags[4],
+            keep_orientation=not no_keep_orientation,
+            overwrite=overwrite,
+        )
+        with batch_progress(console, disable=as_json) as progress:
+            task_id = progress.add_task("清理中", total=len(tasks))
+            results = run_batch_tasks(tasks, worker, on_result=lambda: progress.advance(task_id))
+        for (inp, out), result in zip(tasks, results, strict=True):
+            summary.register(result.input_size, result.output_size, result.success)
+            if result.success and result.fields_removed > 0:
+                fields_removed += result.fields_removed
+            if not result.success:
+                errors.append(failure_entry(inp, result.error, out))
 
         duration = time.time() - start_time
         if as_json:

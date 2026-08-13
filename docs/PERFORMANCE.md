@@ -40,3 +40,9 @@ Other bounded-performance decisions:
   image (quadratic on dense pages). Measured on 4 pages × 40 placements:
   0.45s → 0.26s with 8 unique images, 0.61s → 0.23s (2.7×) with 40 unique
   images per page; the win grows with image density.
+- The same-format batch surfaces (`compress`, `strip`, `resize`, `rotate`,
+  `crop`, `watermark`) run on the shared bounded worker pool (≤8 processes,
+  serial below 4 tasks). Measured on 120 photos of 1200×900: compress
+  2.39s → 0.53s (4.5×), strip 3.02s → 0.69s (4.4×), resize 2.55s → 0.63s
+  (4.0×). Results and failure lists keep task order, so JSON output is
+  unchanged.

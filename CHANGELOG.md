@@ -47,6 +47,13 @@ All notable changes to this project are documented in this file.
 
 ### Changed
 
+- Same-format batch surfaces (`compress`, `strip`, `resize`, `rotate`,
+  `crop`, `watermark`) run on a shared bounded process pool (up to 8
+  workers, automatic, serial below 4 tasks): 4-4.5x measured on 120-photo
+  batches with JSON output order unchanged.
+- `pdf compress --target-size` refines between quality-ladder rungs with two
+  bounded bisection steps, so the published quality is not limited to the
+  ladder's coarse spacing.
 - **JSON contract `schema_version` 1.0 -> 1.1** (audit B2): usage rejections
   (bad arguments, conflicting options, plan validation) now exit `2` on both
   channels — previously split between 1 and 2 — while operational failures

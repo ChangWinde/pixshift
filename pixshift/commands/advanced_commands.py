@@ -1,5 +1,6 @@
 """Registration for advanced image workflow commands."""
 
+import functools
 import os
 import time
 from collections.abc import Callable
@@ -31,7 +32,7 @@ from ..ops import watermark as watermark_ops
 from ..presenters.cli_presenters import batch_progress, print_failures
 from ..presenters.json_presenters import emit_json, emit_json_and_exit
 from ..video_engine import VideoOptimizeResult, collect_video_files
-from .common import failure_entry, failure_lines, validate_tasks_or_exit
+from .common import failure_entry, failure_lines, run_batch_tasks, validate_tasks_or_exit
 
 _WATERMARK_POSITIONS = [
     "top-left",
@@ -228,20 +229,26 @@ def register_advanced_commands(
         errors: list[dict[str, str]] = []
         input_bytes = 0
         output_bytes = 0
+        worker = functools.partial(
+            crop_ops.crop_one,
+            crop_box=crop_box,
+            aspect=aspect,
+            trim=trim,
+            trim_fuzz=trim_fuzz,
+            gravity=gravity,
+            overwrite=overwrite,
+        )
         with batch_progress(console, disable=as_json) as progress:
             task_id = progress.add_task("裁剪中", total=len(tasks))
-            for inp, out in tasks:
-                result = crop_ops.crop_one(
-                    inp, out, crop_box, aspect, trim, trim_fuzz, gravity, overwrite
-                )
-                input_bytes += result.input_size
-                output_bytes += result.output_size if result.success else 0
-                if result.success:
-                    success += 1
-                else:
-                    failed += 1
-                    errors.append(failure_entry(inp, result.error, out))
-                progress.advance(task_id)
+            outcomes = run_batch_tasks(tasks, worker, on_result=lambda: progress.advance(task_id))
+        for (inp, out), result in zip(tasks, outcomes, strict=True):
+            input_bytes += result.input_size
+            output_bytes += result.output_size if result.success else 0
+            if result.success:
+                success += 1
+            else:
+                failed += 1
+                errors.append(failure_entry(inp, result.error, out))
         payload = {
             "command": "crop",
             "ok": failed == 0,
@@ -782,27 +789,27 @@ def _run_watermark(
     input_bytes = 0
     output_bytes = 0
     start = time.time()
+    if mode == "text":
+        if apply_text_kwargs is None:
+            raise ValueError("text watermark options are required")
+        worker = functools.partial(watermark_ops.text_one, overwrite=overwrite, **apply_text_kwargs)
+    else:
+        if apply_image_kwargs is None:
+            raise ValueError("image watermark options are required")
+        worker = functools.partial(
+            watermark_ops.image_one, overwrite=overwrite, **apply_image_kwargs
+        )
     with batch_progress(console, disable=as_json) as progress:
         task_id = progress.add_task("水印处理中", total=len(tasks))
-        for inp, out in tasks:
-            if mode == "text":
-                if apply_text_kwargs is None:
-                    raise ValueError("text watermark options are required")
-                result = watermark_ops.text_one(inp, out, overwrite=overwrite, **apply_text_kwargs)
-            else:
-                if apply_image_kwargs is None:
-                    raise ValueError("image watermark options are required")
-                result = watermark_ops.image_one(
-                    inp, out, overwrite=overwrite, **apply_image_kwargs
-                )
-            input_bytes += result.input_size
-            output_bytes += result.output_size if result.success else 0
-            if result.success:
-                success += 1
-            else:
-                failed += 1
-                errors.append(failure_entry(inp, result.error, out))
-            progress.advance(task_id)
+        outcomes = run_batch_tasks(tasks, worker, on_result=lambda: progress.advance(task_id))
+    for (inp, out), result in zip(tasks, outcomes, strict=True):
+        input_bytes += result.input_size
+        output_bytes += result.output_size if result.success else 0
+        if result.success:
+            success += 1
+        else:
+            failed += 1
+            errors.append(failure_entry(inp, result.error, out))
     payload = {
         "command": f"watermark.{mode}",
         "ok": failed == 0,

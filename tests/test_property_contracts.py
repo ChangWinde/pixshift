@@ -20,6 +20,7 @@ from pixshift.ops.apply import load_plan_document
 from pixshift.pdf_engine import _strip_jpeg_metadata
 from pixshift.video_engine import (
     HWACCEL_BACKENDS,
+    MAX_TARGET_VIDEO_BPS,
     MIN_TARGET_VIDEO_BPS,
     VIDEO_CODECS,
     VIDEO_COMPRESS_PRESETS,
@@ -237,9 +238,9 @@ def test_convert_argv_shape(container, codec, hwaccel):
 def test_target_bitrate_is_total_and_monotone(target_bytes, duration, has_audio):
     bitrate = compute_target_video_bitrate(target_bytes, duration, has_audio=has_audio)
     assert isinstance(bitrate, int)
-    assert bitrate >= 0
+    assert 0 <= bitrate <= MAX_TARGET_VIDEO_BPS
     if bitrate > 0 and target_bytes < 10**13:
-        # More budget never yields a lower bitrate.
+        # More budget never yields a lower bitrate (the clamp is monotone).
         bigger = compute_target_video_bitrate(target_bytes * 2, duration, has_audio=has_audio)
         assert bigger >= bitrate
     assert MIN_TARGET_VIDEO_BPS > 0

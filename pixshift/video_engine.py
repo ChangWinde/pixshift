@@ -421,6 +421,11 @@ def build_gif_args(
 TARGET_SIZE_OVERHEAD = 0.02
 # Below this video bitrate the output is unusable; fail instead of encoding.
 MIN_TARGET_VIDEO_BPS = 8_000
+# Beyond any consumer codec's useful range; also keeps garbage probe
+# durations from injecting astronomically long numbers into ffmpeg argv.
+MAX_TARGET_VIDEO_BPS = 2_000_000_000
+# Durations below this are probe garbage, not encodable clips.
+MIN_USABLE_DURATION_SEC = 0.05
 TARGET_AUDIO_BPS = 128_000
 
 
@@ -428,10 +433,14 @@ def compute_target_video_bitrate(target_bytes: int, duration_sec: float, *, has_
     """Video bitrate (bps) that fits ``target_bytes`` over ``duration_sec``.
 
     Deterministic budget math: total bits over the duration, minus a fixed
-    container-overhead reserve, minus the audio track's share. The caller is
-    responsible for rejecting values below ``MIN_TARGET_VIDEO_BPS``.
+    container-overhead reserve, minus the audio track's share, clamped into
+    ``[0, MAX_TARGET_VIDEO_BPS]`` — the clamp keeps the function monotone in
+    the budget even when a tiny duration explodes the division. The caller
+    rejects values below ``MIN_TARGET_VIDEO_BPS``.
     """
-    if target_bytes <= 0 or duration_sec <= 0 or not math.isfinite(duration_sec):
+    if target_bytes <= 0 or not math.isfinite(duration_sec):
+        return 0
+    if duration_sec < MIN_USABLE_DURATION_SEC:
         return 0
     total_bps = target_bytes * 8.0 / duration_sec
     video_bps = total_bps * (1.0 - TARGET_SIZE_OVERHEAD)
@@ -439,7 +448,7 @@ def compute_target_video_bitrate(target_bytes: int, duration_sec: float, *, has_
         video_bps -= TARGET_AUDIO_BPS
     if not math.isfinite(video_bps) or video_bps <= 0:
         return 0
-    return int(video_bps)
+    return min(int(video_bps), MAX_TARGET_VIDEO_BPS)
 
 
 def build_bitrate_pass_args(
