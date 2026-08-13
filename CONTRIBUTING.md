@@ -24,6 +24,16 @@ Optional pre-commit hooks:
 uv run pre-commit install
 ```
 
+Large-scale verification (before releases or contract changes):
+
+```bash
+# End-to-end sweep: seeded corpus + every CLI surface + schema validation
+uv run python scripts/e2e_sweep.py --images 400 --seed 1
+
+# Randomized property fuzzing (the default profile is deterministic)
+PIXSHIFT_HYPOTHESIS_PROFILE=stress uv run pytest tests/test_property_contracts.py
+```
+
 ## Project Expectations
 
 - Keep changes focused and minimal.
