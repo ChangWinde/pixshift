@@ -419,20 +419,28 @@ class PixShiftConverter:
             output_fmt = FORMAT_ALIASES.get(output_fmt, output_fmt)
 
             # 打开图片并复制到内存，避免覆盖源文件时依赖惰性文件句柄。
+            animation: tuple[list[Image.Image], list[int], int] | None = None
             with Image.open(input_path) as opened:
                 result.width, result.height = opened.size
                 source_mode = opened.mode
                 if image_frame_count(opened) > 1:
                     if output_fmt not in ANIMATED_OUTPUT_FORMATS:
                         raise AnimatedInputNotSupportedError()
-                    frames, durations, loop = _extract_animation(opened)
-                    self._save_animated(frames, durations, loop, output_fmt, output_path)
-                    result.output_size = os.path.getsize(output_path)
-                    result.success = True
-                    result.duration = time.time() - start_time
-                    return result
-                img = opened.copy()
-                img.info.update(opened.info)
+                    animation = _extract_animation(opened)
+                else:
+                    img = opened.copy()
+                    img.info.update(opened.info)
+
+            if animation is not None:
+                # Save only after the source handle is closed: Windows cannot
+                # atomically replace a file that is still open, so an in-place
+                # --overwrite re-encode would fail there.
+                frames, durations, loop = animation
+                self._save_animated(frames, durations, loop, output_fmt, output_path)
+                result.output_size = os.path.getsize(output_path)
+                result.success = True
+                result.duration = time.time() - start_time
+                return result
 
             # 处理图片
             img, orientation_normalized = self._process_image_with_orientation(img, output_fmt)
