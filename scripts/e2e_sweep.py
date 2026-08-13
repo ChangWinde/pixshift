@@ -710,11 +710,11 @@ def main() -> int:
             str(vids / "fit"),
             expect_exit=0,
         )
-        produced = next((vids / "fit").glob("*.mp4"), None)
-        if produced is None or produced.stat().st_size > video_budget:
+        fitted_clip = next((vids / "fit").glob("*.mp4"), None)
+        if fitted_clip is None or fitted_clip.stat().st_size > video_budget:
             sweep.violation("video", "target-size output missing or over budget")
 
-        joined = vids / "joined.mp4"
+        joined_clip = vids / "joined.mp4"
         sweep.run_json(
             "video",
             "video",
@@ -722,11 +722,11 @@ def main() -> int:
             str(first),
             str(second),
             "-o",
-            str(joined),
+            str(joined_clip),
             expect_exit=0,
         )
-        code, info = sweep.run_json("video", "video", "info", str(joined), expect_exit=0)
-        joined_duration = info.get("files", [{}])[0].get("duration_sec", 0)
+        code, clip_info = sweep.run_json("video", "video", "info", str(joined_clip), expect_exit=0)
+        joined_duration = clip_info.get("files", [{}])[0].get("duration_sec", 0)
         if not 3.4 <= joined_duration <= 4.6:
             sweep.violation("video", f"concat duration {joined_duration} not ~4s")
 
