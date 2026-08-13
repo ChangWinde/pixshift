@@ -215,16 +215,16 @@ def test_trim_rejects_conflicting_bounds(runner, ffmpeg_ready, clip):
     result = runner.invoke(
         cli, ["video", "trim", str(clip), "--end", "5", "--duration", "5", "--json"]
     )
-    assert result.exit_code == 1
+    assert result.exit_code == 2
     assert json.loads(result.output)["error"] == "conflicting_options"
 
     human = runner.invoke(cli, ["video", "trim", str(clip), "--end", "5", "--duration", "5"])
-    assert human.exit_code == 1
+    assert human.exit_code == 2
 
 
 def test_trim_rejects_bad_timecode(runner, ffmpeg_ready, clip):
     result = runner.invoke(cli, ["video", "trim", str(clip), "--start", "abc", "--json"])
-    assert result.exit_code == 1
+    assert result.exit_code == 2
     assert json.loads(result.output)["error"] == "invalid_timecode"
 
 
@@ -294,12 +294,12 @@ def test_thumbnail_timecode_and_format(runner, ffmpeg_ready, clip, tmp_path):
     assert _argv_value(ffmpeg_ready[0], "-ss") == "10.000"
 
 
-def test_thumbnail_invalid_at_is_per_file_error(runner, ffmpeg_ready, clip):
+def test_thumbnail_invalid_at_is_a_usage_error(runner, ffmpeg_ready, clip):
     result = runner.invoke(cli, ["video", "thumbnail", str(clip), "--at", "150%", "--json"])
-    assert result.exit_code == 1
+    assert result.exit_code == 2
     payload = json.loads(result.output)
-    assert payload["failed"] == 1
-    assert payload["results"][0]["error"] == "invalid_thumbnail_at"
+    assert payload["ok"] is False
+    assert payload["error"] == "invalid_thumbnail_at"
 
 
 def test_extract_audio_defaults_to_mp3(runner, ffmpeg_ready, clip, tmp_path):
@@ -337,7 +337,7 @@ def test_gif_builds_palette_graph(runner, ffmpeg_ready, clip, tmp_path):
 
 def test_gif_rejects_bad_timecode(runner, ffmpeg_ready, clip):
     result = runner.invoke(cli, ["video", "gif", str(clip), "--start", "x:y", "--json"])
-    assert result.exit_code == 1
+    assert result.exit_code == 2
     assert json.loads(result.output)["error"] == "invalid_timecode"
 
 

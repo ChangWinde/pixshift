@@ -34,7 +34,7 @@ from ..ops import dedup as dedup_ops
 from ..ops import strip as strip_ops
 from ..presenters.cli_presenters import print_failures, show_dry_run_table, size_ratio_text
 from ..presenters.json_presenters import emit_json, emit_json_and_exit
-from .common import validate_tasks_or_exit
+from .common import failure_entry, failure_lines, usage_error_or_exit, validate_tasks_or_exit
 
 
 def register_workflow_commands(
@@ -100,15 +100,13 @@ def register_workflow_commands(
     ) -> None:
         """批量压缩图片，保持原格式。"""
         if quality is not None and target_size is not None:
-            payload = {
-                "command": "compress",
-                "ok": False,
-                "error": "conflicting_options",
-                "detail": "--quality and --target-size cannot be used together",
-            }
-            if as_json:
-                emit_json_and_exit(payload, 1)
-            raise click.UsageError("--quality 与 --target-size 不能同时使用")
+            usage_error_or_exit(
+                command="compress",
+                as_json=as_json,
+                error="conflicting_options",
+                detail="--quality and --target-size cannot be used together",
+                human_message="--quality 与 --target-size 不能同时使用",
+            )
 
         if not as_json:
             console.print(f"\n{mini_logo} [bold]图片压缩[/bold]\n")
@@ -215,7 +213,7 @@ def register_workflow_commands(
 
         summary = OperationSummary(total=len(skipped_tasks), skipped=len(skipped_tasks))
         start_time = time.time()
-        errors: list[str] = []
+        errors: list[dict[str, str]] = []
 
         if as_json:
             for inp, out in tasks:
@@ -230,7 +228,7 @@ def register_workflow_commands(
                 )
                 summary.register(result.input_size, result.output_size, result.success)
                 if not result.success:
-                    errors.append(f"{os.path.basename(inp)}: {result.error}")
+                    errors.append(failure_entry(inp, result.error, out))
         else:
             with Progress(
                 SpinnerColumn(),
@@ -253,7 +251,7 @@ def register_workflow_commands(
                     )
                     summary.register(result.input_size, result.output_size, result.success)
                     if not result.success:
-                        errors.append(f"{os.path.basename(inp)}: {result.error}")
+                        errors.append(failure_entry(inp, result.error, out))
                     progress.advance(task_id)
 
         duration = time.time() - start_time
@@ -276,7 +274,7 @@ def register_workflow_commands(
                 emit_json_and_exit(payload, 1)
             emit_json(payload)
         else:
-            print_failures(console, errors)
+            print_failures(console, failure_lines(errors))
             ratio_text = size_ratio_text(
                 summary.total_input_size, summary.total_output_size, human_size
             )
@@ -443,7 +441,7 @@ def register_workflow_commands(
         summary = OperationSummary(total=len(skipped_tasks), skipped=len(skipped_tasks))
         fields_removed = 0
         start_time = time.time()
-        errors: list[str] = []
+        errors: list[dict[str, str]] = []
 
         if as_json:
             for inp, out in tasks:
@@ -463,7 +461,7 @@ def register_workflow_commands(
                 if result.success and result.fields_removed > 0:
                     fields_removed += result.fields_removed
                 if not result.success:
-                    errors.append(f"{os.path.basename(inp)}: {result.error}")
+                    errors.append(failure_entry(inp, result.error, out))
         else:
             with Progress(
                 SpinnerColumn(),
@@ -491,7 +489,7 @@ def register_workflow_commands(
                     if result.success and result.fields_removed > 0:
                         fields_removed += result.fields_removed
                     if not result.success:
-                        errors.append(f"{os.path.basename(inp)}: {result.error}")
+                        errors.append(failure_entry(inp, result.error, out))
                     progress.advance(task_id)
 
         duration = time.time() - start_time
@@ -514,7 +512,7 @@ def register_workflow_commands(
                 emit_json_and_exit(payload, 1)
             emit_json(payload)
         else:
-            print_failures(console, errors)
+            print_failures(console, failure_lines(errors))
             console.print(
                 Panel(
                     f"  成功: [bold green]{summary.success}[/bold green]\n"

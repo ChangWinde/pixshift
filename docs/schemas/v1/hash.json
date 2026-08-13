@@ -5,7 +5,7 @@
   "type": "object",
   "required": ["schema_version", "command", "ok", "total", "algorithm", "files"],
   "properties": {
-    "schema_version": {"const": "1.0"},
+    "schema_version": {"const": "1.1"},
     "command": {"const": "hash"},
     "ok": {"type": "boolean"},
     "total": {"type": "integer", "minimum": 0},

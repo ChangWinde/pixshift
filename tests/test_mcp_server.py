@@ -52,7 +52,7 @@ def test_tools_call_executes_cli_and_returns_json_document():
     result = response["result"]
     assert result["isError"] is False
     document = json.loads(result["content"][0]["text"])
-    assert document["schema_version"] == "1.0"
+    assert document["schema_version"] == "1.1"
     assert document["command"] == "tools"
 
 

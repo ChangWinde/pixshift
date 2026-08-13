@@ -327,15 +327,16 @@ def register_video_commands(
         """在指定时间点导出一帧静态图。"""
         if not video_ops.available():
             _ffmpeg_missing("video.thumbnail", as_json, console)
+        try:
+            # The spec's validity is file-independent; reject it up front.
+            resolve_thumbnail_time(at_spec, 100.0)
+        except ValueError as error:
+            _fail("video.thumbnail", str(error), as_json, console)
         files = collect_video_files(list(inputs), recursive)
         results = []
         for path in files:
             probed = video_ops.info(path)
-            try:
-                at_seconds = resolve_thumbnail_time(at_spec, probed.duration_sec)
-            except ValueError as error:
-                results.append(VideoResult(input_path=path, error=str(error)))
-                continue
+            at_seconds = resolve_thumbnail_time(at_spec, probed.duration_sec)
             name = f"{Path(path).stem}_thumb.{image_format}"
             dst = _video_output(path, name, output_dir, list(inputs))
             results.append(
@@ -416,9 +417,10 @@ def register_video_commands(
 
 
 def _fail(command: str, code: str, as_json: bool, console: Console) -> None:
+    """Reject invalid arguments before any encode starts (usage error, exit 2)."""
     if as_json:
-        emit_json_and_exit({"command": command, "ok": False, "error": code}, 1)
-    raise click.ClickException(code)
+        emit_json_and_exit({"command": command, "ok": False, "error": code}, 2)
+    raise click.UsageError(code)
 
 
 def _emit_single(command: str, result: VideoResult, as_json: bool, console: Console) -> None:

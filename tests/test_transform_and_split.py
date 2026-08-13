@@ -66,11 +66,11 @@ def test_resize_requires_exactly_one_mode(tmp_path):
     result = runner.invoke(
         cli, ["resize", str(src), "--percent", "50", "--max-size", "100", "--json"]
     )
-    assert result.exit_code == 1
+    assert result.exit_code == 2
     assert _payload(result)["error"] == "conflicting_options"
 
     none_given = runner.invoke(cli, ["resize", str(src), "--json"])
-    assert none_given.exit_code == 1
+    assert none_given.exit_code == 2
     assert _payload(none_given)["error"] == "conflicting_options"
 
 
@@ -119,7 +119,7 @@ def test_rotate_requires_an_operation(tmp_path):
     _make_image(src)
     runner = CliRunner()
     result = runner.invoke(cli, ["rotate", str(src), "--json"])
-    assert result.exit_code == 1
+    assert result.exit_code == 2
     assert _payload(result)["error"] == "nothing_to_do"
 
 
@@ -132,7 +132,8 @@ def test_rotate_rejects_animated_input(tmp_path):
     result = runner.invoke(cli, ["rotate", str(src), "--degrees", "90", "--json"])
     assert result.exit_code == 1
     payload = _payload(result)
-    assert "animated_input_not_supported" in payload["errors"][0]
+    assert payload["errors"][0]["error"] == "animated_input_not_supported"
+    assert payload["errors"][0]["input"].endswith("anim.gif")
 
 
 def _make_pdf(tmp_path, pages=3):

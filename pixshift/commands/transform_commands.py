@@ -24,7 +24,7 @@ from ..core.files import (
 )
 from ..ops import transform as transform_ops
 from ..presenters.json_presenters import emit_json, emit_json_and_exit
-from .common import validate_tasks_or_exit
+from .common import failure_entry, usage_error_or_exit, validate_tasks_or_exit
 
 _RESIZE_SUFFIX = "_resized"
 _ROTATE_SUFFIX = "_rotated"
@@ -115,26 +115,26 @@ def register_transform_commands(
         """批量缩放图片，保持原格式（生成 _resized 派生文件）。"""
         chosen = [option for option in (size, percent, max_size) if option is not None]
         if len(chosen) != 1:
-            payload = {
-                "command": "resize",
-                "ok": False,
-                "error": "conflicting_options",
-                "detail": "exactly one of --size, --percent, --max-size is required",
-            }
-            if as_json:
-                emit_json_and_exit(payload, 1)
-            raise click.UsageError("必须且只能指定 --size / --percent / --max-size 之一")
+            usage_error_or_exit(
+                command="resize",
+                as_json=as_json,
+                error="conflicting_options",
+                detail="exactly one of --size, --percent, --max-size is required",
+                human_message="必须且只能指定 --size / --percent / --max-size 之一",
+            )
 
         resize_tuple: tuple[int, int] | None = None
         if size is not None:
             try:
                 resize_tuple = _parse_size(size)
             except ValueError:
-                if as_json:
-                    emit_json_and_exit(
-                        {"command": "resize", "ok": False, "error": "invalid_size"}, 1
-                    )
-                raise click.UsageError("--size 需要 WxH 格式，如 1280x720") from None
+                usage_error_or_exit(
+                    command="resize",
+                    as_json=as_json,
+                    error="invalid_size",
+                    detail="--size expects WxH, for example 1280x720",
+                    human_message="--size 需要 WxH 格式，如 1280x720",
+                )
 
         files = collect_supported_files(list(inputs), SUPPORTED_INPUT_FORMATS, recursive=recursive)
         files, ignored_generated = filter_generated_inputs(
@@ -198,7 +198,7 @@ def register_transform_commands(
 
         start_time = time.time()
         results = []
-        errors: list[str] = []
+        errors: list[dict[str, str]] = []
         input_bytes = 0
         output_bytes = 0
         success = 0
@@ -210,7 +210,7 @@ def register_transform_commands(
                 input_bytes += result.input_size
                 output_bytes += result.output_size
             else:
-                errors.append(f"{os.path.basename(inp)}: {result.error}")
+                errors.append(failure_entry(inp, result.error, out))
 
         payload = {
             "command": "resize",
@@ -284,15 +284,13 @@ def register_transform_commands(
     ) -> None:
         """批量旋转/翻转图片（生成 _rotated 派生文件；EXIF 方向先归一）。"""
         if degrees == 0 and flip is None:
-            payload = {
-                "command": "rotate",
-                "ok": False,
-                "error": "nothing_to_do",
-                "detail": "provide --degrees and/or --flip",
-            }
-            if as_json:
-                emit_json_and_exit(payload, 1)
-            raise click.UsageError("需要指定 --degrees 或 --flip")
+            usage_error_or_exit(
+                command="rotate",
+                as_json=as_json,
+                error="nothing_to_do",
+                detail="provide --degrees and/or --flip",
+                human_message="需要指定 --degrees 或 --flip",
+            )
 
         files = collect_supported_files(list(inputs), SUPPORTED_INPUT_FORMATS, recursive=recursive)
         files, ignored_generated = filter_generated_inputs(
@@ -328,7 +326,7 @@ def register_transform_commands(
 
         start_time = time.time()
         results = []
-        errors: list[str] = []
+        errors: list[dict[str, str]] = []
         success = 0
         for inp, out in tasks:
             result = transform_ops.rotate_one(inp, out, degrees=degrees, flip=flip, overwrite=True)
@@ -336,7 +334,7 @@ def register_transform_commands(
             if result.success:
                 success += 1
             else:
-                errors.append(f"{os.path.basename(inp)}: {result.error}")
+                errors.append(failure_entry(inp, result.error, out))
 
         payload = {
             "command": "rotate",

@@ -489,7 +489,7 @@ def test_json_contract_has_schema_version(tmp_path: Path) -> None:
     result = CliRunner().invoke(cli, ["info", str(source), "--json"])
 
     assert result.exit_code == 0, result.output
-    assert json.loads(result.output)["schema_version"] == "1.0"
+    assert json.loads(result.output)["schema_version"] == "1.1"
 
 
 def test_json_mode_serializes_click_validation_errors(tmp_path: Path) -> None:
@@ -506,6 +506,6 @@ def test_json_mode_serializes_click_validation_errors(tmp_path: Path) -> None:
     for result in (invalid_value, unknown_option):
         assert result.exit_code != 0
         payload = json.loads(result.output)
-        assert payload["schema_version"] == "1.0"
+        assert payload["schema_version"] == "1.1"
         assert payload["ok"] is False
         assert payload["error"] in {"invalid_value", "invalid_option"}

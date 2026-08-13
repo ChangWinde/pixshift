@@ -8,7 +8,7 @@ import click
 
 def emit_json(payload: dict[str, Any]) -> None:
     """Emit JSON payload to stdout with UTF-8 characters preserved."""
-    document = {"schema_version": "1.0", **payload}
+    document = {"schema_version": "1.1", **payload}
     click.echo(json.dumps(document, ensure_ascii=False, separators=(",", ":")))
 
 
