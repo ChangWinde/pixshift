@@ -35,3 +35,8 @@ Other bounded-performance decisions:
   needed. A 12-image 3000×2000 q88 benchmark: 0.87s → 0.20s (4.3×) with a 21%
   smaller PDF and zero generation loss; oriented, CMYK, alpha, or explicitly
   recompressed (`--quality < 95`) inputs keep the re-encode path.
+- `pdf compress` resolves image placement rects once per page via
+  `get_image_info` instead of one `get_image_rects` content-stream parse per
+  image (quadratic on dense pages). Measured on 4 pages × 40 placements:
+  0.45s → 0.26s with 8 unique images, 0.61s → 0.23s (2.7×) with 40 unique
+  images per page; the win grows with image density.

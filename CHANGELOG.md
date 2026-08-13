@@ -34,6 +34,9 @@ All notable changes to this project are documented in this file.
   loss). EXIF/XMP/comment segments are stripped byte-level so no metadata
   leaks into the PDF; oriented, CMYK, alpha, or `--quality < 95` inputs keep
   the re-encode path.
+- `pdf compress` resolves image placements once per page (`get_image_info`)
+  instead of re-parsing the content stream per image; 2.7x measured on dense
+  pages and growing with image density.
 
 ## [1.2.0] - 2026-08-12
 
