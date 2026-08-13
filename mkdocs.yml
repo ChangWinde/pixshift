@@ -1,56 +1,89 @@
-site_name: PixShift
-site_description: AI-native, local-first CLI toolkit for images, PDFs, and video
+site_name: PixShift 使用手册
+site_description: 本地优先的图片、PDF、视频命令行工具，人和 agent 共用一套接口
 site_url: https://changwinde.github.io/pixshift/
 repo_url: https://github.com/ChangWinde/pixshift
 repo_name: ChangWinde/pixshift
 edit_uri: edit/main/docs/
+copyright: PixShift · MIT License
 
 theme:
   name: material
+  language: zh
+  font:
+    text: JetBrains Mono
+    code: JetBrains Mono
+  icon:
+    repo: fontawesome/brands/github
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
-      primary: teal
+      primary: black
       accent: teal
       toggle:
-        icon: material/brightness-7
-        name: Switch to dark mode
+        icon: material/weather-night
+        name: 切换到深色模式
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
-      primary: teal
+      primary: black
       accent: teal
       toggle:
-        icon: material/brightness-4
-        name: Switch to light mode
+        icon: material/weather-sunny
+        name: 切换到浅色模式
   features:
-    - navigation.sections
+    - navigation.tabs
+    - navigation.tabs.sticky
     - navigation.top
+    - navigation.tracking
+    - navigation.footer
+    - toc.follow
     - content.code.copy
+    - content.tabs.link
     - search.suggest
+    - search.highlight
+
+extra_css:
+  - stylesheets/extra.css
 
 markdown_extensions:
+  - abbr
   - admonition
+  - attr_list
+  - md_in_html
   - tables
   - toc:
-      permalink: true
-  - pymdownx.highlight
+      permalink: "#"
+      toc_depth: 3
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
   - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+
+plugins:
+  - search:
+      # 中文按标点与空白切分；英文标识符（命令、字段名）保持整体可搜。
+      separator: '[\s\u3000\u3001\u3002\uff0c\uff1a\uff1b\uff08\uff09\-_,:!=\[\]()"`/]+'
+
+# 站点只承载使用手册。架构决策记录（adr/）、路线图、发布流程等工程文档
+# 保留在仓库中，不进入面向用户的文档站。
+exclude_docs: |
+  adr/
+  ARCHITECTURE.md
+  GOAL.md
+  RELEASING.md
+  LABEL_STRATEGY.md
+  PERFORMANCE.md
 
 nav:
-  - Home: index.md
-  - User Guide:
-      - Commands: COMMANDS.md
-      - Performance: PERFORMANCE.md
-  - Machine Interface:
-      - JSON Output: JSON_OUTPUT.md
-  - Architecture:
-      - Overview: ARCHITECTURE.md
-      - "ADR-0001: Safe operation boundaries": adr/0001-safe-operation-boundaries.md
-      - "ADR-0002: Opinionated defaults and AI plans": adr/0002-opinionated-defaults-and-ai-plans.md
-      - "ADR-0003: AI-native tool surface": adr/0003-ai-native-tool-surface.md
-      - "ADR-0004: Feature surface audit": adr/0004-feature-surface-audit.md
-      - "ADR-0005: Video pillar": adr/0005-video-pillar.md
-  - Project:
-      - Goal and milestones: GOAL.md
-      - Releasing: RELEASING.md
-      - Label strategy: LABEL_STRATEGY.md
+  - 开始:
+      - 概览: index.md
+      - 安装与环境: install.md
+  - 图片: images.md
+  - PDF: pdf.md
+  - 视频: video.md
+  - 自动化:
+      - 脚本与 Agent 集成: automation.md
+      - JSON 输出契约: JSON_OUTPUT.md
+  - 常见问题: faq.md

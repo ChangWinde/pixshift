@@ -181,22 +181,27 @@ Script templates:
 
 ## Documentation
 
+The user manual lives at **<https://changwinde.github.io/pixshift/>** (written in
+Chinese, matching the CLI's own output language):
+
+- Images, PDF, and video command guides
+- Automation and agent integration (`docs/automation.md`)
+- JSON output contract (`docs/JSON_OUTPUT.md`)
+- Installation, environment, and FAQ
+
+Engineering references stay in the repository and are deliberately kept out of
+the user-facing site:
+
 - Architecture: `docs/ARCHITECTURE.md`
-- Safety boundary ADR: `docs/adr/0001-safe-operation-boundaries.md`
-- Command reference: `docs/COMMANDS.md`
-- AI-native surface ADR: `docs/adr/0003-ai-native-tool-surface.md`
-- Feature surface audit ADR: `docs/adr/0004-feature-surface-audit.md`
-- Video pillar ADR: `docs/adr/0005-video-pillar.md`
+- Architecture decision records: `docs/adr/`
 - JSON Schema contracts: `docs/schemas/v1/`
 - Agent guide: `AGENTS.md`
 - Project goal and milestones: `docs/GOAL.md`
-- JSON output contract: `docs/JSON_OUTPUT.md`
 - Performance evidence: `docs/PERFORMANCE.md`
-- Product defaults ADR: `docs/adr/0002-opinionated-defaults-and-ai-plans.md`
 - Label strategy: `docs/LABEL_STRATEGY.md`
+- Release process: `docs/RELEASING.md`
 - Automation examples: `examples/automation/README.md`
 - Advanced examples: `examples/advanced/README.md`
-- Release process: `docs/RELEASING.md`
 - Changelog: `CHANGELOG.md`
 
 ## Contributing
