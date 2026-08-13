@@ -15,6 +15,11 @@ All notable changes to this project are documented in this file.
   `optimize | apply` pipe: error entries carry an empty `plan` object since
   schema 1.1, and `apply` now skips them instead of rejecting the document
   with `missing_command` (found by the end-to-end sweep).
+- HEIC/AVIF plugin registration moved to package import, so worker-pool
+  children under spawn/forkserver start methods (the Linux default since
+  Python 3.14) can decode them: previously a `compress`/`strip` pool child
+  failed with "cannot identify image file" on HEIC while `convert` children
+  happened to work (found by the sweep's HEIC corpus).
 - `optimize` no longer emits an infinite bits-per-pixel figure when a crafted
   container reports a subnormal frame rate — the overflowing division now
   degrades to "no signal" (found by randomized property fuzzing).

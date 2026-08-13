@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import tempfile
 from dataclasses import dataclass, field
@@ -19,6 +20,7 @@ from ..core.files import (
     plan_output_path,
     validate_unique_output_paths,
 )
+from ..core.parallel import run_batch_tasks
 from . import convert as convert_ops
 from . import strip as strip_ops
 
@@ -106,19 +108,20 @@ def prep_files(
             item.sha256 = _sha256(dest)
         result.items.append(item)
 
-    for source, dest in pending:
-        result.items.append(
-            _prep_one(
-                source,
-                dest,
-                output_format=output_format,
-                max_size=max_size,
-                quality=quality,
-                overwrite=overwrite,
-                dry_run=dry_run,
-                strip_privacy=strip_privacy,
-            )
-        )
+    worker = functools.partial(
+        _prep_one,
+        output_format=output_format,
+        max_size=max_size,
+        quality=quality,
+        overwrite=overwrite,
+        dry_run=dry_run,
+        strip_privacy=strip_privacy,
+    )
+    if dry_run:
+        # Previews only stat files; a worker pool would cost more than it saves.
+        result.items.extend(worker(source, dest) for source, dest in pending)
+    else:
+        result.items.extend(run_batch_tasks(pending, worker))
     return result
 
 
