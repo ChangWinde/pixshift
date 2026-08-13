@@ -6,21 +6,25 @@ on:
     paths: ["docs/**", "mkdocs.yml", ".github/workflows/docs.yml"]
   workflow_dispatch:
 
+# The site is served from the gh-pages branch (Pages source: legacy/branch),
+# so publishing is a plain push by mkdocs gh-deploy. The Actions-based
+# deployment path is deliberately not used: creating a Pages site through it
+# needs a repository-settings change that GITHUB_TOKEN cannot perform.
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 
 concurrency:
   group: pages
   cancel-in-progress: false
 
 jobs:
-  build:
+  deploy:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
 
       - name: Setup uv and Python
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
@@ -31,26 +35,11 @@ jobs:
       - name: Install docs toolchain
         run: uv sync --frozen --extra docs
 
-      - name: Build site
+      - name: Verify the site builds cleanly
         run: uv run mkdocs build --strict
 
-      # Pages must be enabled once in repo settings (Source: GitHub Actions);
-      # GITHUB_TOKEN cannot create the Pages site itself.
-      - name: Configure Pages
-        uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
-
-      - name: Upload site artifact
-        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
-        with:
-          path: site
-
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5.0.0
+      - name: Publish to gh-pages
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          uv run mkdocs gh-deploy --force
