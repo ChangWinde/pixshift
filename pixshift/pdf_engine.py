@@ -821,6 +821,8 @@ def pdf_compress_to_target(
         )
         try:
             winner: str | None = None
+            winner_quality: int | None = None
+            fail_floor: int | None = None  # lowest quality known to exceed the target
             for image_quality in (None, *PDF_TARGET_QUALITY_LADDER):
                 label = "lossless" if image_quality is None else f"q{image_quality}"
                 candidate = os.path.join(candidates_dir, f"cand_{label}.pdf")
@@ -828,13 +830,35 @@ def pdf_compress_to_target(
                 attempts.append((image_quality, size))
                 if size <= target_size:
                     winner = candidate
+                    winner_quality = image_quality
                     break
+                if image_quality is not None:
+                    fail_floor = image_quality
             if winner is None:
                 result.error = "target_size_unreachable"
                 result.details["target_size"] = target_size
                 result.details["closest_size"] = min(size for _, size in attempts)
                 result.details["attempts"] = len(attempts)
                 return result
+            if winner_quality is not None:
+                # Refine between the fitting rung and the rung above it (two
+                # bounded bisection steps) so "best quality under the budget"
+                # is not limited to the ladder's coarse spacing.
+                low = winner_quality
+                high = fail_floor if fail_floor is not None else 95
+                for _ in range(2):
+                    mid = (low + high) // 2
+                    if mid <= low or mid >= high:
+                        break
+                    candidate = os.path.join(candidates_dir, f"cand_q{mid}.pdf")
+                    size = _encode_candidate(mid, candidate)
+                    attempts.append((mid, size))
+                    if size <= target_size:
+                        winner = candidate
+                        winner_quality = mid
+                        low = mid
+                    else:
+                        high = mid
             with atomic_output_path(output_path) as temporary:
                 shutil.copyfile(winner, temporary)
         finally:
@@ -842,9 +866,8 @@ def pdf_compress_to_target(
 
         result.output_size = os.path.getsize(output_path)
         result.success = True
-        quality_label, _ = attempts[-1]
         result.details["strategy"] = (
-            "lossless" if quality_label is None else f"image_quality_{quality_label}"
+            "lossless" if winner_quality is None else f"image_quality_{winner_quality}"
         )
         result.details["target_size"] = target_size
         result.details["attempts"] = len(attempts)

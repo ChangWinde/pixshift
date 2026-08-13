@@ -380,6 +380,36 @@ def test_pdf_target_size_finds_highest_fitting_quality(tmp_path):
     assert out.stat().st_size <= target
     assert result.details["attempts"] >= 1
     assert result.details["target_size"] == target
+    # The published quality is a concrete rung or bisection refinement.
+    strategy = result.details["strategy"]
+    if strategy.startswith("image_quality_"):
+        quality = int(strategy.rsplit("_", 1)[1])
+        assert 20 <= quality <= 95
+
+
+def test_pdf_target_size_bisects_between_ladder_rungs(tmp_path):
+    """The refinement must publish at least the fitting rung's quality."""
+    pdf_path = _noisy_pdf(tmp_path)
+    out_dir = tmp_path / "steps"
+    out_dir.mkdir()
+    # Establish the size at two neighbouring rungs to pick a target between
+    # them, forcing the ladder to fit at the lower rung and bisect upward.
+    from pixshift.pdf_engine import pdf_compress
+
+    upper = pdf_compress(str(pdf_path), str(out_dir / "q70.pdf"), preset="medium", image_quality=70)
+    lower = pdf_compress(str(pdf_path), str(out_dir / "q55.pdf"), preset="medium", image_quality=55)
+    assert upper.success and lower.success
+    if lower.output_size >= upper.output_size:
+        pytest.skip("fixture does not separate the rungs")
+    target = (lower.output_size + upper.output_size) // 2
+
+    result = pdf_compress_to_target(str(pdf_path), str(tmp_path / "bisect.pdf"), target)
+    assert result.success is True, result.error
+    strategy = result.details["strategy"]
+    assert strategy.startswith("image_quality_")
+    quality = int(strategy.rsplit("_", 1)[1])
+    assert quality >= 55
+    assert (tmp_path / "bisect.pdf").stat().st_size <= target
 
 
 def test_pdf_target_size_copies_when_already_small(tmp_path):

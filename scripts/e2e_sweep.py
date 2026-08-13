@@ -183,6 +183,29 @@ def build_corpus(root: Path, rng: random.Random, image_budget: int) -> dict[str,
         img.save(str(path))
         groups["graphics"].append(path)
 
+    # Extreme shapes and depths: 1x1, ultra-wide, 16-bit, oriented EXIF,
+    # transparent palette GIF. These live with the photos so every batch
+    # phase sweeps them too.
+    extremes = root / "photos" / "extremes"
+    extremes.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (1, 1), "red").save(str(extremes / "single_pixel.png"))
+    _noise_image(rng, (1600, 2)).save(str(extremes / "ultra_wide.jpg"), format="JPEG")
+    _noise_image(rng, (2, 1600)).save(str(extremes / "ultra_tall.png"))
+    Image.new("I;16", (40, 40), 40000).save(str(extremes / "deep_16bit.png"))
+    for orientation in (3, 6, 8):
+        oriented = _noise_image(rng, (60, 40))
+        tags = Image.Exif()
+        tags[274] = orientation
+        oriented.save(
+            str(extremes / f"oriented_{orientation}.jpg"), format="JPEG", exif=tags.tobytes()
+        )
+    palette = Image.new("P", (32, 32))
+    palette.putpalette([value % 256 for value in range(768)])
+    palette.info["transparency"] = 0
+    palette.save(str(extremes / "palette_alpha.gif"), transparency=0)
+    for path in sorted(extremes.iterdir()):
+        groups["photos"].append(path)
+
     anims = root / "anims"
     anims.mkdir()
     for index in range(12):

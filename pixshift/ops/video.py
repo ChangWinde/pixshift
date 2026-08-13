@@ -12,6 +12,7 @@ from ..core.files import atomic_output_path
 from ..video_engine import (
     FFMPEG_AVAILABLE,
     MIN_TARGET_VIDEO_BPS,
+    MIN_USABLE_DURATION_SEC,
     FFmpegNotAvailableError,
     VideoInfo,
     VideoOptimizeResult,
@@ -231,7 +232,7 @@ def compress_to_target_one(
     if probed.error:
         result.error = probed.error
         return result
-    if probed.duration_sec <= 0:
+    if probed.duration_sec < MIN_USABLE_DURATION_SEC:
         result.error = "no_duration_signal"
         return result
 
