@@ -42,6 +42,38 @@ PIXSHIFT_HYPOTHESIS_PROFILE=stress uv run pytest tests/test_property_contracts.p
 - Add or update tests for behavior changes.
 - Update docs when command behavior changes.
 
+## Documentation
+
+Every document has one audience and one home. Writing user-facing prose into an
+engineering reference (or the reverse) is the fastest way to make both rot.
+
+| Audience | Where | Language |
+| --- | --- | --- |
+| Users of the CLI | `docs/index.md`, `install.md`, `images.md`, `pdf.md`, `video.md`, `automation.md`, `JSON_OUTPUT.md`, `faq.md` — published as the site | Chinese, matching the CLI's own output |
+| Contributors | `README.md`, `CONTRIBUTING.md`, `docs/ARCHITECTURE.md`, `docs/RELEASING.md`, `docs/LABEL_STRATEGY.md` | English |
+| Agents | `AGENTS.md`, `docs/schemas/v1/` | English |
+| The record | `CHANGELOG.md`, `docs/adr/`, `docs/GOAL.md`, `docs/PERFORMANCE.md` | English |
+
+Rules that keep the set coherent:
+
+- **A behaviour change updates its documentation in the same pull request.** A
+  new command or option is not done until the relevant manual chapter shows it.
+- **Write option tables from the command's actual `--help` output**, not from
+  the previous version of the docs.
+- **Numbers must be reproducible.** Performance claims cite a benchmark that
+  someone else can run; coverage and gate figures must match CI.
+- **Architecture decision records are immutable history.** Supersede an ADR with
+  a new one; do not rewrite an accepted one.
+- **New pages under `docs/` must be either published or excluded.** Add them to
+  the site nav in `mkdocs.yml`, or to `exclude_docs` if they are engineering
+  references.
+
+`tests/test_docs_governance.py` enforces the machine-checkable half of this:
+every catalogued command appears in the manual, the manual invents no command
+that does not exist, coverage gates and `schema_version` agree across code, CI
+and prose, relative links and referenced repository paths resolve, and no page
+is silently orphaned. Prose quality still needs a human reviewer.
+
 ## Pull Request Process
 
 1. Open an issue first for major changes.

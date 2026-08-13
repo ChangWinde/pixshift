@@ -37,7 +37,9 @@ Full documentation: **<https://changwinde.github.io/pixshift/>**
 pip install pixshift
 ```
 
-Requires Python `>=3.10`.
+Requires Python `>=3.10`. Linux, macOS, and Windows are covered by CI on every
+commit. PDF support is bundled; video commands additionally need `ffmpeg` on
+the `PATH` (see the manual's installation chapter).
 
 ## Command Tree
 

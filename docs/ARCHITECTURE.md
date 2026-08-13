@@ -23,11 +23,13 @@ image / PDF / video engines
           │
           ▼
 core policy
-  ├─ files.py     collection, root containment, collision checks, atomic writes
-  ├─ defaults.py  canonical human and automation defaults
-  ├─ metadata.py  frame, transparency, orientation, and EXIF policy
-  ├─ errors.py    stable policy error codes
-  └─ models.py    shared batch summaries
+  ├─ files.py        collection, root containment, collision checks, atomic writes
+  ├─ defaults.py     canonical human and automation defaults
+  ├─ metadata.py     frame, transparency, orientation, and EXIF policy
+  ├─ errors.py       stable policy error codes
+  ├─ parallel.py     bounded, order-preserving batch execution
+  ├─ tool_catalog.py the agent-facing catalog with side-effect annotations
+  └─ models.py       shared batch summaries
 ```
 
 Commands remain adapters: they may select options and presentation, but must not

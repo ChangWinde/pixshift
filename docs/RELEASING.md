@@ -43,7 +43,15 @@ validated artifacts to PyPI through [trusted publishing](https://docs.pypi.org/t
 Never assume a green artifact build means PyPI was updated; verify the release
 page on PyPI after the `publish` job succeeds.
 
+## Documentation
+
+The user manual publishes itself: `docs.yml` runs on every push to `main` that
+touches `docs/` or `mkdocs.yml`, builds with `mkdocs build --strict`, and pushes
+the result to the `gh-pages` branch that serves
+<https://changwinde.github.io/pixshift/>. No release step is required, and the
+`gh-pages` branch must not be deleted.
+
 ## Coverage Policy
 
-The current repository-wide gate is `78%` (measured coverage is above 82%).
+The current repository-wide gate is `78%` (measured coverage is about 85%).
 Increase this threshold gradually as module coverage improves; the next target is `85%`.
