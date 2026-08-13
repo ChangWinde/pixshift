@@ -114,7 +114,12 @@ All notable changes to this project are documented in this file.
 - MkDocs documentation site (Material theme) built from `docs/` (now
   covering the whole `video` command group) and published to GitHub Pages at
   <https://changwinde.github.io/pixshift/>, redeployed on
-  every push to `main` (`docs.yml` workflow).
+  every push to `main` (`docs.yml` workflow). The site is a Chinese user
+  manual — matching the CLI's own output language — organised by pillar
+  (images / PDF / video) plus automation, contract, and FAQ chapters, set in
+  a monospace typeface. Architecture decision records, the roadmap, and the
+  release process stay in the repository and are excluded from the site;
+  `docs/COMMANDS.md` is superseded by the per-pillar chapters.
 - Probe-driven `optimize` for videos: deterministic codec/bitrate analysis
   (no encoding) recommends `video.convert`, `video.compress`, or an explicit
   `keep` plan with a size estimate; results carry `media_type`.

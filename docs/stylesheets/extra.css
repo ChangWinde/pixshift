@@ -1,0 +1,95 @@
+/* 全站等宽字体：西文用 JetBrains Mono，中文回落到系统等宽/黑体字形。 */
+:root {
+  --md-text-font: "JetBrains Mono";
+  --md-code-font: "JetBrains Mono";
+}
+
+body,
+input,
+.md-typeset,
+.md-nav,
+.md-header,
+.md-tabs {
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas,
+    "Sarasa Mono SC", "Noto Sans Mono CJK SC", "PingFang SC", "Microsoft YaHei",
+    monospace;
+  font-feature-settings: "liga" 0;
+}
+
+/* 中英混排的可读性：等宽字体字面偏窄，需要更大的行距。 */
+.md-typeset {
+  font-size: 0.78rem;
+  line-height: 1.85;
+  letter-spacing: 0.01em;
+}
+
+.md-typeset h1 {
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.md-typeset h2 {
+  margin-top: 2.2em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--md-default-fg-color--lightest);
+  font-weight: 600;
+}
+
+.md-typeset h3 {
+  margin-top: 1.6em;
+  font-weight: 600;
+}
+
+/* 正文行宽：等宽字体下过宽会显著降低阅读速度。 */
+.md-grid {
+  max-width: 68rem;
+}
+
+/* 代码块：略小字号 + 更紧的行距，与正文形成层次。 */
+.md-typeset pre > code {
+  font-size: 0.72rem;
+  line-height: 1.6;
+}
+
+.md-typeset code {
+  font-size: 0.85em;
+  border-radius: 0.15rem;
+}
+
+/* 表格：手册里大量参数表，需要清晰的行分隔与紧凑留白。 */
+.md-typeset table:not([class]) {
+  font-size: 0.72rem;
+  border: 1px solid var(--md-default-fg-color--lightest);
+  border-radius: 0.2rem;
+}
+
+.md-typeset table:not([class]) th {
+  background-color: var(--md-default-fg-color--lightest);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.md-typeset table:not([class]) td,
+.md-typeset table:not([class]) th {
+  padding: 0.5em 0.9em;
+}
+
+/* 提示块：去掉过重的阴影，只保留左侧色条。 */
+.md-typeset .admonition,
+.md-typeset details {
+  border-width: 0 0 0 0.15rem;
+  border-radius: 0.2rem;
+  box-shadow: none;
+  background-color: var(--md-default-fg-color--lightest);
+  font-size: 0.74rem;
+}
+
+/* 导航与目录：等宽字体下缩小一档，避免层级过于拥挤。 */
+.md-nav {
+  font-size: 0.7rem;
+}
+
+.md-typeset .md-button {
+  border-radius: 0.2rem;
+  font-weight: 600;
+}
