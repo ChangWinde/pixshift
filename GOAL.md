@@ -24,15 +24,17 @@ discover -> plan -> apply loop (probe-driven `optimize`, `apply` for `video.*`/`
 opt-in `--hwaccel`), coverage 83% (gate 78), and a MkDocs site behind a Pages deploy
 workflow.
 
+The audit backlog is now empty: every P0-P3 finding from the 32-agent deep
+audit is either fixed or explicitly retired.
+
 Next frontier, in order:
 
-1. Release `v1.2.0` — maintainer web steps: PyPI trusted publisher + `pypi`
-   environment, enable Pages (Source: GitHub Actions), then tag and push
-   `v1.2.0` (see `docs/RELEASING.md`). The animated-image and pdf-merge work
-   that landed after the release commit ships in `v1.3.0`.
-2. Remaining audit P2/P3 items: error-code/exit-code unification (B2), JSON
-   contract polish (B5), `pdf compress` soft-mask short-circuit (C, ~5.6x),
-   terminal UI consistency (B4).
+1. Release `v1.3.0` (the first PyPI release of the modern toolkit; `v1.2.0`
+   was never tagged and its content ships within 1.3.0) — maintainer web
+   steps: PyPI trusted publisher + `pypi` environment, enable Pages (Source:
+   GitHub Actions), then tag and push `v1.3.0` (see `docs/RELEASING.md`).
+2. Post-release: gather real-world agent feedback before opening new scope;
+   candidate directions live in ADR-0004/0005 non-goals reviews.
 
 ## Milestones
 
@@ -48,6 +50,7 @@ Next frontier, in order:
 | M7 | Video plan loop: probe-driven `optimize`, `apply` for `video.*`/`keep`; coverage 82% (gate 78) | COMPLETE |
 | M8 | Release readiness: `--hwaccel` opt-in, video command docs, MkDocs site + Pages workflow, v1.2.0 release commit | COMPLETE |
 | M9 | Animated-image transforms (frames preserved through convert/resize/optimize) + pdf merge JPEG byte-splice (4.3x, metadata-clean) | COMPLETE |
+| M10 | Audit backlog cleared: exit-code contract + failure objects (schema 1.1), JSON polish, pdf compress rect index (2.7x), batch UI consistency | COMPLETE |
 
 ## In Scope
 
