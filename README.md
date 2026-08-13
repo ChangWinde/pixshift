@@ -19,7 +19,11 @@ Full documentation: **<https://changwinde.github.io/pixshift/>**
 
 - AI-native surface: `tools` catalog with side-effect annotations, `optimize`
   plans, `apply` execution, and schema contracts under `docs/schemas/v1/`
-- Fast batch operations with practical defaults
+- The size-budget idiom on every pillar: `--target-size 25MB` keeps the best
+  quality that fits (binary search for images, quality-ladder search for
+  PDFs, two-pass bitrate encoding for video)
+- Fast batch operations with practical defaults; batches parallelise across
+  a bounded worker pool automatically
 - Idempotent reruns: discovered generated files are ignored and existing outputs are skipped
 - Safe destructive behavior: similarity is advisory; only revalidated,
   byte-identical duplicates can be deleted
@@ -68,7 +72,8 @@ pixshift
 └─ video        (needs ffmpeg)
    ├─ info          Inspect container/codecs/duration
    ├─ convert       Transcode to mp4/webm/mkv/mov
-   ├─ compress      Shrink with CRF presets (h264/h265/vp9/av1)
+   ├─ compress      Shrink with CRF presets or fit a size budget
+   ├─ concat        Join clips end to end (lossless stream copy)
    ├─ trim          Cut a time range (stream-copy by default)
    ├─ thumbnail     Extract a still frame
    ├─ extract-audio Export the audio track
