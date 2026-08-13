@@ -63,6 +63,22 @@ def test_load_plan_skips_failed_entries_in_a_mixed_optimize_batch():
     assert [step["input"] for step in steps] == ["ok.png"]
 
 
+def test_load_plan_skips_empty_plan_objects_from_error_entries():
+    # Since schema 1.1 a failed optimize entry carries plan: {} — an empty
+    # dict, not a missing key. One broken file in a scanned directory must
+    # not poison the whole optimize-to-apply pipe (found by the e2e sweep).
+    document = json.dumps(
+        {
+            "results": [
+                {"input": "broken.png", "plan": {}, "error": "cannot identify image file"},
+                {"input": "ok.png", "plan": {"command": "convert", "arguments": {"to": "webp"}}},
+            ]
+        }
+    )
+    steps = load_plan_document(document)
+    assert [step["input"] for step in steps] == ["ok.png"]
+
+
 def test_apply_reports_a_missing_input(tmp_path):
     result = apply_plans([_step(input=str(tmp_path / "gone.png"))])
     assert result.ok is False

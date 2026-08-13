@@ -71,10 +71,11 @@ def load_plan_document(raw: str) -> list[dict[str, Any]]:
             if not isinstance(item, dict):
                 continue
             plan = item.get("plan")
-            if not isinstance(plan, dict):
-                # A failed optimize entry carries no plan; skip it so the
-                # healthy items in a mixed batch still apply, rather than
-                # rejecting the whole document.
+            if not isinstance(plan, dict) or not plan.get("command"):
+                # A failed optimize entry carries no plan — since schema 1.1
+                # that is an *empty* plan object, not a missing key — so skip
+                # it and let the healthy items in a mixed batch still apply,
+                # rather than rejecting the whole document.
                 continue
             steps.append(
                 {
