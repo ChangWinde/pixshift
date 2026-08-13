@@ -59,7 +59,7 @@ def test_convert_json_invalid_resize_exit_code(tmp_path):
         cli,
         ["convert", str(src), "-t", "jpg", "--resize", "bad", "--json"],
     )
-    assert result.exit_code == 1
+    assert result.exit_code == 2
     payload = json.loads(result.output.strip())
     assert payload["command"] == "convert"
     assert payload["ok"] is False

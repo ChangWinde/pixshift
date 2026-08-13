@@ -30,7 +30,7 @@ from ..ops import video as video_ops
 from ..ops import watermark as watermark_ops
 from ..presenters.json_presenters import emit_json, emit_json_and_exit
 from ..video_engine import VideoOptimizeResult, collect_video_files
-from .common import validate_tasks_or_exit
+from .common import failure_entry, validate_tasks_or_exit
 
 _WATERMARK_POSITIONS = [
     "top-left",
@@ -224,7 +224,7 @@ def register_advanced_commands(
         start = time.time()
         success = 0
         failed = 0
-        errors: list[str] = []
+        errors: list[dict[str, str]] = []
         input_bytes = 0
         output_bytes = 0
         for inp, out in tasks:
@@ -237,7 +237,7 @@ def register_advanced_commands(
                 success += 1
             else:
                 failed += 1
-                errors.append(f"{os.path.basename(inp)}: {result.error}")
+                errors.append(failure_entry(inp, result.error, out))
         payload = {
             "command": "crop",
             "ok": failed == 0,
@@ -770,7 +770,7 @@ def _run_watermark(
         os.makedirs(output_dir, exist_ok=True)
     success = 0
     failed = 0
-    errors: list[str] = []
+    errors: list[dict[str, str]] = []
     input_bytes = 0
     output_bytes = 0
     start = time.time()
@@ -789,7 +789,7 @@ def _run_watermark(
             success += 1
         else:
             failed += 1
-            errors.append(f"{os.path.basename(inp)}: {result.error}")
+            errors.append(failure_entry(inp, result.error, out))
     payload = {
         "command": f"watermark.{mode}",
         "ok": failed == 0,

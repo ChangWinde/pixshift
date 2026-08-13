@@ -17,6 +17,12 @@ All notable changes to this project are documented in this file.
 
 ### Changed
 
+- **JSON contract `schema_version` 1.0 -> 1.1** (audit B2): usage rejections
+  (bad arguments, conflicting options, plan validation) now exit `2` on both
+  channels — previously split between 1 and 2 — while operational failures
+  keep exit `1`; and every batch command reports failures as
+  `{"input", "output", "error"}` objects with full paths instead of the
+  `"name: code"` strings that only `convert` had escaped.
 - `pdf merge` embeds untransformed JPEGs by splicing their original bytes
   (4.3x faster and ~20% smaller on a JPEG-heavy benchmark, zero generation
   loss). EXIF/XMP/comment segments are stripped byte-level so no metadata

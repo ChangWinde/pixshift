@@ -3,7 +3,6 @@
 import math
 import multiprocessing
 import os
-import sys
 import time
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -34,7 +33,7 @@ from ..core.files import filter_generated_inputs, partition_existing_outputs
 from ..ops import convert as convert_ops
 from ..presenters.cli_presenters import print_failures, show_dry_run_table
 from ..presenters.json_presenters import emit_json, emit_json_and_exit
-from .common import validate_affixes_or_exit, validate_tasks_or_exit
+from .common import usage_error_or_exit, validate_affixes_or_exit, validate_tasks_or_exit
 
 
 def _convert_worker(args: tuple[str, str, dict[str, Any]]) -> ConvertResult:
@@ -186,37 +185,35 @@ def register_convert_command(
         try:
             resize_tuple, resize_percent = _parse_resize(resize)
         except ValueError:
-            if as_json:
-                emit_json_and_exit(
-                    {"command": "convert", "ok": False, "error": "invalid_resize"}, 1
-                )
-            console.print("[red]--resize 参数格式错误，请使用 WxH 或 50% 格式。[/red]")
-            sys.exit(1)
+            usage_error_or_exit(
+                command="convert",
+                as_json=as_json,
+                error="invalid_resize",
+                detail="--resize expects WxH or a percentage like 50%",
+                human_message="--resize 参数格式错误，请使用 WxH 或 50% 格式。",
+            )
 
         if resize is not None and max_size is not None:
-            if as_json:
-                emit_json_and_exit(
-                    {
-                        "command": "convert",
-                        "ok": False,
-                        "error": "conflicting_options",
-                        "detail": "--resize and --max-size cannot be used together",
-                    },
-                    1,
-                )
-            raise click.UsageError("--resize 与 --max-size 不能同时使用")
+            usage_error_or_exit(
+                command="convert",
+                as_json=as_json,
+                error="conflicting_options",
+                detail="--resize and --max-size cannot be used together",
+                human_message="--resize 与 --max-size 不能同时使用",
+            )
 
         try:
             bg_rgb = tuple(int(x.strip()) for x in bg_color.split(","))
             if len(bg_rgb) != 3 or any(not 0 <= channel <= 255 for channel in bg_rgb):
                 raise ValueError("bg-color requires 3 channels")
         except Exception:
-            if as_json:
-                emit_json_and_exit(
-                    {"command": "convert", "ok": False, "error": "invalid_bg_color"}, 1
-                )
-            console.print("[red]--bg-color 参数格式错误，请使用 R,G,B 格式。[/red]")
-            sys.exit(1)
+            usage_error_or_exit(
+                command="convert",
+                as_json=as_json,
+                error="invalid_bg_color",
+                detail="--bg-color expects R,G,B with channels in 0-255",
+                human_message="--bg-color 参数格式错误，请使用 R,G,B 格式。",
+            )
 
         if as_json:
             files = convert_ops.collect_convert_files(list(inputs), input_format, recursive)

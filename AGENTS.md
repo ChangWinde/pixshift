@@ -13,7 +13,10 @@ PixShift is a local-first, agent-safe image, PDF, and video toolkit.
 5. Prepare assets: `pixshift prep PATH -o OUT --max-size 2048 -t webp --json`
 6. Verify: `pixshift hash PATH --json` / `pixshift compare A B --json` / `pixshift doctor --json`
 
-Always pass `--json` for machine use. Failures set `ok: false` and exit non-zero.
+Always pass `--json` for machine use. Failures set `ok: false` and exit
+non-zero: `1` means work was attempted and something failed (see the
+`errors` objects: `input`/`output`/`error`), `2` means the invocation was
+rejected before any output was written (bad arguments or plan validation).
 Video commands need ffmpeg (optional, reported by `doctor`); without it they
 fail with a stable `ffmpeg_missing` error.
 

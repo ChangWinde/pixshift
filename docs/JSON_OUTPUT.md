@@ -4,8 +4,27 @@ PixShift provides stable JSON output for automation with the `--json` flag.
 
 Formal JSON Schema files for the envelope and command payloads live in
 `docs/schemas/v1/` and are validated against live command output in CI.
-Fields are additive under `schema_version` `"1.0"`; removing or retyping a
-documented field requires a version bump.
+Fields are additive under a given `schema_version`; removing or retyping a
+documented field requires a version bump. The current version is `"1.1"`:
+it retyped the batch commands' `errors` arrays from `"name: code"` strings
+to `{"input", "output", "error"}` objects with full input paths.
+
+## Exit Codes
+
+- `0` — success, including idempotent skips and `keep` plans.
+- `1` — operational failure: work was attempted and at least one item failed
+  (per-item details in the payload's `errors` / `results` / `steps`).
+- `2` — usage rejection: the invocation was refused before any output was
+  written — Click parse errors, argument semantics (`conflicting_options`,
+  `invalid_*`, `nothing_to_do`), and batch plan validation (filename affixes,
+  output collisions). JSON mode still emits
+  `{"command", "ok": false, "error", "detail"?}` on stdout.
+
+## Failure Arrays
+
+Batch commands (`convert`, `compress`, `strip`, `resize`, `rotate`, `crop`,
+`watermark *`) report failed items in `errors` as objects:
+`{"input": <full path>, "output": <planned path or "">, "error": <code>}`.
 
 ## Supported Commands
 
