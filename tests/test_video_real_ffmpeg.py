@@ -10,6 +10,7 @@ run on every pull request.
 import json
 import shutil
 import subprocess
+from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
@@ -275,4 +276,4 @@ def test_optimize_to_apply_loop_on_a_real_clip(clips, tmp_path):
     assert applied.exit_code == 0, applied.output
     step = json.loads(applied.output)["steps"][0]
     assert step["ok"] is True
-    assert (tmp_path / step["output"].rsplit("/", 1)[-1]).stat().st_size > 0
+    assert (tmp_path / Path(step["output"]).name).stat().st_size > 0

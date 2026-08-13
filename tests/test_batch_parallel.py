@@ -1,6 +1,7 @@
 """Tests for the shared bounded-parallel batch executor."""
 
 import json
+import os.path
 
 import pytest
 from click.testing import CliRunner
@@ -9,23 +10,24 @@ from PIL import Image
 from pixshift.cli import cli
 from pixshift.commands.common import run_batch_tasks
 
-
-def _echo_worker(input_path, output_path):
-    return (input_path, output_path)
+# The worker must be importable from pool children under every start method
+# (spawn children cannot import the test module itself), so use a stdlib
+# two-argument function whose result identifies its task.
+_join_worker = os.path.join
 
 
 def test_results_preserve_task_order_in_the_pool_path():
     tasks = [(f"in_{index}", f"out_{index}") for index in range(12)]
     ticks = []
-    results = run_batch_tasks(tasks, _echo_worker, on_result=lambda: ticks.append(1))
-    assert results == tasks
+    results = run_batch_tasks(tasks, _join_worker, on_result=lambda: ticks.append(1))
+    assert results == [os.path.join(inp, out) for inp, out in tasks]
     assert len(ticks) == len(tasks)
 
 
 def test_small_batches_stay_serial():
     tasks = [("a", "b"), ("c", "d")]
-    assert run_batch_tasks(tasks, _echo_worker) == tasks
-    assert run_batch_tasks([], _echo_worker) == []
+    assert run_batch_tasks(tasks, _join_worker) == [os.path.join(i, o) for i, o in tasks]
+    assert run_batch_tasks([], _join_worker) == []
 
 
 def test_pool_child_import_graph_can_decode_heic(tmp_path):

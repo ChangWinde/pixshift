@@ -3,6 +3,7 @@
 import io
 import json
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -192,13 +193,13 @@ def test_collect_video_files(tmp_path):
     (nested / "c.mkv").write_bytes(b"c")
 
     flat = collect_video_files([str(tmp_path)])
-    assert [p.rsplit("/", 1)[-1] for p in flat] == ["a.mp4", "b.MOV"]
+    assert [Path(p).name for p in flat] == ["a.mp4", "b.MOV"]
 
     deep = collect_video_files([str(tmp_path)], recursive=True)
-    assert [p.rsplit("/", 1)[-1] for p in deep] == ["a.mp4", "b.MOV", "c.mkv"]
+    assert [Path(p).name for p in deep] == ["a.mp4", "b.MOV", "c.mkv"]
 
     # Explicit non-video files are ignored; duplicates collapse.
     mixed = collect_video_files(
         [str(tmp_path / "notes.txt"), str(tmp_path / "a.mp4"), str(tmp_path)]
     )
-    assert [p.rsplit("/", 1)[-1] for p in mixed] == ["a.mp4", "b.MOV"]
+    assert [Path(p).name for p in mixed] == ["a.mp4", "b.MOV"]
