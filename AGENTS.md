@@ -20,6 +20,14 @@ rejected before any output was written (bad arguments or plan validation).
 Video commands need ffmpeg (optional, reported by `doctor`); without it they
 fail with a stable `ffmpeg_missing` error.
 
+The size-budget idiom — "stay under X bytes at the best quality" — works on
+all three pillars with the same flag:
+`compress photo.jpg --target-size 500KB` /
+`video compress talk.mp4 --target-size 25MB` /
+`pdf compress scan.pdf --target-size 2MB`.
+Inputs already within budget are copied or kept untouched; unreachable
+budgets fail with a stable error instead of shipping a degraded surprise.
+
 ## Safety
 
 - Prefer `--dry-run` before destructive work.

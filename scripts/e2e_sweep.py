@@ -475,6 +475,25 @@ def main() -> int:
         expect_exit=0,
     )
 
+    # -------- phase 4.5: the size-budget idiom on images --------
+    budget = 12 * 1024
+    budget_out = root / "_out" / "budget"
+    code, _fitted = sweep.run_json(
+        "target-size",
+        "compress",
+        str(photos_dir),
+        "-r",
+        "--target-size",
+        str(budget),
+        "-o",
+        str(budget_out),
+    )
+    if code not in (0, 1):
+        sweep.violation("target-size", f"unexpected exit {code} for the image budget batch")
+    for produced in budget_out.rglob("*"):
+        if produced.is_file() and produced.stat().st_size > budget:
+            sweep.violation("target-size", f"{produced.name} exceeds the {budget}B budget")
+
     # -------- phase 5: privacy check on strip output --------
     stripped_root = root / "_out" / "stripped"
     stripped_jpg = next(stripped_root.rglob("*.jpg"), None)
@@ -543,6 +562,22 @@ def main() -> int:
     code, joined = sweep.run_json("pdf", "pdf", "info", str(concat_pdf), expect_exit=0)
     if joined.get("page_count") != len(subset) + 3:
         sweep.violation("pdf", f"concat page count {joined.get('page_count')}")
+
+    fitted_pdf = pdf_dir / "fitted.pdf"
+    pdf_goal = int(first_pdf.stat().st_size * 0.6)
+    code, _pdf_fit = sweep.run_json(
+        "target-size",
+        "pdf",
+        "compress",
+        str(first_pdf),
+        "--target-size",
+        str(pdf_goal),
+        "-o",
+        str(fitted_pdf),
+        expect_exit=0,
+    )
+    if fitted_pdf.is_file() and fitted_pdf.stat().st_size > pdf_goal:
+        sweep.violation("target-size", "fitted pdf exceeds its byte budget")
 
     # -------- phase 8: prep + hash cross-check --------
     prep_out = root / "_out" / "prep"

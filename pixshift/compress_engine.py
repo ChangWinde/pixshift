@@ -122,7 +122,7 @@ COMPRESS_PRESETS: dict[str, dict[str, Any]] = {
 # ============================================================
 
 
-def _parse_target_size(target_str: str) -> int:
+def parse_target_size(target_str: str) -> int:
     """
     解析目标文件大小字符串
 
@@ -219,7 +219,7 @@ def compress_single(
                     img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
 
                 if target_size:
-                    target_bytes = _parse_target_size(target_size)
+                    target_bytes = parse_target_size(target_size)
                     result = _compress_to_target(
                         img, output_path, ext, fmt_config, target_bytes, result
                     )

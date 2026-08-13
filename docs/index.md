@@ -17,12 +17,15 @@ use ffmpeg (optional system dependency, reported by `pixshift doctor`).
 ## Quickstart — humans
 
 ```bash
-pixshift convert photo.heic -t webp        # convert one file
-pixshift convert banner.gif -t webp        # animated GIF -> animated WebP
-pixshift compress ./exports -p web -r      # batch-compress a folder
-pixshift strip secret.jpg                  # remove privacy metadata
-pixshift pdf merge scans/*.png -o doc.pdf  # images into a PDF
-pixshift video compress talk.mp4 -p web    # shrink a video (needs ffmpeg)
+pixshift convert photo.heic -t webp                  # convert one file
+pixshift convert banner.gif -t webp                  # animated GIF -> animated WebP
+pixshift compress ./exports -p web -r                # batch-compress a folder
+pixshift compress poster.jpg --target-size 500KB     # best quality under a size cap
+pixshift strip secret.jpg                            # remove privacy metadata
+pixshift pdf merge scans/*.png -o doc.pdf            # images into a PDF
+pixshift pdf compress scan.pdf --target-size 2MB     # fit a PDF into a byte budget
+pixshift video compress talk.mp4 --target-size 25MB  # two-pass fit (needs ffmpeg)
+pixshift video concat a.mp4 b.mp4 -o joined.mp4      # lossless stream-copy join
 ```
 
 ## Quickstart — agents

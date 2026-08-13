@@ -20,13 +20,17 @@ from pixshift.ops.apply import load_plan_document
 from pixshift.pdf_engine import _strip_jpeg_metadata
 from pixshift.video_engine import (
     HWACCEL_BACKENDS,
+    MIN_TARGET_VIDEO_BPS,
     VIDEO_CODECS,
     VIDEO_COMPRESS_PRESETS,
     VideoInfo,
     _ffprobe_fps,
     analyze_video_info,
+    build_bitrate_pass_args,
     build_compress_args,
     build_convert_args,
+    compute_target_video_bitrate,
+    concat_list_content,
     parse_timecode,
     resolve_thumbnail_time,
 )
@@ -223,6 +227,70 @@ def test_convert_argv_shape(container, codec, hwaccel):
     assert all(isinstance(part, str) and part for part in args)
     assert args[-1].endswith("clip.dst")
     assert ("-crf" in args) == (hwaccel is None)
+
+
+@given(
+    st.integers(min_value=-100, max_value=10**14),
+    st.floats(allow_nan=False, min_value=-10, max_value=10**9),
+    st.booleans(),
+)
+def test_target_bitrate_is_total_and_monotone(target_bytes, duration, has_audio):
+    bitrate = compute_target_video_bitrate(target_bytes, duration, has_audio=has_audio)
+    assert isinstance(bitrate, int)
+    assert bitrate >= 0
+    if bitrate > 0 and target_bytes < 10**13:
+        # More budget never yields a lower bitrate.
+        bigger = compute_target_video_bitrate(target_bytes * 2, duration, has_audio=has_audio)
+        assert bigger >= bitrate
+    assert MIN_TARGET_VIDEO_BPS > 0
+
+
+@given(
+    st.sampled_from(list(VIDEO_CODECS)),
+    st.integers(min_value=1, max_value=10**9),
+    st.booleans(),
+    st.sampled_from([None, 1, 2]),
+    st.sampled_from([None, *HWACCEL_BACKENDS]),
+)
+def test_bitrate_pass_argv_shape(codec, video_bps, has_audio, pass_number, hwaccel):
+    try:
+        args = build_bitrate_pass_args(
+            "/in/clip.src",
+            "/out/clip.dst",
+            codec=codec,
+            video_bps=video_bps,
+            has_audio=has_audio,
+            pass_number=pass_number,
+            passlog="/tmp/plog",
+            hwaccel=hwaccel,
+        )
+    except ValueError as error:
+        assert str(error).startswith("unsupported_hwaccel:")
+        return
+    assert all(isinstance(part, str) and part for part in args)
+    assert args[args.index("-b:v") + 1] == str(video_bps)
+    if pass_number == 1:
+        assert args[-1] == os.devnull
+        assert "-an" in args
+    else:
+        assert args[-1].endswith("clip.dst")
+        assert ("-c:a" in args) == has_audio
+
+
+@given(st.lists(st.text(min_size=1, max_size=24), min_size=1, max_size=8))
+def test_concat_list_is_total(names):
+    # Arbitrary (printable-or-not) path components must not break the list
+    # document: one line per clip, each using the demuxer's quote syntax.
+    paths = [f"/media/{index}_{name}" for index, name in enumerate(names)]
+    try:
+        content = concat_list_content(paths)
+    except ValueError:
+        return  # newline/CR names and unsafe paths get a stable rejection
+    # The concat demuxer splits entries on "\n" only, so assert against that
+    # exact delimiter (splitlines() would also split on U+2028 etc.).
+    lines = content.strip("\n").split("\n")
+    assert len(lines) == len(paths)
+    assert all(line.startswith("file '") and line.endswith("'") for line in lines)
 
 
 @given(
