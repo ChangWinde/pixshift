@@ -51,6 +51,6 @@ nav:
       - "ADR-0004: Feature surface audit": adr/0004-feature-surface-audit.md
       - "ADR-0005: Video pillar": adr/0005-video-pillar.md
   - Project:
+      - Goal and milestones: GOAL.md
       - Releasing: RELEASING.md
       - Label strategy: LABEL_STRATEGY.md
-      - Phase 1 checklist: PHASE1_CHECKLIST.md

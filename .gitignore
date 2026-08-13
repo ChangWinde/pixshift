@@ -11,10 +11,13 @@ dist/
 *.egg
 site/
 
-# Test artifacts
+# Test and tool caches
 .pytest_cache/
 .coverage
 htmlcov/
+.hypothesis/
+.mypy_cache/
+.ruff_cache/
 
 # Virtual environments
 .venv/
