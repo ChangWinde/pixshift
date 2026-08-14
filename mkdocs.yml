@@ -5,6 +5,7 @@ repo_url: https://github.com/ChangWinde/pixshift
 repo_name: ChangWinde/pixshift
 edit_uri: edit/main/docs/
 copyright: PixShift · MIT License
+strict: true
 
 theme:
   name: material
@@ -70,11 +71,7 @@ plugins:
 # 保留在仓库中，不进入面向用户的文档站。
 exclude_docs: |
   adr/
-  ARCHITECTURE.md
-  GOAL.md
-  RELEASING.md
-  LABEL_STRATEGY.md
-  PERFORMANCE.md
+  project/
 
 nav:
   - 开始:

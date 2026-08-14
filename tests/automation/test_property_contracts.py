@@ -43,7 +43,7 @@ settings.register_profile(
     suppress_health_check=[HealthCheck.too_slow],
 )
 # Randomized deep exploration for manual fuzz campaigns:
-#   PIXSHIFT_HYPOTHESIS_PROFILE=stress uv run pytest tests/test_property_contracts.py
+#   PIXSHIFT_HYPOTHESIS_PROFILE=stress uv run pytest tests/automation/test_property_contracts.py
 settings.register_profile(
     "stress",
     derandomize=False,

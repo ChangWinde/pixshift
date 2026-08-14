@@ -69,7 +69,7 @@ def check_range(rev_range: str) -> int:
             for problem in problems:
                 print(f"  - {problem}")
     if failures:
-        print(f"{failures} commit(s) violate the Forge convention; see CONTRIBUTING.md")
+        print(f"{failures} commit(s) violate the Forge convention; see .github/CONTRIBUTING.md")
         return 1
     print("all commit messages follow the Forge convention")
     return 0

@@ -21,16 +21,19 @@ identically for a human at a prompt and for an unattended script.
 
 ## Current Focus
 
-The `2.0.0` candidate consolidates the modern image/PDF/video toolkit and the
-32-agent deep-audit remediation. All pillars share `--target-size` and the new
+The `2.0.0` development line consolidates the modern image/PDF/video toolkit and the
+32-agent deep-audit remediation. Its implementation is merged into `main`; the
+package remains unreleased until the version tag and publishing workflow complete.
+All pillars share `--target-size` and the new
 `verify` quality gate. Executable `optimize -> apply` plans cover image and video
 steps; PDF operations remain explicit commands and participate in discovery,
 stable JSON, size budgets, and verification. CI's coverage floor is 78% and its
 Linux/macOS/Windows jobs install real ffmpeg for runtime journeys.
 
 Every reproduced finding from the 32-agent audit is closed and the independent
-post-fix review passed. The reviewed branch is the `2.0.0` merge candidate; a
-maintainer may tag `v2.0.0` after merge. The major version is required because
+post-fix review passed. The remaining release action is to execute the documented
+release checklist and tag `v2.0.0`; merging to `main` alone does not publish PyPI.
+The major version is required because
 the public 1.0.x CLI exposed `watch`, which the deterministic one-shot design
 removed.
 

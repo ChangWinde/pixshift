@@ -27,9 +27,8 @@ area:docs:
           - "docs/**"
           - "README.md"
           - "CHANGELOG.md"
-          - "CONTRIBUTING.md"
-          - "SECURITY.md"
-          - "SUPPORT.md"
+          - ".github/*.md"
+          - ".github/CODEOWNERS"
 
 area:examples:
   - changed-files:
@@ -53,4 +52,4 @@ type:docs:
       - any-glob-to-any-file:
           - "docs/**"
           - "README.md"
-
+          - ".github/*.md"
