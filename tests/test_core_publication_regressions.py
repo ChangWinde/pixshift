@@ -277,12 +277,14 @@ def test_dedup_race_preserves_replacement_file(
 def test_backup_directory_creation_failure_is_a_result_not_an_exception(
     tmp_path: Path,
 ) -> None:
+    blocked_parent = tmp_path / "not-a-directory"
+    blocked_parent.write_bytes(b"file")
     candidate = dedup_engine.DeleteCandidate(
         keep=str(tmp_path / "a"), duplicate=str(tmp_path / "b"), sha256="0" * 64, size=1
     )
 
     result = dedup_engine.delete_duplicates(
-        [candidate], dry_run=False, backup_dir="/proc/pixshift-cannot-create"
+        [candidate], dry_run=False, backup_dir=str(blocked_parent / "backup")
     )
 
     assert result["errors"]

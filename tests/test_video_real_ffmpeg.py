@@ -236,6 +236,28 @@ def test_verify_audio_snr_uses_the_unscaled_residual(tmp_path):
     source = tmp_path / "source.mkv"
     identical = tmp_path / "identical.mkv"
     candidate = tmp_path / "candidate.mkv"
+    tone = tmp_path / "tone.wav"
+    # Generate the samples once. Older FFmpeg builds can assign slightly
+    # different lavfi start positions to independently generated sine inputs,
+    # which tests mux scheduling rather than PixShift's residual arithmetic.
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:sample_rate=48000:duration=1",
+            "-c:a",
+            "pcm_s16le",
+            str(tone),
+        ],
+        check=True,
+        capture_output=True,
+    )
     for path, volume in ((source, "1"), (identical, "1"), (candidate, "0.81")):
         subprocess.run(
             [
@@ -248,10 +270,8 @@ def test_verify_audio_snr_uses_the_unscaled_residual(tmp_path):
                 "lavfi",
                 "-i",
                 "color=black:size=64x64:rate=10:duration=1",
-                "-f",
-                "lavfi",
                 "-i",
-                "sine=frequency=440:sample_rate=48000:duration=1",
+                str(tone),
                 "-filter:a",
                 f"volume={volume}",
                 "-c:v",

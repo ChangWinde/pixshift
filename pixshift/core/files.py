@@ -569,7 +569,10 @@ def _open_windows_directory(path: Path) -> tuple[int, int]:
     # every ancestor are held until publication completes.
     handle = create_file(
         str(path),
-        0x80,  # FILE_READ_ATTRIBUTES
+        # FILE_READ_ATTRIBUTES alone is exempt from share-mode checks and
+        # therefore does *not* pin a directory against rename. Requesting
+        # FILE_LIST_DIRECTORY makes the missing FILE_SHARE_DELETE effective.
+        0x1 | 0x80,  # FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES
         0x1 | 0x2,  # FILE_SHARE_READ | FILE_SHARE_WRITE
         None,
         3,  # OPEN_EXISTING
