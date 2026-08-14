@@ -2,6 +2,7 @@
 
 import io
 import json
+import os
 
 import pytest
 from PIL import Image
@@ -111,6 +112,25 @@ def test_mcp_call_tool_reports_timeout(monkeypatch):
     assert out["isError"] is True
     assert "tool_timeout" in out["content"][0]["text"]
     assert len(terminated) == 1
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process-group signals")
+def test_mcp_timeout_cleanup_signals_the_whole_posix_group(monkeypatch):
+    import pixshift.mcp.server as server
+
+    signals = []
+
+    class _Process:
+        pid = 123
+
+        def wait(self, timeout=None):
+            return 0
+
+    monkeypatch.setattr(server.os, "killpg", lambda pid, sig: signals.append((pid, sig)))
+
+    server._terminate_process_tree(_Process())
+
+    assert signals == [(123, server.signal.SIGTERM), (123, server.signal.SIGKILL)]
 
 
 def test_mcp_serve_rejects_non_object_message(monkeypatch, capsys):

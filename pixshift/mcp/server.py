@@ -159,14 +159,19 @@ def _terminate_process_tree(process: subprocess.Popen[str]) -> None:
             process.kill()
         return
 
+    kill_process_group = getattr(os, "killpg", None)
+    if kill_process_group is None:  # pragma: no cover - defensive non-POSIX fallback
+        with contextlib.suppress(OSError):
+            process.kill()
+        return
     with contextlib.suppress(ProcessLookupError):
-        os.killpg(process.pid, signal.SIGTERM)
+        kill_process_group(process.pid, signal.SIGTERM)
     with contextlib.suppress(subprocess.TimeoutExpired):
         process.wait(timeout=1)
     # The direct Python child can exit before a descendant that ignored
     # SIGTERM. Kill the still-existing group even when ``wait`` returned.
     with contextlib.suppress(ProcessLookupError):
-        os.killpg(process.pid, signal.SIGKILL)
+        kill_process_group(process.pid, getattr(signal, "SIGKILL", signal.SIGTERM))
 
 
 def _find_entry(name: str) -> ToolEntry | None:
