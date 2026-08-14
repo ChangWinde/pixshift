@@ -312,14 +312,28 @@ def _output_collision_key(output: str) -> str:
 
 
 def validate_unique_output_paths(tasks: Sequence[tuple[str, str]]) -> None:
-    """Fail a batch when two sources resolve to the same destination."""
+    """Fail a batch when two sources resolve to the same destination.
+
+    Also rejects a destination that is a *different* task's source. Writing
+    ``a.jpg`` on top of ``b.jpg`` while ``b.jpg`` is still queued for reading
+    destroys b's original bytes and makes the batch's result depend on task
+    ordering. Rewriting a file in place (source == its own destination) stays
+    allowed; that is the documented overwrite behaviour.
+    """
     destinations: dict[str, str] = {}
+    sources = {_output_collision_key(source): source for source, _ in tasks}
     for source, output in tasks:
         key = _output_collision_key(output)
         previous = destinations.get(key)
         if previous is not None and Path(previous).resolve() != Path(source).resolve():
             raise OutputCollisionError(
                 f"multiple inputs map to the same output: {previous}, {source} -> {output}"
+            )
+        clashing_source = sources.get(key)
+        if clashing_source is not None and key != _output_collision_key(source):
+            raise OutputCollisionError(
+                f"output would overwrite another input in the same batch: "
+                f"{source} -> {output} (also an input)"
             )
         destinations[key] = source
 

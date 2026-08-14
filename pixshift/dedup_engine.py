@@ -362,16 +362,33 @@ def _find_exact_duplicates(
                 continue
             ordered = sorted(identical_paths)
             keep = ordered[0]
-            candidates.extend(
-                DeleteCandidate(
-                    keep=keep,
-                    duplicate=duplicate,
-                    sha256=digest,
-                    size=size,
+            # Hardlinks to one inode are the same bytes on disk, not two
+            # copies: unlinking a second name frees nothing, so counting it
+            # as recoverable space would be a false promise.
+            seen_inodes = {_file_identity(keep)}
+            for duplicate in ordered[1:]:
+                identity = _file_identity(duplicate)
+                if identity is not None and identity in seen_inodes:
+                    continue
+                seen_inodes.add(identity)
+                candidates.append(
+                    DeleteCandidate(
+                        keep=keep,
+                        duplicate=duplicate,
+                        sha256=digest,
+                        size=size,
+                    )
                 )
-                for duplicate in ordered[1:]
-            )
     return candidates
+
+
+def _file_identity(path: str) -> tuple[int, int] | None:
+    """The (device, inode) pair that identifies one file on disk."""
+    try:
+        info = os.stat(path, follow_symlinks=False)
+    except OSError:
+        return None
+    return (info.st_dev, info.st_ino)
 
 
 def _sha256_file(path: str) -> str:
@@ -431,9 +448,15 @@ def delete_duplicates(
             result["deleted"].append(f"[DRY-RUN] {candidate.duplicate}")
             continue
         try:
-            if not _candidate_is_still_safe(candidate):
+            identity = _candidate_is_still_safe(candidate)
+            if identity is None:
                 result["skipped"].append(
                     f"{candidate.duplicate}: file changed or is no longer byte-identical"
+                )
+                continue
+            if not _still_the_same_object(candidate.duplicate, identity):
+                result["skipped"].append(
+                    f"{candidate.duplicate}: file was replaced after verification"
                 )
                 continue
             if backup_dir:
@@ -453,31 +476,79 @@ def delete_duplicates(
     return result
 
 
-def _candidate_is_still_safe(candidate: DeleteCandidate) -> bool:
-    """Revalidate regular files, size, and digest immediately before deletion."""
-    for path in (candidate.keep, candidate.duplicate):
-        file_stat = os.stat(path, follow_symlinks=False)
+def _verified_identity(path: str, candidate: DeleteCandidate) -> tuple[int, int] | None:
+    """Hash ``path`` through one open descriptor; return its (dev, inode).
+
+    Hashing by name and then deleting by name leaves a window in which the
+    name can be repointed at different bytes. Reading through a descriptor
+    opened with ``O_NOFOLLOW`` pins the object being verified, and the
+    returned identity lets the caller confirm the name still resolves to that
+    same object at the moment of deletion.
+    """
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError:
+        return None
+    try:
+        file_stat = os.fstat(descriptor)
         if not stat.S_ISREG(file_stat.st_mode) or file_stat.st_size != candidate.size:
-            return False
-        if _sha256_file(path) != candidate.sha256:
-            return False
-    return True
+            return None
+        digest = hashlib.sha256()
+        with os.fdopen(os.dup(descriptor), "rb", closefd=True) as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+        if digest.hexdigest() != candidate.sha256:
+            return None
+        return (file_stat.st_dev, file_stat.st_ino)
+    except OSError:
+        return None
+    finally:
+        os.close(descriptor)
+
+
+def _candidate_is_still_safe(candidate: DeleteCandidate) -> tuple[int, int] | None:
+    """Revalidate both files; return the duplicate's identity when safe.
+
+    Returns ``None`` when either file changed, so the caller skips it.
+    """
+    if _verified_identity(candidate.keep, candidate) is None:
+        return None
+    return _verified_identity(candidate.duplicate, candidate)
+
+
+def _still_the_same_object(path: str, identity: tuple[int, int]) -> bool:
+    """Whether ``path`` still names the object that was verified."""
+    try:
+        current = os.stat(path, follow_symlinks=False)
+    except OSError:
+        return False
+    return (current.st_dev, current.st_ino) == identity
 
 
 def _collect_image_files(
     input_paths: list[str],
     recursive: bool,
 ) -> list[str]:
-    """收集所有图片文件"""
+    """收集所有图片文件。
+
+    符号链接一律跳过：``resolve()`` 会把链接换成它在扫描目录之外的目标，
+    随后删除阶段就会删掉用户根本没有授权的文件。链接本身也不是重复文件，
+    删它并不回收任何空间。
+    """
     files = []
     for path_str in input_paths:
         path = Path(path_str)
+        if path.is_symlink():
+            continue
         if path.is_file():
             if path.suffix.lower() in SUPPORTED_INPUT_FORMATS:
                 files.append(str(path.resolve()))
         elif path.is_dir():
             pattern = "**/*" if recursive else "*"
             for item in sorted(path.glob(pattern)):
-                if item.is_file() and item.suffix.lower() in SUPPORTED_INPUT_FORMATS:
+                if item.is_symlink() or not item.is_file():
+                    continue
+                if item.suffix.lower() in SUPPORTED_INPUT_FORMATS:
                     files.append(str(item.resolve()))
     return sorted(set(files))
