@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 import warnings
+from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
@@ -50,7 +51,7 @@ def test_collector_applies_include_exclude_and_size(tree):
     only_jpg = collect_supported_files(
         [str(tree)], IMAGE_EXTS, recursive=True, selection=SelectionFilters(include=("*.jpg",))
     )
-    assert {path.rsplit("/", 1)[-1] for path in only_jpg} == {"one.jpg", "two.jpg"}
+    assert {Path(path).name for path in only_jpg} == {"one.jpg", "two.jpg"}
 
     without_thumbs = collect_supported_files(
         [str(tree)], IMAGE_EXTS, recursive=True, selection=SelectionFilters(exclude=("*/thumbs/*",))
@@ -61,7 +62,7 @@ def test_collector_applies_include_exclude_and_size(tree):
     large_only = collect_supported_files(
         [str(tree)], IMAGE_EXTS, recursive=True, selection=SelectionFilters(min_bytes=2000)
     )
-    assert {path.rsplit("/", 1)[-1] for path in large_only} == {"one.jpg", "two.jpg"}
+    assert {Path(path).name for path in large_only} == {"one.jpg", "two.jpg"}
 
 
 def test_filters_apply_to_explicitly_named_files(tree):
@@ -70,7 +71,7 @@ def test_filters_apply_to_explicitly_named_files(tree):
     kept = collect_supported_files(
         named, IMAGE_EXTS, selection=SelectionFilters(include=("*.jpg",))
     )
-    assert [path.rsplit("/", 1)[-1] for path in kept] == ["one.jpg"]
+    assert [Path(path).name for path in kept] == ["one.jpg"]
 
 
 def test_inactive_filters_change_nothing(tree):
