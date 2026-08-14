@@ -23,15 +23,19 @@ def test_tools_catalog_lists_annotations():
     assert payload["ok"] is True
     assert payload["total"] == len(TOOL_CATALOG)
     names = {tool["name"] for tool in payload["tools"]}
-    assert {"convert", "apply", "prep", "manifest", "hash", "tools"} <= names
+    assert {"convert", "apply", "prep", "manifest", "hash", "verify", "tools"} <= names
     for tool in payload["tools"]:
         annotations = tool["annotations"]
         assert annotations["openWorldHint"] is False
         assert isinstance(annotations["readOnlyHint"], bool)
         assert isinstance(annotations["destructiveHint"], bool)
         assert isinstance(annotations["idempotentHint"], bool)
+        if not annotations["readOnlyHint"]:
+            assert annotations["destructiveHint"] is True
     dedup = next(tool for tool in payload["tools"] if tool["name"] == "dedup")
     assert dedup["annotations"]["destructiveHint"] is True
+    verify = next(tool for tool in payload["tools"] if tool["name"] == "verify")
+    assert verify["annotations"]["readOnlyHint"] is True
 
 
 def test_optimize_plan_apply_end_to_end(tmp_path):
@@ -108,7 +112,7 @@ def test_apply_compress_without_output_uses_derivative_name(tmp_path):
 def test_apply_rejects_invalid_plan():
     runner = CliRunner()
     result = runner.invoke(cli, ["apply", "--plan", "-", "--json"], input="{}")
-    assert result.exit_code == 1
+    assert result.exit_code == 2
     payload = _payload(result)
     assert payload["ok"] is False
     assert payload["error"] == "unrecognized_plan_document"

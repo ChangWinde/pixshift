@@ -16,6 +16,24 @@ def _make_image(path, size=(120, 80), mode="RGB", color=(10, 90, 200), fmt="PNG"
     Image.new(mode, size, color).save(path, format=fmt)
 
 
+def test_rotate_dry_run_reports_complete_preview_without_writing(tmp_path):
+    source = tmp_path / "source.png"
+    _make_image(source)
+    output = tmp_path / "out"
+
+    result = CliRunner().invoke(
+        cli,
+        ["rotate", str(source), "--degrees", "90", "-o", str(output), "--dry-run", "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = _payload(result)
+    assert payload["mode"] == "dry_run"
+    assert payload["pending"] == 1
+    assert payload["preview"][0]["action"] == "rotate"
+    assert not output.exists()
+
+
 def test_resize_percent_keeps_format_and_is_idempotent(tmp_path):
     src = tmp_path / "photo.png"
     _make_image(src, size=(200, 100))

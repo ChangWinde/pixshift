@@ -2,11 +2,11 @@
 
 All notable changes to this project are documented in this file.
 
-## [Unreleased]
+## [2.0.0] - Unreleased
 
 ### Added
 
-- Batch selection filters shared by every batch command: `--include GLOB`,
+- Batch selection filters shared by image and workflow batch commands: `--include GLOB`,
   `--exclude GLOB` and `--min-file-size SIZE` narrow a run without shell
   gymnastics. Globs match both the full path and the bare name, so
   `--exclude '*/thumbs/*'` and `--exclude '*_draft.jpg'` both read naturally;
@@ -20,6 +20,14 @@ All notable changes to this project are documented in this file.
 - `dedup --backup-dir DIR` moves duplicates into a directory instead of
   deleting them, making the only destructive operation reversible; colliding
   names get a numeric suffix rather than overwriting each other.
+- Cross-media `verify SOURCE CANDIDATE` quality gates for images, PDFs, and
+  videos, with structural checks, byte limits, ICC-aware perceptual metrics,
+  PDF semantic inventories, video audio-content checks, stable JSON, and
+  explicit threshold failures.
+- Explicit image `--color-space preserve|srgb` and video
+  `--audio-policy preserve|compatible|compact` policies. Colour conversion
+  uses LittleCMS and rejects invalid profiles in explicit sRGB mode; video
+  JSON discloses the requested audio policy and action.
 
 ### Changed
 
@@ -27,6 +35,12 @@ All notable changes to this project are documented in this file.
   own copy of the directory-walking collector; they now delegate to the
   shared one in `core/files.py`, which is what gives every command the new
   filters at once.
+- The unpublished 1.1/1.2/1.3 development tranches are consolidated into
+  2.0.0. This is a major release because the public 1.0.x `watch` command was
+  removed; pretending that change was a compatible 1.x minor would violate
+  the project's SemVer policy.
+- The repository coverage floor progressed from 60% through 70% and 75% to
+  the current 78% gate.
 
 ### Fixed
 
@@ -43,11 +57,34 @@ All notable changes to this project are documented in this file.
   replacing an existing destination.
 - The MCP stdio adapter validates JSON-RPC envelopes and tool schemas, accepts
   only strict JSON, starts isolated CLI process groups, and terminates the
-  whole group on timeout instead of leaving workers or ffmpeg running.
+  whole group on timeout instead of leaving workers or ffmpeg running. Input,
+  pending-request, stdout, and stderr budgets prevent an untrusted peer or
+  child command from growing memory or temporary storage without bound.
+- Atomic publication now enforces no-clobber at commit time, preserves an
+  existing destination's mode, and binds publication to a verified parent
+  directory: POSIX uses no-follow directory descriptors, while Windows holds
+  a no-delete-share handle chain and rejects reparse points. Directory
+  discovery skips symlinks, and dedup isolates/revalidates a candidate object
+  before deletion to close pathname races.
+- PDF image compression preserves image masks and non-default decode
+  semantics, converts embedded colour through valid ICC profiles, enforces
+  page pixel budgets, and reports document-level semantics concat cannot
+  preserve. PDF verification inventories text, links, annotations, forms,
+  outlines, attachments, labels, and semantic metadata instead of accepting
+  raster similarity alone.
+- Video operations use bounded stderr capture, terminate process groups on
+  timeout/interruption, map streams explicitly, validate complete concat
+  signatures, and normalise heterogeneous re-encode segments. Verification
+  compares audio presence, layout, sample rate, and an unnormalised streaming
+  residual so silent, replaced, or materially attenuated sound cannot pass on
+  video similarity alone.
+- Image comparison converts both sides to a common sRGB interpretation before
+  evaluating perceptual colour and independent alpha, and samples each large
+  input before opening the other to bound simultaneous decoded memory.
 
-## [1.3.0] - 2026-08-13
+### Development tranche formerly planned as 1.3.0
 
-### Fixed
+#### Fixed
 
 - Non-finite numeric inputs are rejected across the video contracts:
   `"inf"`/`"nan"` timecodes raise `invalid_timecode` instead of flowing into
@@ -75,7 +112,7 @@ All notable changes to this project are documented in this file.
   container reports a subnormal frame rate — the overflowing division now
   degrades to "no signal" (found by randomized property fuzzing).
 
-### Added
+#### Added
 
 - Animated-image transforms (the ADR-0004 gap): `convert` and `resize`
   preserve frames, per-frame timing, loop count, and transparency for GIF /
@@ -88,7 +125,7 @@ All notable changes to this project are documented in this file.
 - The size-budget idiom on every pillar: `video compress --target-size`
   (two-pass bitrate encoding for h264/h265/vp9, single-pass ABR for av1 and
   hardware encoders, bounded overshoot retry, honest `target_size_missed`)
-  and `pdf compress --target-size` (lossless-first quality-ladder search,
+  and `pdf compress --target-size` (lossless-first complete quality search,
   `target_size_unreachable` with no output when impossible) join the
   existing image `compress --target-size`; inputs already within budget are
   copied untouched.
@@ -101,19 +138,19 @@ All notable changes to this project are documented in this file.
   gains a randomized `stress` profile
   (`PIXSHIFT_HYPOTHESIS_PROFILE=stress`).
 
-### Changed
+#### Changed
 
 - Same-format batch surfaces (`compress`, `strip`, `resize`, `rotate`,
   `crop`, `watermark`) run on a shared bounded process pool (up to 8
   workers, automatic, serial below 4 tasks): 4-4.5x measured on 120-photo
   batches with JSON output order unchanged.
-- `pdf compress --target-size` refines between quality-ladder rungs with two
-  bounded bisection steps, so the published quality is not limited to the
-  ladder's coarse spacing.
+- Image and PDF `--target-size` inspect their complete bounded integer-quality
+  domains from highest to lowest, because encoded sizes are not strictly
+  monotonic and binary search can miss a higher feasible result.
 - **JSON contract `schema_version` 1.0 -> 1.1** (audit B2): usage rejections
   (bad arguments, conflicting options, plan validation) now exit `2` on both
   channels — previously split between 1 and 2 — while operational failures
-  keep exit `1`; and every batch command reports failures as
+  keep exit `1`; and image/workflow batch commands report failures as
   `{"input", "output", "error"}` objects with full paths instead of the
   `"name: code"` strings that only `convert` had escaped.
 - JSON contract polish under the same 1.1 bump (audit B5): dry-run `preview`
@@ -136,15 +173,15 @@ All notable changes to this project are documented in this file.
   summary; `crop` / `watermark` list failed files with their error codes
   before the summary panel.
 
-## [1.2.0] - 2026-08-12
+### Development tranche formerly planned as 1.2.0
 
-### Removed
+#### Removed
 
 - **Breaking:** the `watch` command. Long-running directory watching conflicts
   with the deterministic one-shot design; schedule `pixshift convert` with
   cron/launchd instead (ADR-0004).
 
-### Added
+#### Added
 
 - Video pillar (ADR-0005): optional ffmpeg-backed `video info / convert /
   compress / trim / thumbnail / extract-audio / gif` commands with pure,
@@ -156,13 +193,13 @@ All notable changes to this project are documented in this file.
   combinations fail with stable `unsupported_hwaccel:*` errors.
 - MkDocs documentation site (Material theme) built from `docs/` (now
   covering the whole `video` command group) and published to GitHub Pages at
-  <https://changwinde.github.io/pixshift/>, redeployed on
-  every push to `main` (`docs.yml` workflow). The site is a Chinese user
+  <https://changwinde.github.io/pixshift/>, redeployed when a `main` push
+  changes `docs/**`, `mkdocs.yml`, or the workflow itself. The site is a Chinese user
   manual — matching the CLI's own output language — organised by pillar
   (images / PDF / video) plus automation, contract, and FAQ chapters, set in
   a monospace typeface. Architecture decision records, the roadmap, and the
   release process stay in the repository and are excluded from the site;
-  `docs/COMMANDS.md` is superseded by the per-pillar chapters.
+  the former monolithic command-reference page is superseded by the per-pillar chapters.
 - Probe-driven `optimize` for videos: deterministic codec/bitrate analysis
   (no encoding) recommends `video.convert`, `video.compress`, or an explicit
   `keep` plan with a size estimate; results carry `media_type`.
@@ -192,7 +229,7 @@ All notable changes to this project are documented in this file.
 - Positioning and governance docs: `GOAL.md`, `AGENTS.md`, ADR-0003, and a
   pre-commit configuration.
 
-### Changed
+#### Changed
 
 - README repositioned around the AI-native discover/plan/apply/verify loop,
   with shell-completion instructions.
@@ -205,9 +242,9 @@ All notable changes to this project are documented in this file.
 - Ruff lint scope extended (`W`, `C4`, `PIE`, `RUF`).
 - Contributor workflow standardized on `uv sync --frozen --extra dev`.
 
-## [1.1.0] - 2026-08-02
+### Development tranche formerly planned as 1.1.0
 
-### Added
+#### Added
 
 - A repository-wide policy test that rejects emoji in source, tests, documentation,
   examples, and configuration text.
@@ -227,7 +264,7 @@ All notable changes to this project are documented in this file.
   - system commands (`info`, `formats`, `doctor`),
   - PDF commands.
 - `ops/` wrappers for convert/compress/strip/dedup/pdf/advanced workflows.
-- Comprehensive command reference: `docs/COMMANDS.md`.
+- A comprehensive monolithic command reference (later replaced by the per-pillar manual).
 - Runnable example scripts:
   - `examples/automation/`,
   - `examples/advanced/`.
@@ -238,7 +275,7 @@ All notable changes to this project are documented in this file.
   - CI and release workflows,
   - Dependabot.
 
-### Changed
+#### Changed
 
 - Removed decorative emoji from CLI help, status messages, tables, summaries, comments,
   and descriptions; status is now expressed with concise text.
@@ -261,7 +298,7 @@ All notable changes to this project are documented in this file.
 - Switched CI/release dependency management to locked `uv` workflows and pinned actions.
 - Raised enforced test coverage gate to `60%`.
 
-### Fixed
+#### Fixed
 
 - Removed sensitive device and personal fields stored in nested EXIF directories during
   default privacy cleanup while preserving metadata outside the selected categories.
@@ -289,3 +326,15 @@ All notable changes to this project are documented in this file.
 - Distinguished required and optional capabilities in `doctor` exit semantics.
 - Rejected montage extensions that do not match its PNG/JPEG/WebP encoders.
 - Synchronized the runtime version with installed package metadata.
+
+## [1.0.1] - 2026-03-07
+
+### Fixed
+
+- Corrected the README logo URL in the published package metadata.
+
+## [1.0.0] - 2026-03-07
+
+### Added
+
+- Initial public image conversion CLI for Python 3.10 and newer.

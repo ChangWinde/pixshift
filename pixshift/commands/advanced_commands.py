@@ -39,6 +39,7 @@ from .common import (
     run_batch_tasks,
     selection_filters_or_exit,
     selection_options,
+    usage_error_or_exit,
     validate_tasks_or_exit,
 )
 
@@ -89,6 +90,8 @@ def register_advanced_commands(
             "size_b": result.size_b,
             "comparison_size": result.comparison_size,
             "resized_for_comparison": result.resized_for_comparison,
+            "sampled_for_comparison": result.sampled_for_comparison,
+            "sample_scale": round(result.sample_scale, 6),
             "filesize_a": result.filesize_a,
             "filesize_b": result.filesize_b,
             "mse": round(result.mse, 6),
@@ -163,13 +166,21 @@ def register_advanced_commands(
         as_json: bool,
     ) -> None:
         """按区域、比例或内容边界批量裁剪图片。"""
-        enabled_modes = int(bool(crop_box)) + int(bool(aspect)) + int(bool(trim))
-        if enabled_modes != 1:
-            message = "select_exactly_one_mode"
-            if as_json:
-                emit_json_and_exit({"command": "crop", "ok": False, "error": message}, 1)
-            console.print("[red]请仅选择一种模式: --crop、--aspect 或 --trim。[/red]")
-            raise click.exceptions.Exit(2)
+        try:
+            crop_ops.validate_request(crop_box, aspect, trim)
+        except (TypeError, ValueError) as error:
+            code = (
+                str(error)
+                if str(error) in {"select_exactly_one_mode", "invalid_crop_box"}
+                else ("invalid_aspect_ratio" if aspect is not None else "invalid_crop_box")
+            )
+            usage_error_or_exit(
+                command="crop",
+                as_json=as_json,
+                error=code,
+                detail=str(error),
+                human_message="裁剪参数无效；请只选择一种模式并检查数值。",
+            )
 
         files = crop_ops.collect_files(
             list(inputs),

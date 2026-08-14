@@ -14,7 +14,10 @@ from ..ops import video as video_ops
 from ..presenters.json_presenters import emit_json, emit_json_and_exit
 from ..video_engine import (
     AUDIO_CODECS,
+    AUDIO_POLICIES,
+    CONTAINER_DEFAULT_CODEC,
     DEFAULT_AUDIO_FORMAT,
+    DEFAULT_AUDIO_POLICY,
     DEFAULT_GIF_FPS,
     DEFAULT_GIF_WIDTH,
     DEFAULT_THUMBNAIL_AT,
@@ -28,6 +31,7 @@ from ..video_engine import (
     collect_video_files,
     parse_timecode,
     resolve_thumbnail_time,
+    validate_container_codec,
 )
 from .common import validate_aggregate_output_or_exit, validate_tasks_or_exit
 
@@ -49,6 +53,8 @@ def _result_payload(result: VideoResult) -> dict:
         "input_bytes": result.input_bytes,
         "output_bytes": result.output_bytes,
         "error": result.error,
+        "audio_policy": result.audio_policy,
+        "audio_action": result.audio_action,
     }
 
 
@@ -157,6 +163,12 @@ def register_video_commands(
     )
     @click.option("--codec", default=None, type=click.Choice(list(VIDEO_CODECS)), help="视频编码器")
     @click.option(
+        "--audio-policy",
+        default=DEFAULT_AUDIO_POLICY,
+        type=click.Choice(list(AUDIO_POLICIES)),
+        help="音频策略: preserve 原样复制；compatible 兼容转码；compact 小体积",
+    )
+    @click.option(
         "--hwaccel",
         default=None,
         type=click.Choice(list(HWACCEL_BACKENDS)),
@@ -170,6 +182,7 @@ def register_video_commands(
         inputs: tuple,
         container: str,
         codec: str | None,
+        audio_policy: str,
         hwaccel: str | None,
         output_dir: str | None,
         recursive: bool,
@@ -179,17 +192,44 @@ def register_video_commands(
         """转码视频到另一容器/编码。"""
         if not video_ops.available():
             _ffmpeg_missing("video.convert", as_json, console)
+        try:
+            validate_container_codec(container, codec or CONTAINER_DEFAULT_CODEC[container])
+        except ValueError as error:
+            _fail("video.convert", str(error), as_json, console)
+            return
         files = collect_video_files(list(inputs), recursive)
         files, _ = filter_generated_inputs(
             files,
             list(inputs),
             output_root=output_dir,
-            excluded_extension=container,
         )
+
+        def convert_name(path: str) -> str:
+            source = Path(path)
+            target_suffix = f".{container}"
+            if source.suffix.lower() == target_suffix:
+                return f"{source.stem}_converted.{container}"
+            # A directory can contain both ``clip.mp4`` and ``clip.webm``.
+            # Keep both as inputs without planning an output over either one.
+            if any(
+                Path(other) != source
+                and Path(other).parent == source.parent
+                and Path(other).stem == source.stem
+                and Path(other).suffix.lower() == target_suffix
+                for other in files
+            ):
+                return f"{source.stem}_from_{source.suffix.lstrip('.').lower()}.{container}"
+            return f"{source.stem}.{container}"
+
         tasks = [
             (
                 path,
-                _video_output(path, f"{Path(path).stem}.{container}", output_dir, list(inputs)),
+                _video_output(
+                    path,
+                    convert_name(path),
+                    output_dir,
+                    list(inputs),
+                ),
             )
             for path in files
         ]
@@ -201,6 +241,7 @@ def register_video_commands(
                 container=container,
                 codec=codec,
                 hwaccel=hwaccel,
+                audio_policy=audio_policy,
                 overwrite=overwrite,
             )
             for path, dst in tasks
@@ -223,6 +264,12 @@ def register_video_commands(
         help="视频编码器",
     )
     @click.option("--crf", default=None, type=click.IntRange(0, 63), help="覆盖预设 CRF")
+    @click.option(
+        "--audio-policy",
+        default=DEFAULT_AUDIO_POLICY,
+        type=click.Choice(list(AUDIO_POLICIES)),
+        help="音频策略: preserve 原样复制；compatible 兼容转码；compact 小体积",
+    )
     @click.option(
         "--target-size",
         "target_size",
@@ -247,6 +294,7 @@ def register_video_commands(
         preset: str,
         codec: str,
         crf: int | None,
+        audio_policy: str,
         target_size: str | None,
         hwaccel: str | None,
         output_dir: str | None,
@@ -300,6 +348,7 @@ def register_video_commands(
                         codec=codec,
                         hwaccel=hwaccel,
                         overwrite=overwrite,
+                        audio_policy=audio_policy,
                     )
                 )
             else:
@@ -312,6 +361,7 @@ def register_video_commands(
                         crf=crf,
                         hwaccel=hwaccel,
                         overwrite=overwrite,
+                        audio_policy=audio_policy,
                     )
                 )
         _emit_batch("video.compress", results, as_json, console)
@@ -341,6 +391,12 @@ def register_video_commands(
             _ffmpeg_missing("video.concat", as_json, console)
         if len(inputs) < 2:
             _fail("video.concat", "concat_requires_two_inputs", as_json, console)
+        if reencode:
+            try:
+                validate_container_codec(Path(output_path).suffix, "h264")
+            except ValueError as error:
+                _fail("video.concat", str(error), as_json, console)
+                return
         validate_aggregate_output_or_exit(
             command="video.concat",
             as_json=as_json,

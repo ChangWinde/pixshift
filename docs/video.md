@@ -15,13 +15,14 @@ pixshift video info FILES... [--json]
 ## convert — 转码
 
 ```bash
-pixshift video convert INPUTS... [-t mp4] [--codec h264] [-o 输出目录] [-r] [--json]
+pixshift video convert INPUTS... [-t mp4] [--codec h264] [--audio-policy compatible] [-o 输出目录] [-r] [--json]
 ```
 
 | 参数 | 说明 |
 | --- | --- |
 | `-t, --to` | 目标容器：`mp4`（默认）/ `webm` / `mkv` / `mov` |
 | `--codec` | `h264` / `h265` / `vp9` / `av1`，默认按容器选择 |
+| `--audio-policy` | `preserve` 原样复制、`compatible` 兼容转码（默认）、`compact` 低码率转码 |
 | `--hwaccel` | 硬件编码后端，见下文 |
 
 不指定 `--codec` 时按容器取默认编码：mp4 与 mov 用 h264，mkv 用 h265，webm 用 vp9。mp4/mov 输出会自动写入 `+faststart`，便于边下边播。
@@ -38,12 +39,15 @@ pixshift video compress talk.mp4 --target-size 25MB [--json]
 | `-p, --preset` | `web`（默认，均衡）/ `archive`（接近视觉无损）/ `tiny`（最小体积，长边限 1280） |
 | `--codec` | `h264`（默认）/ `h265` / `vp9` / `av1` |
 | `--crf` | 覆盖预设的 CRF 值（0–63），数值越小画质越好 |
+| `--audio-policy` | `preserve` 原样复制、`compatible` 兼容转码（默认）、`compact` 低码率转码 |
 | `--target-size` | 目标体积上限，如 `25MB` |
 | `--hwaccel` | 硬件编码后端，见下文 |
 
 输出为 `_compressed` 派生文件，容器取所选编码的原生容器。
 
 **`--target-size` 用两遍编码达成体积约束下的最优画质。** 先把字节预算换算成视频码率（预留音轨与容器封装开销），再执行两遍编码——这是给定体积下画质最优的做法。av1 与硬件编码器没有可移植的两遍实现，会退化为单遍 ABR。原文件已在预算内时原样复制；码率控制超出预算时按实测比例回调再试一次，仍不达标则返回 `target_size_missed` 且不产出文件。该参数与 `-p`、`--crf` 互斥。
+
+音频策略不会静默降级：`preserve` 使用音轨流拷贝，若目标容器不兼容则编码失败而不是偷偷转码；`compatible` 使用容器对应编码器和 192 kbps，`compact` 使用 96 kbps。JSON 的每项结果都含 `audio_policy` 与 `audio_action`。已在目标体积内且容器相同的输入会整体流拷贝，以保留最高质量。
 
 ## concat — 拼接
 

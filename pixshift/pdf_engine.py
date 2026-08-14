@@ -25,6 +25,8 @@ from .core.defaults import DEFAULT_PDF_EXTRACT_DPI, DEFAULT_PDF_MERGE_MARGIN
 from .core.errors import OperationPolicyError
 from .core.files import atomic_output_path, safe_output_path, validate_aggregate_output_path
 from .core.metadata import (
+    convert_color_to_srgb,
+    ensure_pixel_count_within_limit,
     ensure_static_image,
     image_has_transparency,
     normalize_orientation,
@@ -126,6 +128,12 @@ PDF_COMPRESS_PRESETS: dict[str, dict[str, Any]] = {
 # ============================================================
 
 
+class PDFPageRangeError(ValueError):
+    """A malformed or out-of-bounds PDF page selection."""
+
+    code = "invalid_page_range"
+
+
 @dataclass
 class PDFResult:
     """PDF 操作结果"""
@@ -214,7 +222,11 @@ def _collect_images(input_paths: list[str], recursive: bool = False) -> list[str
         elif path.is_dir():
             pattern = "**/*" if recursive else "*"
             for item in sorted(path.glob(pattern)):
-                if item.is_file() and item.suffix.lower() in PDF_IMAGE_FORMATS:
+                if (
+                    not item.is_symlink()
+                    and item.is_file()
+                    and item.suffix.lower() in PDF_IMAGE_FORMATS
+                ):
                     files.append(str(item.resolve()))
     return list(dict.fromkeys(files))
 
@@ -230,13 +242,13 @@ def _collect_pdfs(input_paths: list[str], recursive: bool = False) -> list[str]:
         elif path.is_dir():
             pattern = "**/*.pdf" if recursive else "*.pdf"
             for item in sorted(path.glob(pattern)):
-                if item.is_file():
+                if not item.is_symlink() and item.is_file():
                     files.append(str(item.resolve()))
     return list(dict.fromkeys(files))
 
 
-# JPEG 段过滤：保留 SOI/JFIF(APP0)/Adobe(APP14) 与编码数据，丢弃携带
-# EXIF/GPS/XMP/ICC/注释的段。熵编码数据零改动 => 像素无损。
+# JPEG 段过滤：保留 SOI/JFIF(APP0)、功能性 ICC(APP2)、Adobe(APP14)
+# 与编码数据，丢弃 EXIF/GPS/XMP/注释。熵编码数据零改动 => 像素无损。
 _JPEG_DROPPED_MARKERS = set(range(0xE1, 0xEE)) | {0xEF, 0xFE}  # APP1-13, APP15, COM
 
 
@@ -305,8 +317,10 @@ def _strip_jpeg_metadata(data: bytes) -> bytes | None:
         if length < 2 or offset + 2 + length > total:
             return None
         segment_end = offset + 2 + length
-        if marker not in _JPEG_DROPPED_MARKERS:
-            kept.append(data[offset:segment_end])
+        segment = data[offset:segment_end]
+        is_icc = marker == 0xE2 and segment[4:].startswith(b"ICC_PROFILE\x00")
+        if marker not in _JPEG_DROPPED_MARKERS or is_icc:
+            kept.append(segment)
         offset = segment_end
     return None
 
@@ -347,15 +361,19 @@ def _image_to_bytes(image_path: str, quality: int = 95) -> tuple[bytes, tuple[in
     with open_image(image_path) as source:
         ensure_static_image(source)
         img = normalize_orientation(source).copy()
+        img.info.update(source.info)
+
+    img = convert_color_to_srgb(img)
+    icc_profile = img.info.get("icc_profile")
 
     # 有透明通道用 PNG，否则用 JPEG
     buf = io.BytesIO()
     if image_has_transparency(img):
-        img.save(buf, format="PNG")
+        img.save(buf, format="PNG", icc_profile=icc_profile)
     else:
         if img.mode != "RGB":
             img = img.convert("RGB")
-        img.save(buf, format="JPEG", quality=quality)
+        img.save(buf, format="JPEG", quality=quality, icc_profile=icc_profile)
 
     return buf.getvalue(), img.size
 
@@ -449,7 +467,7 @@ def pdf_merge_images(
 
             # 保存
             os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
-            with atomic_output_path(output_path) as temporary:
+            with atomic_output_path(output_path, overwrite=overwrite) as temporary:
                 doc.save(temporary, deflate=True, garbage=4)
 
         result.output_size = os.path.getsize(output_path)
@@ -494,6 +512,7 @@ def pdf_extract_pages(
     _check_pymupdf()
     result = PDFResult(output_path=output_dir)
     start_time = time.time()
+    doc: Any | None = None
 
     try:
         fmt = output_format.lower().lstrip(".")
@@ -508,8 +527,6 @@ def pdf_extract_pages(
         # 解析页码范围
         page_indices = _parse_page_range(pages, total_pages)
 
-        os.makedirs(output_dir, exist_ok=True)
-
         if fmt in ("jpg", "jpeg"):
             pix_format = "jpeg"
             ext = ".jpg"
@@ -523,6 +540,17 @@ def pdf_extract_pages(
         else:
             pix_format = "png"
             ext = ".png"
+
+        # Validate every selected page before creating the output directory or
+        # rasterizing the first page. A compact PDF can otherwise expand into a
+        # multi-hundred-megapixel pixmap at a high requested DPI.
+        zoom = dpi / 72.0
+        mat = fitz.Matrix(zoom, zoom)
+        for page_idx in page_indices:
+            rendered_rect = (doc[page_idx].rect * mat).irect
+            ensure_pixel_count_within_limit(rendered_rect.width * rendered_rect.height)
+
+        os.makedirs(output_dir, exist_ok=True)
 
         output_total_size = 0
         extracted_count = 0
@@ -540,11 +568,9 @@ def pdf_extract_pages(
                 continue
 
             # 渲染页面
-            zoom = dpi / 72.0
-            mat = fitz.Matrix(zoom, zoom)
             pix = page.get_pixmap(matrix=mat, alpha=False)
 
-            with atomic_output_path(out_path) as temporary:
+            with atomic_output_path(out_path, overwrite=overwrite) as temporary:
                 if fmt in ("webp", "tiff"):
                     # 通过 Pillow 转换
                     img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
@@ -560,8 +586,6 @@ def pdf_extract_pages(
             output_total_size += os.path.getsize(out_path)
             extracted_count += 1
 
-        doc.close()
-
         result.output_size = output_total_size
         result.page_count = extracted_count
         result.success = True
@@ -570,8 +594,16 @@ def pdf_extract_pages(
         result.details["extracted_pages"] = extracted_count
         result.details["skipped_existing"] = skipped_existing
 
-    except Exception as e:
-        result.error = str(e)
+    except PDFPageRangeError as error:
+        result.error = error.code
+        result.details["error_kind"] = "usage"
+    except OperationPolicyError as error:
+        result.error = error.code
+    except Exception as error:
+        result.error = str(error)
+    finally:
+        if doc is not None:
+            doc.close()
 
     result.duration = time.time() - start_time
     return result
@@ -597,6 +629,7 @@ def pdf_split(
     _check_pymupdf()
     result = PDFResult(output_path=output_dir)
     start_time = time.time()
+    doc: Any | None = None
 
     try:
         result.input_size = os.path.getsize(pdf_path)
@@ -620,7 +653,7 @@ def pdf_split(
                 new_doc = fitz.open()
                 for page_idx in page_indices:
                     new_doc.insert_pdf(doc, from_page=page_idx, to_page=page_idx)
-                with atomic_output_path(out_path) as temporary:
+                with atomic_output_path(out_path, overwrite=overwrite) as temporary:
                     new_doc.save(temporary)
                 new_doc.close()
                 output_total_size += os.path.getsize(out_path)
@@ -633,13 +666,12 @@ def pdf_split(
                     continue
                 new_doc = fitz.open()
                 new_doc.insert_pdf(doc, from_page=page_idx, to_page=page_idx)
-                with atomic_output_path(out_path) as temporary:
+                with atomic_output_path(out_path, overwrite=overwrite) as temporary:
                     new_doc.save(temporary)
                 new_doc.close()
                 output_total_size += os.path.getsize(out_path)
                 written += 1
 
-        doc.close()
         result.output_size = output_total_size
         result.page_count = len(page_indices)
         result.success = True
@@ -648,8 +680,14 @@ def pdf_split(
         result.details["written_files"] = written
         result.details["skipped_existing"] = skipped_existing
 
-    except Exception as e:
-        result.error = str(e)
+    except PDFPageRangeError as error:
+        result.error = error.code
+        result.details["error_kind"] = "usage"
+    except Exception as error:
+        result.error = str(error)
+    finally:
+        if doc is not None:
+            doc.close()
 
     result.duration = time.time() - start_time
     return result
@@ -666,7 +704,7 @@ def _parse_page_range(pages_str: str | None, total: int) -> list[int]:
         return list(range(total))
 
     if total <= 0 or not pages_str.strip():
-        raise ValueError("invalid_page_range")
+        raise PDFPageRangeError(PDFPageRangeError.code)
 
     indices = set()
     try:
@@ -690,7 +728,7 @@ def _parse_page_range(pages_str: str | None, total: int) -> list[int]:
                     raise ValueError
                 indices.add(page_number - 1)
     except (TypeError, ValueError) as error:
-        raise ValueError("invalid_page_range") from error
+        raise PDFPageRangeError(PDFPageRangeError.code) from error
 
     return sorted(indices)
 
@@ -775,11 +813,11 @@ def pdf_compress(
 
         if img_quality is not None:
             # 有损压缩：重压缩图片 + 结构优化
-            with atomic_output_path(output_path) as temporary:
+            with atomic_output_path(output_path, overwrite=overwrite) as temporary:
                 stats = _compress_rebuild(doc, temporary, img_quality, max_dpi, save_opts)
         else:
             # 无损压缩：仅结构优化（去重、清理、deflate）
-            with atomic_output_path(output_path) as temporary:
+            with atomic_output_path(output_path, overwrite=overwrite) as temporary:
                 doc.save(temporary, **save_opts)
             stats = {"images_processed": 0, "images_skipped": 0, "images_replaced": 0}
 
@@ -799,9 +837,8 @@ def pdf_compress(
     return result
 
 
-# Descending quality ladder for target-size search: the first candidate that
-# fits is the highest-quality one that satisfies the constraint.
-PDF_TARGET_QUALITY_LADDER = (85, 70, 55, 40, 30, 20)
+PDF_TARGET_MIN_QUALITY = 20
+PDF_TARGET_MAX_QUALITY = 95
 
 
 def pdf_compress_to_target(
@@ -814,10 +851,10 @@ def pdf_compress_to_target(
     """Compress a PDF to fit under ``target_size`` bytes at the best quality.
 
     Strategy (bounded, deterministic): if the input already fits, copy it
-    untouched; otherwise try lossless structure optimisation, then walk a
-    descending image-quality ladder and publish the first candidate that
-    fits. If even the lowest rung exceeds the target, fail with a stable
-    error and leave no output behind.
+    untouched; otherwise try lossless structure optimisation, then test the
+    finite quality domain from highest to lowest. Encoded sizes are not
+    strictly monotonic, so a binary search cannot prove the highest feasible
+    quality. If no supported quality fits, fail without publishing output.
     """
     _check_pymupdf()
     result = PDFResult(output_path=output_path)
@@ -837,7 +874,7 @@ def pdf_compress_to_target(
             result.page_count = probe_doc.page_count
 
         if result.input_size <= target_size:
-            with atomic_output_path(output_path) as temporary:
+            with atomic_output_path(output_path, overwrite=overwrite) as temporary:
                 shutil.copyfile(input_path, temporary)
             result.output_size = os.path.getsize(output_path)
             result.success = True
@@ -859,50 +896,33 @@ def pdf_compress_to_target(
                 doc.close()
             return os.path.getsize(destination)
 
-        candidates_dir = tempfile.mkdtemp(
-            prefix=".pixshift-target-", dir=os.path.dirname(output_path) or "."
-        )
+        output_parent = os.path.dirname(output_path) or "."
+        os.makedirs(output_parent, exist_ok=True)
+        candidates_dir = tempfile.mkdtemp(prefix=".pixshift-target-", dir=output_parent)
         try:
             winner: str | None = None
             winner_quality: int | None = None
-            fail_floor: int | None = None  # lowest quality known to exceed the target
-            for image_quality in (None, *PDF_TARGET_QUALITY_LADDER):
-                label = "lossless" if image_quality is None else f"q{image_quality}"
-                candidate = os.path.join(candidates_dir, f"cand_{label}.pdf")
-                size = _encode_candidate(image_quality, candidate)
-                attempts.append((image_quality, size))
-                if size <= target_size:
-                    winner = candidate
-                    winner_quality = image_quality
-                    break
-                if image_quality is not None:
-                    fail_floor = image_quality
+            lossless_candidate = os.path.join(candidates_dir, "cand_lossless.pdf")
+            lossless_size = _encode_candidate(None, lossless_candidate)
+            attempts.append((None, lossless_size))
+            if lossless_size <= target_size:
+                winner = lossless_candidate
+            else:
+                for image_quality in range(PDF_TARGET_MAX_QUALITY, PDF_TARGET_MIN_QUALITY - 1, -1):
+                    candidate = os.path.join(candidates_dir, f"cand_q{image_quality}.pdf")
+                    size = _encode_candidate(image_quality, candidate)
+                    attempts.append((image_quality, size))
+                    if size <= target_size:
+                        winner = candidate
+                        winner_quality = image_quality
+                        break
             if winner is None:
                 result.error = "target_size_unreachable"
                 result.details["target_size"] = target_size
                 result.details["closest_size"] = min(size for _, size in attempts)
                 result.details["attempts"] = len(attempts)
                 return result
-            if winner_quality is not None:
-                # Refine between the fitting rung and the rung above it (two
-                # bounded bisection steps) so "best quality under the budget"
-                # is not limited to the ladder's coarse spacing.
-                low = winner_quality
-                high = fail_floor if fail_floor is not None else 95
-                for _ in range(2):
-                    mid = (low + high) // 2
-                    if mid <= low or mid >= high:
-                        break
-                    candidate = os.path.join(candidates_dir, f"cand_q{mid}.pdf")
-                    size = _encode_candidate(mid, candidate)
-                    attempts.append((mid, size))
-                    if size <= target_size:
-                        winner = candidate
-                        winner_quality = mid
-                        low = mid
-                    else:
-                        high = mid
-            with atomic_output_path(output_path) as temporary:
+            with atomic_output_path(output_path, overwrite=overwrite) as temporary:
                 shutil.copyfile(winner, temporary)
         finally:
             shutil.rmtree(candidates_dir, ignore_errors=True)
@@ -920,6 +940,21 @@ def pdf_compress_to_target(
 
     result.duration = time.time() - start_time
     return result
+
+
+def _has_nondefault_decode(doc: "fitz.Document", xref: int, components: int) -> bool:
+    """Return whether an image XObject has pixel semantics unsafe to replace."""
+    decode_type, decode_value = doc.xref_get_key(xref, "Decode")
+    if decode_type == "null":
+        return False
+    if decode_type != "array" or components <= 0:
+        return True
+    try:
+        values = [float(token) for token in decode_value.strip("[]").split()]
+    except (TypeError, ValueError):
+        return True
+    default = [component for _ in range(components) for component in (0.0, 1.0)]
+    return values != default
 
 
 def _compress_rebuild(
@@ -952,22 +987,29 @@ def _compress_rebuild(
     # 收集所有唯一的图片 xref，避免重复处理
     processed_xrefs = set()
 
+    # An image XObject may be reused at different sizes across pages. Gather
+    # every placement before replacing any xref so downsampling is based on the
+    # placement that needs the most pixels, not whichever page happens to come
+    # first in the document.
+    placement_rects_by_xref: dict[int, list[Any]] = {}
+    if max_dpi:
+        for page_idx in range(doc.page_count):
+            try:
+                for placement in doc[page_idx].get_image_info(xrefs=True):
+                    info_xref = int(placement.get("xref", 0) or 0)
+                    if not info_xref:
+                        continue
+                    rect = fitz.Rect(placement["bbox"])
+                    if rect.width > 0 and rect.height > 0:
+                        placement_rects_by_xref.setdefault(info_xref, []).append(rect)
+            except Exception:
+                # Missing placement metadata must disable downsampling for the
+                # affected image rather than risk under-resolving it.
+                continue
+
     for page_idx in range(doc.page_count):
         page = doc[page_idx]
         image_list = page.get_images(full=True)
-
-        # get_image_rects re-parses the page content stream on every call,
-        # which is quadratic on image-heavy pages. One get_image_info pass
-        # yields every placement rect for the page up front.
-        rects_by_xref: dict[int, Any] = {}
-        if max_dpi and image_list:
-            try:
-                for placement in page.get_image_info(xrefs=True):
-                    info_xref = int(placement.get("xref", 0) or 0)
-                    if info_xref and info_xref not in rects_by_xref:
-                        rects_by_xref[info_xref] = fitz.Rect(placement["bbox"])
-            except Exception:
-                rects_by_xref = {}
 
         for img_info in image_list:
             xref = img_info[0]
@@ -984,12 +1026,20 @@ def _compress_rebuild(
                     images_skipped += 1
                     continue
 
-                # Transparency may be an SMask xref or a colour-key /Mask
-                # array. ``extract_image`` exposes only SMask, while
-                # ``replace_image`` discards either form. Preserve all masked
-                # XObjects byte-for-byte rather than silently flattening them.
+                # ``replace_image`` rebuilds the image dictionary. Preserve
+                # XObjects whose rendering depends on dictionary semantics not
+                # represented by the extracted pixel payload: soft/colour-key
+                # masks, stencil masks, and non-default Decode arrays.
                 mask_type, _ = doc.xref_get_key(xref, "Mask")
-                if base_image.get("smask", 0) or mask_type != "null":
+                image_mask_type, image_mask_value = doc.xref_get_key(xref, "ImageMask")
+                is_stencil = image_mask_type == "bool" and image_mask_value.lower() == "true"
+                components = int(base_image.get("colorspace", 0) or 0)
+                if (
+                    base_image.get("smask", 0)
+                    or mask_type != "null"
+                    or is_stencil
+                    or _has_nondefault_decode(doc, xref, components)
+                ):
                     images_skipped += 1
                     continue
 
@@ -997,34 +1047,43 @@ def _compress_rebuild(
                 img_width = base_image.get("width", 0)
                 img_height = base_image.get("height", 0)
 
-                pil_img: Image.Image = open_image(io.BytesIO(img_bytes))
+                with open_image(io.BytesIO(img_bytes)) as opened_image:
+                    pil_img = opened_image.copy()
+                    pil_img.info.update(opened_image.info)
 
                 # 降低分辨率
                 if max_dpi and img_width > 0 and img_height > 0:
                     try:
-                        display_rect = rects_by_xref.get(xref)
-                        if display_rect is not None:
-                            display_w_inch = display_rect.width / 72.0
-                            display_h_inch = display_rect.height / 72.0
+                        required_scales = []
+                        for display_rect in placement_rects_by_xref.get(xref, []):
+                            display_w_inch = display_rect.width / 72
+                            display_h_inch = display_rect.height / 72
                             if display_w_inch > 0 and display_h_inch > 0:
                                 current_dpi = max(
                                     img_width / display_w_inch,
                                     img_height / display_h_inch,
                                 )
-                                if current_dpi > max_dpi:
-                                    scale = max_dpi / current_dpi
-                                    new_w = max(1, int(img_width * scale))
-                                    new_h = max(1, int(img_height * scale))
-                                    pil_img = pil_img.resize(
-                                        (new_w, new_h), Image.Resampling.LANCZOS
-                                    )
+                                required_scales.append(min(1.0, max_dpi / current_dpi))
+                        if required_scales:
+                            scale = max(required_scales)
+                            if scale < 1:
+                                new_w = max(1, int(img_width * scale))
+                                new_h = max(1, int(img_height * scale))
+                                pil_img = pil_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
                     except Exception:
                         pass
 
                 # 重新编码
+                pil_img = convert_color_to_srgb(pil_img)
                 buf = io.BytesIO()
+                icc_profile = pil_img.info.get("icc_profile")
                 if image_has_transparency(pil_img):
-                    pil_img.save(buf, format="PNG", optimize=True)
+                    pil_img.save(
+                        buf,
+                        format="PNG",
+                        optimize=True,
+                        icc_profile=icc_profile,
+                    )
                 else:
                     if pil_img.mode != "RGB":
                         pil_img = pil_img.convert("RGB")
@@ -1033,6 +1092,7 @@ def _compress_rebuild(
                         format="JPEG",
                         quality=image_quality,
                         optimize=True,
+                        icc_profile=icc_profile,
                     )
 
                 new_bytes = buf.getvalue()
@@ -1065,6 +1125,65 @@ def _compress_rebuild(
 # ============================================================
 
 
+def _unpreserved_concat_semantics(doc: "fitz.Document") -> set[str]:
+    """Detect document-level semantics that ``insert_pdf`` does not copy."""
+    warnings: set[str] = set()
+    metadata_fields = {
+        "title",
+        "author",
+        "subject",
+        "keywords",
+        "creator",
+        "producer",
+        "creationDate",
+        "modDate",
+        "trapped",
+    }
+    try:
+        metadata = doc.metadata or {}
+        if any(metadata.get(field) for field in metadata_fields):
+            warnings.add("document_metadata_not_preserved")
+    except Exception:
+        pass
+    try:
+        if doc.embfile_count():
+            warnings.add("document_embedded_files_not_preserved")
+    except Exception:
+        pass
+    try:
+        open_action_type, _ = doc.xref_get_key(doc.pdf_catalog(), "OpenAction")
+        if open_action_type != "null":
+            warnings.add("document_open_action_not_preserved")
+    except Exception:
+        pass
+    try:
+        if doc.get_toc(simple=True):
+            warnings.add("document_outline_not_preserved")
+    except Exception:
+        pass
+    try:
+        page_labels_type, _ = doc.xref_get_key(doc.pdf_catalog(), "PageLabels")
+        if page_labels_type != "null":
+            warnings.add("document_page_labels_not_preserved")
+    except Exception:
+        pass
+    catalog_semantics = {
+        "Lang": "document_language_not_preserved",
+        "ViewerPreferences": "document_viewer_preferences_not_preserved",
+        "Names": "document_names_not_preserved",
+        "MarkInfo": "document_mark_info_not_preserved",
+        "OutputIntents": "document_output_intents_not_preserved",
+    }
+    for key, warning in catalog_semantics.items():
+        try:
+            value_type, _ = doc.xref_get_key(doc.pdf_catalog(), key)
+            if value_type != "null":
+                warnings.add(warning)
+        except Exception:
+            pass
+    return warnings
+
+
 def pdf_concat(
     pdf_paths: list[str],
     output_path: str,
@@ -1094,15 +1213,19 @@ def pdf_concat(
 
         merged = fitz.open()
         total_pages = 0
+        semantic_warnings: set[str] = set()
 
         for pdf_path in pdf_paths:
             src = _open_pdf(pdf_path)
-            merged.insert_pdf(src)
-            total_pages += src.page_count
-            src.close()
+            try:
+                semantic_warnings.update(_unpreserved_concat_semantics(src))
+                merged.insert_pdf(src)
+                total_pages += src.page_count
+            finally:
+                src.close()
 
         os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
-        with atomic_output_path(output_path) as temporary:
+        with atomic_output_path(output_path, overwrite=overwrite) as temporary:
             merged.save(temporary, deflate=True, garbage=4)
         merged.close()
 
@@ -1110,6 +1233,7 @@ def pdf_concat(
         result.page_count = total_pages
         result.success = True
         result.details["file_count"] = len(pdf_paths)
+        result.details["warnings"] = sorted(semantic_warnings)
 
     except OperationPolicyError as error:
         result.error = error.code
@@ -1134,13 +1258,25 @@ def pdf_get_info(pdf_path: str) -> PDFInfo:
     """
     _check_pymupdf()
     info = PDFInfo(path=pdf_path)
+    doc: Any | None = None
 
     try:
         info.size_bytes = os.path.getsize(pdf_path)
-        doc = fitz.open(pdf_path)
 
+        # PyMuPDF 中没有直接的 version_string，用文件头读取。
+        try:
+            with open(pdf_path, "rb") as stream:
+                header = stream.read(20).decode("latin-1", errors="ignore")
+                if header.startswith("%PDF-"):
+                    info.pdf_version = header[5:8]
+        except Exception:
+            pass
+
+        doc = fitz.open(pdf_path)
         info.page_count = doc.page_count
-        info.encrypted = doc.is_encrypted
+        info.encrypted = bool(doc.is_encrypted or doc.needs_pass)
+        if doc.needs_pass:
+            raise ValueError("pdf_password_required")
 
         # 元数据
         meta = doc.metadata or {}
@@ -1151,16 +1287,6 @@ def pdf_get_info(pdf_path: str) -> PDFInfo:
         info.producer = meta.get("producer", "") or ""
         info.creation_date = meta.get("creationDate", "") or ""
         info.mod_date = meta.get("modDate", "") or ""
-
-        # PDF 版本
-        # PyMuPDF 中没有直接的 version_string，用文件头读取
-        try:
-            with open(pdf_path, "rb") as f:
-                header = f.read(20).decode("latin-1", errors="ignore")
-                if header.startswith("%PDF-"):
-                    info.pdf_version = header[5:8]
-        except Exception:
-            pass
 
         # 逐页信息
         total_images = 0
@@ -1180,9 +1306,10 @@ def pdf_get_info(pdf_path: str) -> PDFInfo:
 
         info.image_count = total_images
 
-        doc.close()
-
-    except Exception as e:
-        info.error = str(e)
+    except Exception as error:
+        info.error = str(error)
+    finally:
+        if doc is not None:
+            doc.close()
 
     return info

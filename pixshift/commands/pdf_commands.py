@@ -202,6 +202,14 @@ def register_pdf_commands(
             single=single,
             overwrite=overwrite,
         )
+        if not result.success and result.details.get("error_kind") == "usage":
+            usage_error_or_exit(
+                command="pdf.split",
+                as_json=as_json,
+                error=result.error,
+                detail="--pages must select existing pages, for example '1-5,8'",
+                human_message="--pages 页码范围无效或超出 PDF 总页数",
+            )
 
         if as_json:
             payload = {
@@ -296,6 +304,14 @@ def register_pdf_commands(
             prefix=prefix,
             overwrite=overwrite,
         )
+        if not result.success and result.details.get("error_kind") == "usage":
+            usage_error_or_exit(
+                command="pdf.extract",
+                as_json=as_json,
+                error=result.error,
+                detail="--pages must select existing pages, for example '1-5,8'",
+                human_message="--pages 页码范围无效或超出 PDF 总页数",
+            )
 
         if as_json:
             payload = {
@@ -526,7 +542,7 @@ def register_pdf_commands(
         if len(pdf_files) < 2:
             if as_json:
                 emit_json_and_exit(
-                    {"command": "pdf.concat", "ok": False, "error": "need_at_least_two"}, 1
+                    {"command": "pdf.concat", "ok": False, "error": "need_at_least_two"}, 2
                 )
             else:
                 console.print("[yellow]至少需要 2 个 PDF 文件。[/yellow]")
@@ -546,6 +562,7 @@ def register_pdf_commands(
                 "duration_sec": round(result.duration, 4),
                 "error": result.error or "",
                 "ignored_generated": ignored_generated,
+                "warnings": result.details.get("warnings", []),
             }
             if not result.success:
                 emit_json_and_exit(payload, 1)
@@ -567,6 +584,8 @@ def register_pdf_commands(
                     box=box.ROUNDED,
                 )
             )
+            for warning in result.details.get("warnings", []):
+                console.print(f"[yellow]警告: {warning}[/yellow]")
         else:
             console.print(f"[red]PDF 拼接失败: {result.error}[/red]")
             raise click.exceptions.Exit(1)

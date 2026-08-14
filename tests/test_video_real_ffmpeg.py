@@ -16,6 +16,7 @@ import pytest
 from click.testing import CliRunner
 
 from pixshift.cli import cli
+from pixshift.verify_engine import VerifyResult, _run_audio_rms
 
 pytestmark = pytest.mark.skipif(
     shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None,
@@ -228,6 +229,59 @@ def test_concat_stream_copy_sums_durations(clips, tmp_path):
     )
     duration = float(json.loads(probe.stdout)["format"]["duration"])
     assert 3.4 <= duration <= 4.6
+
+
+def test_verify_audio_snr_uses_the_unscaled_residual(tmp_path):
+    """A 19% level loss is about 14.4 dB SNR and must fail the 20 dB gate."""
+    source = tmp_path / "source.wav"
+    identical = tmp_path / "identical.wav"
+    candidate = tmp_path / "candidate.wav"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:sample_rate=48000:duration=1",
+            "-c:a",
+            "pcm_s16le",
+            str(source),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    shutil.copyfile(source, identical)
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            str(source),
+            "-filter:a",
+            "volume=0.81",
+            "-c:a",
+            "pcm_s16le",
+            str(candidate),
+        ],
+        check=True,
+        capture_output=True,
+    )
+
+    unchanged = VerifyResult(source=str(source), candidate=str(identical))
+    attenuated = VerifyResult(source=str(source), candidate=str(candidate))
+    source_rms = _run_audio_rms(attenuated, difference=False)
+    unchanged_residual = _run_audio_rms(unchanged, difference=True)
+    attenuated_residual = _run_audio_rms(attenuated, difference=True)
+
+    assert unchanged_residual == float("-inf")
+    assert source_rms - attenuated_residual == pytest.approx(14.4249, abs=0.15)
 
 
 def test_concat_rejects_mismatched_then_reencodes(clips, tmp_path):

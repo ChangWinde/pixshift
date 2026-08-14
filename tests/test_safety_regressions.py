@@ -140,6 +140,27 @@ def test_advanced_image_operations_normalize_exif_orientation(tmp_path: Path) ->
             assert image.getexif().get(274) in (None, 1)
 
 
+def test_montage_rejects_canvas_over_pixel_budget(tmp_path: Path, monkeypatch) -> None:
+    source = tmp_path / "source.png"
+    output = tmp_path / "montage.png"
+    Image.new("RGB", (1, 1), "red").save(source)
+    monkeypatch.setenv("PIXSHIFT_MAX_PIXELS", "100")
+
+    result = create_montage(
+        [str(source)],
+        str(output),
+        cols=1,
+        cell_width=20,
+        cell_height=20,
+        gap=0,
+        overwrite=True,
+    )
+
+    assert result.success is False
+    assert result.error == "image_too_large:400>100"
+    assert not output.exists()
+
+
 def test_dedup_delete_never_removes_perceptually_similar_files(tmp_path: Path) -> None:
     for name, color in (
         ("red.png", (255, 0, 0)),

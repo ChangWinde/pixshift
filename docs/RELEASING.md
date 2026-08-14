@@ -18,6 +18,8 @@ PixShift follows semantic versioning (`MAJOR.MINOR.PATCH`).
    ```
 2. Update `CHANGELOG.md`, set the same version in `pyproject.toml`, and run
    `uv lock`. Confirm that neither the tag nor package version already exists.
+   The release workflow rejects a tag that differs from `project.version` and
+   verifies both wheel and sdist filenames before upload.
 3. Merge the reviewed release commit, then create and push a version tag:
    ```bash
    git tag vX.Y.Z
@@ -34,7 +36,8 @@ validated artifacts to PyPI through [trusted publishing](https://docs.pypi.org/t
 
 1. On pypi.org, add a trusted publisher for project `pixshift`:
    owner `ChangWinde`, repository `pixshift`, workflow `release.yml`,
-   environment `pypi`. For a first release use a *pending* publisher.
+   environment `pypi`. The PyPI project already exists, so configure this under
+   the existing project's Publishing settings (not as a pending publisher).
 2. In the GitHub repository settings, create the `pypi` environment.
    Recommended: require a reviewer so publishing stays an explicit decision.
 3. Push a `vX.Y.Z` tag. The `build` job runs the full gate and builds artifacts;
@@ -53,5 +56,5 @@ the result to the `gh-pages` branch that serves
 
 ## Coverage Policy
 
-The current repository-wide gate is `78%` (measured coverage is about 85%).
-Increase this threshold gradually as module coverage improves; the next target is `85%`.
+The current repository-wide gate is `78%`. Increase this threshold only from a
+fresh full-suite coverage report; historical measurements are not a release claim.

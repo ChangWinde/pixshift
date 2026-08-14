@@ -18,6 +18,11 @@ Absolute timings depend on hardware. The script first verifies that indexed and
 exhaustive clustering produce identical connected components; a mismatch fails
 the benchmark instead of reporting a misleading speedup.
 
+The figures below are historical one-off observations from their implementing
+changes, not release gates; only the dedup result above currently has a checked-in
+reproduction harness. They are retained for provenance until equivalent benchmark
+scripts and environment manifests are added.
+
 Other bounded-performance decisions:
 
 - one conversion stays in-process;

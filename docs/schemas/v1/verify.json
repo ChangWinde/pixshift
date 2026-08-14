@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/ChangWinde/pixshift/docs/schemas/v1/verify.json",
+  "title": "pixshift verify --json",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "command",
+    "ok",
+    "passed",
+    "media_type",
+    "source",
+    "candidate",
+    "source_bytes",
+    "candidate_bytes",
+    "thresholds",
+    "metrics",
+    "checks",
+    "observations",
+    "error",
+    "detail"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.1"},
+    "command": {"const": "verify"},
+    "ok": {"type": "boolean"},
+    "passed": {"type": "boolean"},
+    "media_type": {"type": "string"},
+    "source": {"type": "string"},
+    "candidate": {"type": "string"},
+    "source_bytes": {"type": "integer", "minimum": 0},
+    "candidate_bytes": {"type": "integer", "minimum": 0},
+    "thresholds": {
+      "type": "object",
+      "required": ["min_ssim", "min_psnr", "max_bytes"],
+      "properties": {
+        "min_ssim": {"type": "number", "minimum": 0, "maximum": 1},
+        "min_psnr": {"type": ["number", "null"], "minimum": 0},
+        "max_bytes": {"type": ["integer", "null"], "minimum": 1}
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "required": ["ssim", "psnr", "sampled"],
+      "properties": {
+        "ssim": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+        "psnr": {"type": ["number", "null"], "minimum": 0},
+        "sampled": {"type": "boolean"}
+      }
+    },
+    "checks": {
+      "type": "object",
+      "additionalProperties": {"type": "boolean"}
+    },
+    "observations": {"type": "object"},
+    "error": {"type": "string"},
+    "detail": {"type": "string"}
+  }
+}

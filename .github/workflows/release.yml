@@ -24,6 +24,12 @@ jobs:
       - name: Install build dependencies
         run: uv sync --frozen --extra dev
 
+      - name: Verify tag matches the package version
+        shell: bash
+        run: |
+          package_version="$(uv run python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          test "${GITHUB_REF_NAME#v}" = "$package_version"
+
       - name: Static quality
         run: |
           uv run ruff check .
@@ -38,6 +44,13 @@ jobs:
 
       - name: Check package metadata
         run: uv run twine check dist/*
+
+      - name: Verify artifact filenames carry the package version
+        shell: bash
+        run: |
+          package_version="$(uv run python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          test -f "dist/pixshift-${package_version}.tar.gz"
+          compgen -G "dist/pixshift-${package_version}-*.whl" >/dev/null
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7

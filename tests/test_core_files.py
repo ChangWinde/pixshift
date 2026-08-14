@@ -2,11 +2,15 @@
 
 from pathlib import Path
 
+import pytest
+
+from pixshift.core.errors import InvalidFilenameComponentError
 from pixshift.core.files import (
     collect_supported_files,
     conversion_output_name,
     derivative_output_name,
     plan_output_path,
+    validate_filename_component,
 )
 
 
@@ -83,3 +87,20 @@ def test_plan_output_path_flatten_writes_into_output_root(tmp_path):
     )
 
     assert Path(target) == out_dir / "photo_clean.jpg"
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["bad:name.jpg", "bad?.jpg", "trailing. ", "NUL.txt", "COM1", "line\nbreak.png"],
+)
+def test_generated_filename_components_are_portable(name):
+    with pytest.raises(InvalidFilenameComponentError):
+        validate_filename_component(name)
+
+
+def test_default_output_directory_still_validates_generated_name(tmp_path):
+    source = tmp_path / "source.png"
+    source.write_bytes(b"image")
+
+    with pytest.raises(InvalidFilenameComponentError):
+        plan_output_path(str(source), "bad:name.webp")

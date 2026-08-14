@@ -19,6 +19,8 @@ from .converter import SUPPORTED_INPUT_FORMATS
 from .core.errors import AnimatedInputNotSupportedError
 from .core.files import SelectionFilters, atomic_output_path, collect_supported_files
 from .core.metadata import (
+    convert_color_to_rgb,
+    ensure_pixel_count_within_limit,
     ensure_static_image,
     image_has_transparency,
     normalize_orientation,
@@ -158,6 +160,7 @@ def create_montage(
         canvas_w = cols * cell_width + (cols + 1) * gap
         canvas_h = rows * (cell_height + label_height) + (rows + 1) * gap
         result.canvas_size = (canvas_w, canvas_h)
+        ensure_pixel_count_within_limit(canvas_w * canvas_h)
 
         # 解析颜色
         bg_color = _parse_rgb(background)
@@ -183,7 +186,7 @@ def create_montage(
             # 缩放图片以适应单元格
             with open_image(image_path) as source:
                 ensure_static_image(source)
-                img = normalize_orientation(source)
+                img = convert_color_to_rgb(normalize_orientation(source))
                 resized = _fit_image(img, cell_width, cell_height)
 
             # 居中放置
@@ -229,7 +232,7 @@ def create_montage(
 
         # 保存
         ext = output_extension
-        with atomic_output_path(output_path) as temporary:
+        with atomic_output_path(output_path, overwrite=overwrite) as temporary:
             if ext in (".jpg", ".jpeg"):
                 canvas.save(temporary, format="JPEG", quality=95, optimize=True)
             elif ext == ".webp":

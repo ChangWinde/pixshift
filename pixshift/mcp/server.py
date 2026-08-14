@@ -14,8 +14,13 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 from collections.abc import Iterator
-from typing import Any
+from concurrent.futures import Future, ThreadPoolExecutor
+from functools import partial
+from pathlib import Path
+from threading import Lock
+from typing import Any, cast
 
 from .. import __version__
 from ..core.tool_catalog import TOOL_CATALOG, ToolEntry
@@ -36,6 +41,22 @@ def _tool_timeout() -> float:
 
 
 _TOOL_TIMEOUT = _tool_timeout()
+_MAX_IN_FLIGHT_TOOLS = 4
+_MAX_MESSAGE_BYTES = 1024 * 1024
+_MAX_TOOL_OUTPUT_BYTES = 16 * 1024 * 1024
+_PROCESS_LOCK = Lock()
+_WRITE_LOCK = Lock()
+_ACTIVE_PROCESSES: dict[str | int, subprocess.Popen[Any]] = {}
+_CANCELLED_REQUESTS: set[str | int] = set()
+_OUTSTANDING_REQUESTS: set[str | int] = set()
+
+
+class _ToolCancelled(RuntimeError):
+    """An MCP cancellation notification stopped a running CLI child."""
+
+
+class _ToolOutputTooLarge(RuntimeError):
+    """A CLI child exceeded the bounded MCP response channel."""
 
 
 def _mcp_tool_name(catalog_name: str) -> str:
@@ -77,7 +98,12 @@ def list_tools() -> list[dict[str, Any]]:
     return tools
 
 
-def call_tool(name: str, arguments: dict[str, Any] | None) -> dict[str, Any]:
+def call_tool(
+    name: str,
+    arguments: dict[str, Any] | None,
+    *,
+    request_id: str | int | None = None,
+) -> dict[str, Any]:
     """Execute one catalog tool through the CLI and wrap the JSON document."""
     entry = _find_entry(name)
     if entry is None:
@@ -95,7 +121,12 @@ def call_tool(name: str, arguments: dict[str, Any] | None) -> dict[str, Any]:
     try:
         completed = _run_cli(
             cli_args,
+            request_id=request_id,
         )
+    except _ToolCancelled:
+        return _tool_error(f"tool_cancelled:{entry['name']}")
+    except _ToolOutputTooLarge:
+        return _tool_error(f"tool_output_too_large:{entry['name']}")
     except subprocess.TimeoutExpired:
         return _tool_error(f"tool_timeout_after_{_TOOL_TIMEOUT:g}s:{entry['name']}")
     except (OSError, ValueError):
@@ -118,9 +149,15 @@ def call_tool(name: str, arguments: dict[str, Any] | None) -> dict[str, Any]:
     }
 
 
-def _run_cli(cli_args: list[str]) -> subprocess.CompletedProcess[str]:
+def _run_cli(
+    cli_args: list[str], *, request_id: str | int | None = None
+) -> subprocess.CompletedProcess[str]:
     """Run one CLI call in a group that can be terminated as a whole."""
-    command = [sys.executable, "-I", "-m", "pixshift", *cli_args]
+    package_parent = str(Path(__file__).resolve().parents[2])
+    bootstrap = (
+        f"import sys;sys.path.insert(0,{package_parent!r});from pixshift.cli import main;main()"
+    )
+    command = [sys.executable, "-I", "-c", bootstrap, *cli_args]
     creationflags = 0
     start_new_session = os.name != "nt"
     if os.name == "nt":  # pragma: no cover - exercised on Windows CI
@@ -131,24 +168,109 @@ def _run_cli(cli_args: list[str]) -> subprocess.CompletedProcess[str]:
         command,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        # The CLI's JSON channel is UTF-8; platform code pages would mangle it.
-        encoding="utf-8",
-        errors="replace",
         # Never inherit the MCP stream: ``apply --plan -`` would consume it.
         stdin=subprocess.DEVNULL,
         start_new_session=start_new_session,
         creationflags=creationflags,
     )
+    if request_id is not None:
+        with _PROCESS_LOCK:
+            _ACTIVE_PROCESSES[request_id] = process
+            cancelled_before_start = request_id in _CANCELLED_REQUESTS
+        if cancelled_before_start:
+            _terminate_process_tree(process)
+    cancelled = False
     try:
-        stdout, stderr = process.communicate(timeout=_TOOL_TIMEOUT)
+        stdout_stream = getattr(process, "stdout", None)
+        stderr_stream = getattr(process, "stderr", None)
+        if hasattr(stdout_stream, "read") and hasattr(stderr_stream, "read"):
+            stdout, stderr = _drain_bounded_process(process)
+        else:  # Small test doubles can keep the simpler communicate contract.
+            mocked_stdout, mocked_stderr = process.communicate(timeout=_TOOL_TIMEOUT)
+            stdout = _bounded_mocked_output(mocked_stdout)
+            stderr = _bounded_mocked_output(mocked_stderr)
     except subprocess.TimeoutExpired:
         _terminate_process_tree(process)
-        process.communicate()
         raise
+    finally:
+        if request_id is not None:
+            with _PROCESS_LOCK:
+                _ACTIVE_PROCESSES.pop(request_id, None)
+                cancelled = request_id in _CANCELLED_REQUESTS
+                _CANCELLED_REQUESTS.discard(request_id)
+    if cancelled:
+        raise _ToolCancelled
     return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
 
 
-def _terminate_process_tree(process: subprocess.Popen[str]) -> None:
+def _bounded_mocked_output(value: Any) -> str:
+    """Apply the real subprocess limit to a test double's communicate value."""
+    if isinstance(value, str):
+        encoded = value.encode("utf-8")
+    elif isinstance(value, bytes):
+        encoded = value
+    else:
+        encoded = b""
+    if len(encoded) > _MAX_TOOL_OUTPUT_BYTES:
+        raise _ToolOutputTooLarge
+    return encoded.decode("utf-8", errors="replace")
+
+
+def _drain_bounded_process(process: subprocess.Popen[bytes]) -> tuple[str, str]:
+    """Drain both pipes concurrently and kill the process at the byte budget."""
+    outputs = [bytearray(), bytearray()]
+    overflow = threading.Event()
+
+    def drain(stream: Any, output: bytearray) -> None:
+        while chunk := stream.read(64 * 1024):
+            if len(output) + len(chunk) > _MAX_TOOL_OUTPUT_BYTES:
+                if not overflow.is_set():
+                    overflow.set()
+                    _terminate_process_tree(process)
+                break
+            output.extend(chunk)
+
+    threads = [
+        threading.Thread(target=drain, args=(process.stdout, outputs[0]), daemon=True),
+        threading.Thread(target=drain, args=(process.stderr, outputs[1]), daemon=True),
+    ]
+    for thread in threads:
+        thread.start()
+    try:
+        process.wait(timeout=_TOOL_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        _terminate_process_tree(process)
+        for thread in threads:
+            thread.join(timeout=1.0)
+        raise
+    for thread in threads:
+        thread.join(timeout=1.0)
+    if overflow.is_set():
+        raise _ToolOutputTooLarge
+    return (
+        outputs[0].decode("utf-8", errors="replace"),
+        outputs[1].decode("utf-8", errors="replace"),
+    )
+
+
+def _cancel_request(request_id: object) -> None:
+    """Cancel a known in-flight request without retaining arbitrary IDs."""
+    if not _valid_request_id(request_id):
+        return
+    typed_request_id = cast(str | int, request_id)
+    with _PROCESS_LOCK:
+        if (
+            typed_request_id not in _OUTSTANDING_REQUESTS
+            and typed_request_id not in _ACTIVE_PROCESSES
+        ):
+            return
+        _CANCELLED_REQUESTS.add(typed_request_id)
+        process = _ACTIVE_PROCESSES.get(typed_request_id)
+    if process is not None:
+        _terminate_process_tree(process)
+
+
+def _terminate_process_tree(process: subprocess.Popen[Any]) -> None:
     """Terminate the isolated CLI process group, including ffmpeg/workers."""
     if os.name == "nt":  # pragma: no cover - exercised on Windows CI
         with contextlib.suppress(OSError):
@@ -267,7 +389,7 @@ def handle_request(message: dict[str, Any]) -> dict[str, Any] | None:
         arguments_error = _tool_arguments_error(arguments)
         if arguments_error is not None:
             return _jsonrpc_error(request_id, -32602, arguments_error)
-        return _jsonrpc_result(request_id, call_tool(name, arguments))
+        return _jsonrpc_result(request_id, call_tool(name, arguments, request_id=request_id))
     return _jsonrpc_error(request_id, -32601, f"method not found: {method}")
 
 
@@ -288,9 +410,23 @@ def _input_lines() -> Iterator[str | None]:
     """Yield UTF-8 request lines; ``None`` represents an invalid byte sequence."""
     binary = getattr(sys.stdin, "buffer", None)
     if binary is None:
-        yield from sys.stdin
+        while line := sys.stdin.readline(_MAX_MESSAGE_BYTES + 1):
+            too_large = len(line.encode("utf-8")) > _MAX_MESSAGE_BYTES
+            if too_large and not line.endswith("\n"):
+                while remainder := sys.stdin.readline(_MAX_MESSAGE_BYTES + 1):
+                    if remainder.endswith("\n"):
+                        break
+            yield None if too_large else line
         return
-    for raw_line in binary:
+    while raw_line := binary.readline(_MAX_MESSAGE_BYTES + 1):
+        too_large = len(raw_line) > _MAX_MESSAGE_BYTES
+        if too_large and not raw_line.endswith(b"\n"):
+            while remainder := binary.readline(_MAX_MESSAGE_BYTES + 1):
+                if remainder.endswith(b"\n"):
+                    break
+        if too_large:
+            yield None
+            continue
         try:
             yield raw_line.decode("utf-8")
         except UnicodeDecodeError:
@@ -298,40 +434,71 @@ def _input_lines() -> Iterator[str | None]:
 
 
 def serve() -> None:
-    """Run the newline-delimited JSON-RPC loop over stdio."""
-    for line in _input_lines():
-        if line is None:
-            _write_response(_jsonrpc_error(None, -32700, "parse error"))
-            continue
-        line = line.strip()
-        if not line:
-            continue
-        response: dict[str, Any] | None
-        try:
-            message = json.loads(line, parse_constant=_reject_json_constant)
-        except (json.JSONDecodeError, ValueError):
-            response = _jsonrpc_error(None, -32700, "parse error")
-        else:
-            if isinstance(message, dict):
-                response = handle_request(message)
-            else:
-                # A valid-JSON but non-object payload (e.g. ``[1]``) must not
-                # crash the loop on the later ``.get`` calls.
-                response = {
-                    "jsonrpc": "2.0",
-                    "id": None,
-                    "error": {"code": -32600, "message": "invalid request"},
-                }
+    """Run newline-delimited JSON-RPC without blocking reads on slow tools."""
+    with ThreadPoolExecutor(max_workers=_MAX_IN_FLIGHT_TOOLS) as pool:
+        for line in _input_lines():
+            if line is None:
+                _write_response(_jsonrpc_error(None, -32700, "parse error"))
+                continue
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                message = json.loads(line, parse_constant=_reject_json_constant)
+            except (json.JSONDecodeError, ValueError):
+                _write_response(_jsonrpc_error(None, -32700, "parse error"))
+                continue
+            if not isinstance(message, dict):
+                _write_response(_jsonrpc_error(None, -32600, "invalid request"))
+                continue
+            if message.get("method") == "notifications/cancelled":
+                params = message.get("params")
+                if isinstance(params, dict):
+                    _cancel_request(params.get("requestId"))
+                continue
+            if message.get("method") == "tools/call" and _valid_request_id(message.get("id")):
+                request_id = cast(str | int, message["id"])
+                with _PROCESS_LOCK:
+                    duplicate = request_id in _OUTSTANDING_REQUESTS
+                    busy = len(_OUTSTANDING_REQUESTS) >= _MAX_IN_FLIGHT_TOOLS
+                    if not duplicate and not busy:
+                        _OUTSTANDING_REQUESTS.add(request_id)
+                if duplicate:
+                    _write_response(_jsonrpc_error(request_id, -32600, "duplicate request id"))
+                    continue
+                if busy:
+                    _write_response(_jsonrpc_error(request_id, -32000, "server busy"))
+                    continue
+                future = pool.submit(handle_request, message)
+                future.add_done_callback(partial(_write_future_response, request_id=request_id))
+                continue
+            response = handle_request(message)
+            if response is not None:
+                _write_response(response)
+
+
+def _write_future_response(future: Future[dict[str, Any] | None], request_id: str | int) -> None:
+    """Serialize one asynchronous result, including unexpected worker faults."""
+    try:
+        response = future.result()
+    except Exception:
+        response = _jsonrpc_error(request_id, -32603, "internal error")
+    try:
         if response is not None:
             _write_response(response)
+    finally:
+        with _PROCESS_LOCK:
+            _OUTSTANDING_REQUESTS.discard(request_id)
+            _CANCELLED_REQUESTS.discard(request_id)
 
 
 def _write_response(response: dict[str, Any]) -> None:
     """Write one strict-JSON UTF-8 response on the stdio transport."""
     payload = json.dumps(response, ensure_ascii=False, allow_nan=False) + "\n"
-    binary = getattr(sys.stdout, "buffer", None)
-    if binary is None:
-        sys.stdout.write(payload)
-    else:
-        binary.write(payload.encode("utf-8"))
-    sys.stdout.flush()
+    with _WRITE_LOCK:
+        binary = getattr(sys.stdout, "buffer", None)
+        if binary is None:
+            sys.stdout.write(payload)
+        else:
+            binary.write(payload.encode("utf-8"))
+        sys.stdout.flush()

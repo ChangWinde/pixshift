@@ -2,13 +2,17 @@
 
 import fnmatch
 import os
+import secrets
 import shutil
+import stat
 import sys
-import uuid
+import tempfile
+import unicodedata
 from collections.abc import Iterable, Iterator, Sequence
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from .errors import (
     InvalidFilenameComponentError,
@@ -91,7 +95,10 @@ def collect_supported_files(
 
         pattern = "**/*" if recursive else "*"
         for item in source.glob(pattern):
-            if not item.is_file():
+            # A directory argument authorises files below that directory, not
+            # the target of a link that happens to live there. Explicit file
+            # arguments remain authoritative and may still be symlinks.
+            if item.is_symlink() or not item.is_file():
                 continue
             ext = item.suffix.lower()
             if not filters.accepts(item):
@@ -210,6 +217,7 @@ def plan_output_path(
 ) -> str:
     """Plan destination path with optional structure preservation."""
     inp = Path(input_path).resolve()
+    validate_filename_component(output_name)
     if not output_dir:
         return str(inp.parent / output_name)
 
@@ -262,12 +270,24 @@ def validate_filename_affix(value: str, label: str) -> None:
 
 
 def validate_filename_component(value: str, label: str = "filename") -> None:
-    """Reject path syntax in a value that must be one filename component."""
+    """Reject non-portable syntax in one generated filename component.
+
+    PixShift plans outputs on one platform and may later materialise the same
+    plan on another. Enforcing the Windows superset here avoids accepting names
+    on POSIX that cannot be published on Windows or a Windows-backed share.
+    """
+    windows_reserved = {"CON", "PRN", "AUX", "NUL"} | {
+        f"{prefix}{index}" for prefix in ("COM", "LPT") for index in range(1, 10)
+    }
+    device_stem = value.split(".", 1)[0].upper()
     if (
         not value
         or "\x00" in value
         or "/" in value
         or "\\" in value
+        or any(character in '<>:"|?*' or ord(character) < 32 for character in value)
+        or value.endswith((" ", "."))
+        or device_stem in windows_reserved
         or value in {".", ".."}
         or Path(value).is_absolute()
         or Path(value).name != value
@@ -309,7 +329,10 @@ def _output_collision_key(output: str) -> str:
     """
     key = os.path.normcase(str(Path(output).resolve(strict=False)))
     if sys.platform == "darwin":
-        key = key.casefold()
+        # Default APFS/HFS+ volumes compare canonically equivalent Unicode
+        # spellings as one name. Normalise before folding so Café (NFC) and
+        # Cafe\N{COMBINING ACUTE ACCENT} (NFD) cannot evade batch preflight.
+        key = unicodedata.normalize("NFC", key).casefold()
     return key
 
 
@@ -355,37 +378,355 @@ def validate_aggregate_output_path(inputs: Sequence[str], output: str) -> None:
 
 
 @contextmanager
-def atomic_output_path(output_path: str) -> Iterator[str]:
-    """Yield a same-directory temporary path and atomically replace on success."""
-    target = Path(output_path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    temporary = target.parent / (f".{target.stem}.{uuid.uuid4().hex}.tmp{target.suffix}")
+def atomic_output_path(output_path: str, *, overwrite: bool = True) -> Iterator[str]:
+    """Yield a private candidate and publish it through a bound directory.
+
+    ``overwrite=False`` enforces no-clobber at the commit point, closing the
+    check/encode/replace race shared by long-running encoders. Existing regular
+    targets keep their permission bits when overwritten. On POSIX every parent
+    component is opened with ``O_NOFOLLOW`` and publication is relative to that
+    directory descriptor, so replacing a planned parent with a symlink cannot
+    redirect either staging or the final commit outside the selected tree. On
+    Windows an open, non-delete-share handle pins every parent and the staging
+    directory while reparse-point components are rejected.
+    """
+    if os.name == "nt":  # pragma: no cover - exercised on Windows CI
+        with _atomic_output_path_windows(output_path, overwrite=overwrite) as windows_temporary:
+            yield windows_temporary
+        return
+
+    target = Path(output_path).absolute()
+    try:
+        parent_fd = _open_directory_no_symlinks(target.parent)
+    except OSError as error:
+        raise OutputBoundaryError("output parent contains an unsafe path component") from error
+    temporary_dir = Path(tempfile.mkdtemp(prefix="pixshift-output-"))
+    with suppress(OSError):
+        temporary_dir.chmod(0o700)
+    temporary = temporary_dir / target.name
+    stage_name = f".pixshift-stage-{secrets.token_hex(12)}"
+    stage_created = False
     try:
         yield str(temporary)
-        if not temporary.is_file():
-            raise OSError("encoder did not create its planned output")
-        if temporary.stat().st_size == 0:
+        try:
+            candidate_stat = temporary.lstat()
+        except FileNotFoundError:
+            raise OSError("encoder did not create its planned output") from None
+        if not stat.S_ISREG(candidate_stat.st_mode):
+            raise OSError("encoder output is not a regular file")
+        if candidate_stat.st_size == 0:
             raise OSError("encoder created an empty output")
-        # "rb+" rather than "rb": Windows' os.fsync (_commit) requires a
-        # write-capable handle and fails with EBADF on a read-only one —
-        # which made every single output write fail on Windows.
-        with temporary.open("rb+") as stream:
-            os.fsync(stream.fileno())
-        os.replace(temporary, target)
-    finally:
+
+        try:
+            target_stat = os.stat(target.name, dir_fd=parent_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            target_stat = None
+        if target_stat is not None and not stat.S_ISREG(target_stat.st_mode):
+            raise OSError("output_not_regular_file")
+        output_mode = (
+            stat.S_IMODE(target_stat.st_mode)
+            if overwrite and target_stat is not None
+            else stat.S_IMODE(candidate_stat.st_mode)
+        )
+
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+        stage_fd = os.open(stage_name, flags, 0o600, dir_fd=parent_fd)
+        stage_created = True
+        try:
+            with (
+                temporary.open("rb") as incoming,
+                os.fdopen(stage_fd, "wb", closefd=False) as outgoing,
+            ):
+                shutil.copyfileobj(incoming, outgoing, 1024 * 1024)
+                outgoing.flush()
+                os.fsync(outgoing.fileno())
+            # ``fchmod`` is absent from the Windows type surface even though
+            # this branch is POSIX-only; the dynamic lookup keeps mypy's
+            # cross-platform analysis honest without weakening runtime use.
+            os_module: Any = os
+            os_module.fchmod(stage_fd, output_mode)
+        finally:
+            os.close(stage_fd)
+
+        if overwrite:
+            os.replace(
+                stage_name,
+                target.name,
+                src_dir_fd=parent_fd,
+                dst_dir_fd=parent_fd,
+            )
+            stage_created = False
+        else:
+            try:
+                os.link(
+                    stage_name,
+                    target.name,
+                    src_dir_fd=parent_fd,
+                    dst_dir_fd=parent_fd,
+                    follow_symlinks=False,
+                )
+            except FileExistsError:
+                raise FileExistsError("output_exists") from None
+            os.unlink(stage_name, dir_fd=parent_fd)
+            stage_created = False
         with suppress(OSError):
-            temporary.unlink(missing_ok=True)
+            os.fsync(parent_fd)
+    finally:
+        if stage_created:
+            with suppress(OSError):
+                os.unlink(stage_name, dir_fd=parent_fd)
+        os.close(parent_fd)
+        shutil.rmtree(temporary_dir, ignore_errors=True)
 
 
-def atomic_write_bytes(output_path: str, data: bytes) -> None:
+def _open_directory_no_symlinks(path: Path) -> int:
+    """Open/create an absolute directory path one no-follow component at a time."""
+    absolute = path.absolute()
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(absolute.anchor or os.sep, flags)
+    try:
+        for component in absolute.parts[1:]:
+            if component in {"", ".", ".."}:
+                raise OSError("unsafe output parent component")
+            try:
+                child = os.open(component, flags, dir_fd=descriptor)
+            except FileNotFoundError:
+                with suppress(FileExistsError):
+                    os.mkdir(component, 0o755, dir_fd=descriptor)
+                child = os.open(component, flags, dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = child
+        return descriptor
+    except Exception:
+        os.close(descriptor)
+        raise
+
+
+_WINDOWS_FILE_ATTRIBUTE_DIRECTORY = 0x10
+_WINDOWS_FILE_ATTRIBUTE_REPARSE_POINT = 0x400
+
+
+def _validate_windows_parent_chain(components: Iterable[tuple[str, int]]) -> None:
+    """Reject Windows parent components that can redirect path traversal.
+
+    ``attributes`` are the Win32 ``FILE_ATTRIBUTE_*`` bits read from an open
+    handle. Keeping this policy separate from the system calls makes the
+    fail-closed decision testable on every supported platform.
+    """
+    for _component, attributes in components:
+        if attributes & _WINDOWS_FILE_ATTRIBUTE_REPARSE_POINT:
+            raise OutputBoundaryError("output parent contains a reparse point")
+        if not attributes & _WINDOWS_FILE_ATTRIBUTE_DIRECTORY:
+            raise OutputBoundaryError("output parent contains a non-directory component")
+
+
+def _windows_directory_prefixes(path: Path) -> list[Path]:
+    """Return an absolute Windows directory path one component at a time."""
+    absolute = Path(os.path.abspath(path))
+    if not absolute.anchor:
+        raise OutputBoundaryError("output parent is not absolute")
+    prefixes = [Path(absolute.anchor)]
+    current = prefixes[0]
+    for component in absolute.parts[1:]:
+        if component in {"", ".", ".."}:
+            raise OutputBoundaryError("output parent contains an unsafe path component")
+        current /= component
+        prefixes.append(current)
+    return prefixes
+
+
+def _open_windows_directory(path: Path) -> tuple[int, int]:
+    """Open one directory without traversing a final reparse point."""
+    import ctypes
+    from ctypes import wintypes
+
+    class FileAttributeTagInfo(ctypes.Structure):
+        _fields_ = [("file_attributes", wintypes.DWORD), ("reparse_tag", wintypes.DWORD)]
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
+    create_file = kernel32.CreateFileW
+    create_file.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    ]
+    create_file.restype = wintypes.HANDLE
+    get_information = kernel32.GetFileInformationByHandleEx
+    get_information.argtypes = [
+        wintypes.HANDLE,
+        ctypes.c_int,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+    ]
+    get_information.restype = wintypes.BOOL
+
+    # Omitting FILE_SHARE_DELETE is intentional: while this handle is alive,
+    # the directory cannot be renamed or replaced by a junction. Handles for
+    # every ancestor are held until publication completes.
+    handle = create_file(
+        str(path),
+        # FILE_READ_ATTRIBUTES alone is exempt from share-mode checks and
+        # therefore does *not* pin a directory against rename. Requesting
+        # FILE_LIST_DIRECTORY makes the missing FILE_SHARE_DELETE effective.
+        0x1 | 0x80,  # FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES
+        0x1 | 0x2,  # FILE_SHARE_READ | FILE_SHARE_WRITE
+        None,
+        3,  # OPEN_EXISTING
+        0x02000000 | 0x00200000,  # BACKUP_SEMANTICS | OPEN_REPARSE_POINT
+        None,
+    )
+    invalid_handle = ctypes.c_void_p(-1).value
+    if handle is None or handle == invalid_handle:
+        raise ctypes.WinError(ctypes.get_last_error())  # type: ignore[attr-defined]
+
+    info = FileAttributeTagInfo()
+    # FileAttributeTagInfo == 9 in FILE_INFO_BY_HANDLE_CLASS.
+    if not get_information(handle, 9, ctypes.byref(info), ctypes.sizeof(info)):
+        error = ctypes.WinError(ctypes.get_last_error())  # type: ignore[attr-defined]
+        kernel32.CloseHandle(handle)
+        raise error
+    return int(handle), int(info.file_attributes)
+
+
+def _close_windows_directory(handle: int) -> None:
+    """Close a Win32 directory handle."""
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
+    kernel32.CloseHandle(wintypes.HANDLE(handle))
+
+
+@contextmanager
+def _open_windows_directory_chain(path: Path) -> Iterator[None]:
+    """Create, validate, and bind every Windows output-parent component."""
+    handles: list[int] = []
+    try:
+        try:
+            for index, component in enumerate(_windows_directory_prefixes(path)):
+                if index:
+                    with suppress(FileExistsError):
+                        os.mkdir(component)
+                handle, attributes = _open_windows_directory(component)
+                try:
+                    _validate_windows_parent_chain([(str(component), attributes)])
+                except Exception:
+                    _close_windows_directory(handle)
+                    raise
+                handles.append(handle)
+        except OutputBoundaryError:
+            raise
+        except OSError as error:
+            raise OutputBoundaryError("output parent contains an unsafe path component") from error
+        yield
+    finally:
+        for handle in reversed(handles):
+            _close_windows_directory(handle)
+
+
+@contextmanager
+def _bind_windows_directory(path: Path) -> Iterator[None]:
+    """Validate and hold one existing Windows directory against replacement."""
+    handle, attributes = _open_windows_directory(path)
+    try:
+        _validate_windows_parent_chain([(str(path), attributes)])
+        yield
+    finally:
+        _close_windows_directory(handle)
+
+
+@contextmanager
+def _atomic_output_path_windows(
+    output_path: str, *, overwrite: bool
+) -> Iterator[str]:  # pragma: no cover - exercised on Windows CI
+    """Publish while Win32 handles bind every non-reparse parent component."""
+    target = Path(output_path).absolute()
+    with _open_windows_directory_chain(target.parent):
+        original_mode: int | None = None
+        try:
+            target_stat = target.lstat()
+        except FileNotFoundError:
+            target_stat = None
+        if target_stat is not None:
+            if not stat.S_ISREG(target_stat.st_mode):
+                raise OSError("output_not_regular_file")
+            original_mode = stat.S_IMODE(target_stat.st_mode)
+
+        temporary_dir = Path(tempfile.mkdtemp(prefix=".pixshift-output-", dir=target.parent))
+        # mkdtemp is private by contract, but make the invariant explicit even
+        # on platforms whose default ACL/umask policy is unusual.
+        with suppress(OSError):
+            temporary_dir.chmod(0o700)
+        temporary = temporary_dir / target.name
+        try:
+            # The private staging directory is itself attacker-replaceable by
+            # anyone who can write the output parent. Bind it before yielding
+            # its path, otherwise it could be swapped for an outside junction.
+            with _bind_windows_directory(temporary_dir):
+                try:
+                    yield str(temporary)
+                    try:
+                        candidate_stat = temporary.lstat()
+                    except FileNotFoundError:
+                        raise OSError("encoder did not create its planned output") from None
+                    if not stat.S_ISREG(candidate_stat.st_mode):
+                        raise OSError("encoder output is not a regular file")
+                    if candidate_stat.st_size == 0:
+                        raise OSError("encoder created an empty output")
+                    # "rb+" rather than "rb": Windows' os.fsync (_commit)
+                    # requires a write-capable handle and fails with EBADF on
+                    # a read-only one.
+                    with temporary.open("rb+") as stream:
+                        os.fsync(stream.fileno())
+                    if overwrite:
+                        # Re-read at commit time: preserve the object actually
+                        # being overwritten, not the stale pre-encode mode.
+                        try:
+                            commit_stat = target.lstat()
+                        except FileNotFoundError:
+                            commit_stat = None
+                        if commit_stat is not None and not stat.S_ISREG(commit_stat.st_mode):
+                            raise OSError("output_not_regular_file")
+                        commit_mode = (
+                            stat.S_IMODE(commit_stat.st_mode)
+                            if commit_stat is not None
+                            else original_mode
+                        )
+                        if commit_mode is not None:
+                            temporary.chmod(commit_mode)
+                    if overwrite:
+                        os.replace(temporary, target)
+                    else:
+                        try:
+                            os.rename(temporary, target)
+                        except FileExistsError:
+                            raise FileExistsError("output_exists") from None
+                finally:
+                    # Delete only the expected candidate while the staging
+                    # directory remains bound. Never recursively delete an
+                    # attacker-writable directory tree.
+                    with suppress(OSError):
+                        temporary.unlink()
+        finally:
+            # RemoveDirectory removes a junction itself rather than traversing
+            # it if an attacker wins the small post-close cleanup race.
+            with suppress(OSError):
+                temporary_dir.rmdir()
+
+
+def atomic_write_bytes(output_path: str, data: bytes, *, overwrite: bool = True) -> None:
     """Write bytes through the shared atomic replacement boundary."""
-    with atomic_output_path(output_path) as temporary:
+    with atomic_output_path(output_path, overwrite=overwrite) as temporary:
         Path(temporary).write_bytes(data)
 
 
-def atomic_copy_file(input_path: str, output_path: str) -> None:
+def atomic_copy_file(input_path: str, output_path: str, *, overwrite: bool = True) -> None:
     """Copy a file through the shared atomic replacement boundary."""
-    with atomic_output_path(output_path) as temporary:
+    with atomic_output_path(output_path, overwrite=overwrite) as temporary:
         shutil.copyfile(input_path, temporary)
 
 

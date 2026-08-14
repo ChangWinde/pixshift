@@ -336,7 +336,7 @@ def test_apply_video_without_ffmpeg_fails_stably(runner, monkeypatch, clip):
 def test_apply_video_convert_validates_vocabulary(runner, clip, arguments, expected):
     plan = _plan_doc([{"input": str(clip), "command": "video.convert", "arguments": arguments}])
     result = runner.invoke(cli, ["apply", "--plan", "-", "--dry-run", "--json"], input=plan)
-    assert result.exit_code == 1
+    assert result.exit_code == 2
     assert json.loads(result.output)["steps"][0]["error"] == expected
 
 
@@ -345,7 +345,7 @@ def test_apply_video_compress_validates_preset(runner, clip):
         [{"input": str(clip), "command": "video.compress", "arguments": {"preset": "nope"}}]
     )
     result = runner.invoke(cli, ["apply", "--plan", "-", "--dry-run", "--json"], input=plan)
-    assert result.exit_code == 1
+    assert result.exit_code == 2
     assert json.loads(result.output)["steps"][0]["error"] == "unsupported_video_preset:nope"
 
 
@@ -353,7 +353,7 @@ def test_apply_video_detects_output_collisions(runner, clip):
     step = {"input": str(clip), "command": "video.compress", "arguments": {}}
     plan = _plan_doc([step, dict(step)])
     result = runner.invoke(cli, ["apply", "--plan", "-", "--dry-run", "--json"], input=plan)
-    assert result.exit_code == 1
+    assert result.exit_code == 2
     payload = json.loads(result.output)
     assert payload["steps"][0]["ok"] is True
     assert payload["steps"][1]["error"] == "output_collision"

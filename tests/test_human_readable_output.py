@@ -48,14 +48,14 @@ def test_apply_renders_the_step_table(tmp_path):
     assert "计划执行" in result.output
 
 
-def test_apply_reports_failure_with_exit_one(tmp_path):
+def test_apply_rejects_missing_input_with_exit_two(tmp_path):
     plan = {
         "command": "convert",
         "input": str(tmp_path / "missing.png"),
         "arguments": {"format": "webp"},
     }
     result = CliRunner().invoke(cli, ["apply", "--plan", "-"], input=json.dumps(plan))
-    assert result.exit_code == 1
+    assert result.exit_code == 2
     assert "计划执行" in result.output
 
 

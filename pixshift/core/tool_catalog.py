@@ -32,7 +32,11 @@ def _ann(
 ) -> ToolAnnotations:
     return {
         "readOnlyHint": read_only,
-        "destructiveHint": destructive,
+        # Every mutating command exposes --overwrite on at least one path. MCP
+        # clients need the conservative capability-level hint before they have
+        # parsed individual arguments, so optional clobber still counts as
+        # potentially destructive.
+        "destructiveHint": destructive or not read_only,
         "idempotentHint": idempotent,
         "openWorldHint": False,
     }
@@ -43,14 +47,14 @@ TOOL_CATALOG: list[ToolEntry] = [
         "name": "convert",
         "description": "Convert images to another format; animations keep frames for webp/gif/png.",
         "when_to_use": "Need a different format or bounded dimensions.",
-        "input_summary": "paths; -t format; optional --resize/--max-size; -r; --json; [--include/--exclude/--min-file-size]",
+        "input_summary": "paths; -t format; --color-space preserve|srgb; optional --resize/--max-size; -r; --json; [--include/--exclude/--min-file-size]",
         "annotations": _ann(read_only=False, destructive=False, idempotent=True),
     },
     {
         "name": "compress",
         "description": "Compress images in the same format.",
         "when_to_use": "Reduce file size without changing container format.",
-        "input_summary": "paths; -p preset or --quality; -r; --json; [--include/--exclude/--min-file-size]",
+        "input_summary": "paths; -p preset or --quality or --target-size; -r; --json; [--include/--exclude/--min-file-size]",
         "annotations": _ann(read_only=False, destructive=False, idempotent=True),
     },
     {
@@ -69,7 +73,7 @@ TOOL_CATALOG: list[ToolEntry] = [
     },
     {
         "name": "compare",
-        "description": "Compare two images with SSIM/PSNR/MSE.",
+        "description": "Compare two images with deterministic bounded SSIM/PSNR/MSE sampling.",
         "when_to_use": "Verify quality after a transform.",
         "input_summary": "image_a image_b; --json",
         "annotations": _ann(read_only=True, destructive=False, idempotent=True),
@@ -190,14 +194,14 @@ TOOL_CATALOG: list[ToolEntry] = [
         "name": "video.convert",
         "description": "Transcode video to another container/codec (needs ffmpeg).",
         "when_to_use": "Change format for playback compatibility (mp4/webm/mkv/mov).",
-        "input_summary": "paths; -t mp4|webm|mkv|mov; --codec; --hwaccel; -r; --json",
+        "input_summary": "paths; -t mp4|webm|mkv|mov; --codec; --audio-policy preserve|compatible|compact; --hwaccel; -r; --json",
         "annotations": _ann(read_only=False, destructive=False, idempotent=True),
     },
     {
         "name": "video.compress",
         "description": "Reduce video size with CRF presets or fit a byte budget (needs ffmpeg).",
         "when_to_use": "Shrink a clip; --target-size keeps the best quality under a size cap.",
-        "input_summary": "paths; -p web|archive|tiny | --target-size 25MB; --codec; --hwaccel; -r; --json",
+        "input_summary": "paths; -p web|archive|tiny | --target-size 25MB; --codec; --audio-policy preserve|compatible|compact; --hwaccel; -r; --json",
         "annotations": _ann(read_only=False, destructive=False, idempotent=True),
     },
     {
@@ -209,7 +213,7 @@ TOOL_CATALOG: list[ToolEntry] = [
     },
     {
         "name": "video.trim",
-        "description": "Cut a time range into a new file, stream-copy when possible (needs ffmpeg).",
+        "description": "Cut a time range; default stream-copy is keyframe-aligned, --reencode is frame-accurate (needs ffmpeg).",
         "when_to_use": "Extract a clip by start/end or start/duration; source is untouched.",
         "input_summary": "video; --start TS; --end TS | --duration SEC; -o out; --reencode; --json",
         "annotations": _ann(read_only=False, destructive=False, idempotent=True),
@@ -225,7 +229,7 @@ TOOL_CATALOG: list[ToolEntry] = [
         "name": "video.extract-audio",
         "description": "Export the audio track (needs ffmpeg).",
         "when_to_use": "Pull audio to mp3/aac/opus/flac/wav for transcription or reuse.",
-        "input_summary": "paths; -t mp3|aac|opus|flac|wav; -o dir; -r; --json",
+        "input_summary": "paths; -t mp3|aac|m4a|opus|flac|wav; -o dir; -r; --json",
         "annotations": _ann(read_only=False, destructive=False, idempotent=True),
     },
     {
@@ -236,6 +240,13 @@ TOOL_CATALOG: list[ToolEntry] = [
         "annotations": _ann(read_only=False, destructive=False, idempotent=True),
     },
     {
+        "name": "verify",
+        "description": "Gate image, PDF, or video candidates on structure, size, and perceptual quality.",
+        "when_to_use": "Prove postconditions after conversion, compression, or delivery prep.",
+        "input_summary": "source candidate; --min-ssim; optional --min-psnr/--max-size/--allow-resize; --json",
+        "annotations": _ann(read_only=True, destructive=False, idempotent=True),
+    },
+    {
         "name": "tools",
         "description": "List the agent-facing tool catalog.",
         "when_to_use": "Discover available commands and side-effect annotations.",
@@ -244,7 +255,7 @@ TOOL_CATALOG: list[ToolEntry] = [
     },
     {
         "name": "apply",
-        "description": "Execute machine plans (image and video.* steps) from optimize or files.",
+        "description": "Execute validated convert, compress, strip, keep, video.convert, and video.compress plan steps.",
         "when_to_use": "Run a previously emitted plan without re-parsing prose.",
         "input_summary": "--plan file|- ; optional --output; --dry-run; --json",
         "annotations": _ann(read_only=False, destructive=False, idempotent=True),
@@ -253,7 +264,7 @@ TOOL_CATALOG: list[ToolEntry] = [
         "name": "prep",
         "description": "Prepare delivery-ready assets (resize, convert, privacy strip).",
         "when_to_use": "One-shot package images for upload or agent handoff.",
-        "input_summary": "paths; -o out; --max-size; -t format; -r; --json; [--include/--exclude/--min-file-size]",
+        "input_summary": "paths; -o out; --max-size; -t format; --color-space preserve|srgb; -r; --json; [--include/--exclude/--min-file-size]",
         "annotations": _ann(read_only=False, destructive=False, idempotent=True),
     },
     {

@@ -2,17 +2,17 @@
 
 from pathlib import Path
 
-from pixshift.commands.workflow_commands import _resolve_strip_mode
 from pixshift.dedup_engine import DeleteCandidate, delete_duplicates
+from pixshift.strip_engine import resolve_strip_mode
 
 
 def test_resolve_strip_mode_privacy():
-    flags = _resolve_strip_mode("privacy")
+    flags = resolve_strip_mode("privacy")
     assert flags == (False, True, True, True, False)
 
 
 def test_resolve_strip_mode_all():
-    flags = _resolve_strip_mode("all")
+    flags = resolve_strip_mode("all")
     assert flags == (True, False, False, False, False)
 
 

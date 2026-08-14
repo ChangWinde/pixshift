@@ -20,11 +20,12 @@ Full documentation: **<https://changwinde.github.io/pixshift/>**
 - AI-native surface: `tools` catalog with side-effect annotations, `optimize`
   plans, `apply` execution, and schema contracts under `docs/schemas/v1/`
 - The size-budget idiom on every pillar: `--target-size 25MB` keeps the best
-  quality that fits (binary search for images, quality-ladder search for
-  PDFs, two-pass bitrate encoding for video)
-- Fast batch operations with practical defaults; batches parallelise across
-  a bounded worker pool automatically
-- Idempotent reruns: discovered generated files are ignored and existing outputs are skipped
+  quality that fits (complete bounded quality search for lossy images/PDF,
+  full-resolution lossless PNG/TIFF, and two-pass or ABR video encoding)
+- Fast image batches use a memory-bounded worker pool; PDF and video commands
+  favour predictable resource use over implicit parallelism
+- Idempotent derivative workflows ignore their own generated files and skip
+  existing outputs; aggregate commands reject source/output collisions
 - Safe destructive behavior: similarity is advisory; only revalidated,
   byte-identical duplicates can be deleted
 - Human-readable output and script-friendly JSON mode with stable failure exit codes
@@ -33,13 +34,20 @@ Full documentation: **<https://changwinde.github.io/pixshift/>**
 
 ## Installation
 
+The README follows the current development branch. To use exactly this command
+surface, clone the repository and install it locally:
+
 ```bash
-pip install pixshift
+pip install .
 ```
 
-Requires Python `>=3.10`. Linux, macOS, and Windows are covered by CI on every
-commit. PDF support is bundled; video commands additionally need `ffmpeg` on
-the `PATH` (see the manual's installation chapter).
+`pip install pixshift` installs the latest published release, whose features may
+lag the development documentation until the next tagged release.
+
+Requires Python `>=3.10`. CI runs on pushes to `main`/`master` and on pull
+requests; Linux covers Python 3.10/3.12/3.13 and macOS/Windows cover Python
+3.13, including real ffmpeg journeys. PDF support is bundled; video commands
+additionally need `ffmpeg` on the `PATH` (see the manual's installation chapter).
 
 ## Command Tree
 
@@ -50,6 +58,7 @@ pixshift
 ├─ strip        Remove metadata (privacy cleanup)
 ├─ dedup        Find and remove similar/duplicate images
 ├─ compare      Compare image quality (SSIM/PSNR/MSE)
+├─ verify       Gate image/PDF/video candidates on structure and quality
 ├─ crop         Crop images by box/aspect/auto-trim
 ├─ resize       Resize images keeping their format
 ├─ rotate       Rotate or mirror images
@@ -85,7 +94,7 @@ pixshift
 ## Quick Start
 
 ```bash
-pixshift convert ./photos/ -t webp -q high -r
+pixshift convert ./photos/ -t webp -q high --color-space srgb -r
 pixshift compress ./photos/ -p medium -r
 pixshift strip ./photos/ --mode privacy -r
 pixshift dedup ./photos/ -r --delete --dry-run
@@ -99,7 +108,7 @@ pixshift montage ./photos/ -o board.png --cols 4
 pixshift optimize ./photos/ -r
 pixshift pdf merge ./photos/ -o album.pdf
 pixshift pdf split ./report.pdf -o ./pages/
-pixshift video compress ./clips/ -p web -r      # needs ffmpeg
+pixshift video compress ./clips/ -p web --audio-policy compatible -r  # needs ffmpeg
 pixshift video thumbnail demo.mp4 --at 25%
 pixshift video gif demo.mp4 -o demo.gif --fps 15 --width 480
 ```
@@ -121,13 +130,14 @@ Agents discover, plan, apply, and verify with four moves:
 pixshift tools --json                          # discover: catalog + annotations
 pixshift optimize ./photos -r --json > plan.json   # plan: executable recommendations
 pixshift apply --plan plan.json -o ./out --json    # apply: run the plan (supports --dry-run)
-pixshift hash ./out -r --json                  # verify: content digests for audit
+pixshift verify source.png ./out/source.webp --min-ssim 0.99 --json  # quality gate
 ```
 
 - Every tool entry carries MCP-aligned annotations (`readOnlyHint`,
   `destructiveHint`, `idempotentHint`, `openWorldHint: false`).
-- JSON payload contracts live in `docs/schemas/v1/` and are validated in CI.
-- One-shot asset preparation: `pixshift prep ./raw -o ./dist --max-size 2048 -t webp --json`
+- The shared JSON envelope plus dedicated schemas for automation and `verify`
+  live in `docs/schemas/v1/` and are validated in CI.
+- One-shot asset preparation: `pixshift prep ./raw -r -o ./dist --max-size 2048 -t webp --json`
   converts, bounds dimensions, strips privacy metadata, and returns a hashed manifest.
 - Directory inventory: `pixshift manifest ./photos -r --json` reports formats,
   dimensions, alpha, frame counts, sensitive EXIF keys, and SHA-256 digests.
@@ -153,7 +163,7 @@ _PIXSHIFT_COMPLETE=fish_source pixshift | source
 
 JSON mode is intended for CI and scripts.
 In JSON mode, failures return non-zero exit codes.
-Every document includes `"schema_version": "1.0"`, `command`, and `ok`.
+Every document includes `"schema_version": "1.1"`, `command`, and `ok`.
 
 ```bash
 pixshift convert ./photos/ -t webp --json
@@ -161,6 +171,7 @@ pixshift compress ./photos/ -p medium --json
 pixshift strip ./photos/ --mode privacy --json
 pixshift dedup ./photos/ -r --json
 pixshift compare a.jpg b.jpg --json
+pixshift verify a.jpg b.webp --min-ssim 0.99 --json
 pixshift crop ./photos/ --aspect 16:9 --dry-run --json
 pixshift resize ./photos/ --percent 50 --json
 pixshift rotate ./scans/ --degrees 90 --json

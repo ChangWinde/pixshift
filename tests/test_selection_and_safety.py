@@ -265,7 +265,7 @@ assert json.loads(result.stdout)['files'][0]['error'] == 'image_too_large:4096>1
     assert completed.returncode == 0, completed.stderr
 
 
-def test_animation_checks_every_frame_before_copying(runner, tmp_path, monkeypatch):
+def test_multipage_tiff_is_rejected_before_decoding_later_frames(runner, tmp_path, monkeypatch):
     source = tmp_path / "frames.tiff"
     first = Image.new("RGB", (8, 8), "green")
     second = Image.new("RGB", (64, 64), "blue")
@@ -277,10 +277,10 @@ def test_animation_checks_every_frame_before_copying(runner, tmp_path, monkeypat
     )
 
     assert result.exit_code == 1
-    assert json.loads(result.stdout)["errors"][0]["error"] == "image_too_large:4096>100"
+    assert json.loads(result.stdout)["errors"][0]["error"] == "animated_input_not_supported"
 
 
-def test_animation_enforces_an_aggregate_frame_budget(runner, tmp_path, monkeypatch):
+def test_multipage_tiff_is_not_misclassified_as_supported_animation(runner, tmp_path, monkeypatch):
     source = tmp_path / "many-frames.tiff"
     first = Image.new("RGB", (8, 8), "green")
     second = Image.new("RGB", (8, 8), "blue")
@@ -292,7 +292,7 @@ def test_animation_enforces_an_aggregate_frame_budget(runner, tmp_path, monkeypa
     )
 
     assert result.exit_code == 1
-    assert json.loads(result.stdout)["errors"][0]["error"] == "image_too_large:128>100"
+    assert json.loads(result.stdout)["errors"][0]["error"] == "animated_input_not_supported"
 
 
 # ------------------------------------------------------------------

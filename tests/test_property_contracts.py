@@ -223,7 +223,7 @@ def test_convert_argv_shape(container, codec, hwaccel):
             "/in/clip.src", "/out/clip.dst", container=container, codec=codec, hwaccel=hwaccel
         )
     except ValueError as error:
-        assert str(error).startswith("unsupported_hwaccel:")
+        assert str(error).startswith(("unsupported_hwaccel:", "unsupported_codec_for_container:"))
         return
     assert all(isinstance(part, str) and part for part in args)
     assert args[-1].endswith("clip.dst")

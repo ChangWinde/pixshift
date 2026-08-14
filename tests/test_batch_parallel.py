@@ -9,6 +9,7 @@ from PIL import Image
 
 from pixshift.cli import cli
 from pixshift.commands.common import run_batch_tasks
+from pixshift.core.parallel import bounded_worker_count
 
 # The worker must be importable from pool children under every start method
 # (spawn children cannot import the test module itself), so use a stdlib
@@ -28,6 +29,28 @@ def test_small_batches_stay_serial():
     tasks = [("a", "b"), ("c", "d")]
     assert run_batch_tasks(tasks, _join_worker) == [os.path.join(i, o) for i, o in tasks]
     assert run_batch_tasks([], _join_worker) == []
+
+
+def test_worker_count_respects_decoded_memory_budget(tmp_path, monkeypatch):
+    source = tmp_path / "large.png"
+    Image.new("RGB", (3000, 3000), "black").save(source, optimize=True)
+    tasks = [(str(source), str(tmp_path / f"out-{index}.png")) for index in range(8)]
+    monkeypatch.setenv("PIXSHIFT_BATCH_MEMORY_MB", "64")
+
+    assert bounded_worker_count(tasks, requested=999) == 1
+
+
+def test_corrupt_first_sample_does_not_hide_later_memory_cost(tmp_path, monkeypatch):
+    corrupt = tmp_path / "corrupt.png"
+    corrupt.write_bytes(b"not an image")
+    large = tmp_path / "large.png"
+    Image.new("RGB", (3000, 3000), "black").save(large, optimize=True)
+    tasks = [(str(corrupt), str(tmp_path / "bad-out.png"))] + [
+        (str(large), str(tmp_path / f"out-{index}.png")) for index in range(7)
+    ]
+    monkeypatch.setenv("PIXSHIFT_BATCH_MEMORY_MB", "64")
+
+    assert bounded_worker_count(tasks, requested=999) == 1
 
 
 def test_pool_child_import_graph_can_decode_heic(tmp_path):

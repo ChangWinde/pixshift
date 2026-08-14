@@ -18,8 +18,8 @@ ops wrappers
           │
           ▼
 image / PDF / video engines
-  (PyMuPDF and ffmpeg are optional runtime dependencies, probed lazily and
-   reported by doctor; video argv builders are pure functions)
+  (PyMuPDF is a required, lazily imported package; ffmpeg is an optional system
+   dependency reported by doctor; video argv builders are pure functions)
           │
           ▼
 core policy
@@ -39,7 +39,7 @@ reimplement path, deletion, or metadata safety decisions.
 
 The primary workflows are `convert`, `compress`, `strip`, and `dedup`. Focused
 utilities (`compare`, `crop`, `resize`, `rotate`, `watermark`, `montage`,
-`optimize`, the `pdf` group, and the ffmpeg-backed `video` group) stay
+`optimize`, `verify`, the `pdf` group, and the ffmpeg-backed `video` group) stay
 independent so users do not need to configure a large pipeline for a single
 operation. Agent workflow commands (`tools`, `apply`, `prep`, `manifest`,
 `hash`) close the discover → plan → apply → verify loop. Root help
@@ -50,10 +50,14 @@ intentionally stays compact; detailed options live under each command.
 - A full batch is planned and checked for destination collisions before writing.
 - Directory-discovered generated artifacts are excluded at the shared planning boundary;
   explicit inputs remain authoritative.
-- Existing outputs are successful batch skips unless overwrite is explicit.
+- Existing outputs are successful derivative-batch skips unless overwrite is
+  explicit; aggregate outputs that alias any input are rejected.
 - A generated path stays below the explicitly selected output root.
-- Encoders write to a same-directory temporary file and atomically replace only
-  after successful completion.
+- Encoders write inside a private temporary directory. POSIX publication then
+  copies into a no-follow, dirfd-bound staging file and commits relative to that
+  descriptor. Windows holds a no-delete-share handle for every verified parent
+  and the staging directory, rejecting reparse points. Concurrent symlink or
+  junction swaps therefore cannot redirect publication on either platform.
 - Pixel-changing operations normalize EXIF Orientation exactly once and remove the
   consumed tag.
 - Animation is preserved or refused, never silently flattened: `convert` and
@@ -69,7 +73,9 @@ intentionally stays compact; detailed options live under each command.
 
 The accepted designs and alternatives are recorded in
 [ADR-0001](adr/0001-safe-operation-boundaries.md) and
-[ADR-0002](adr/0002-opinionated-defaults-and-ai-plans.md).
+[ADR-0002](adr/0002-opinionated-defaults-and-ai-plans.md). The extreme-quality
+policy and media verification boundary are recorded in
+[ADR-0006](adr/0006-extreme-quality-boundaries.md).
 
 ## Automation and AI Clients
 
@@ -87,16 +93,20 @@ The contract layer (ADR-0003) makes this surface discoverable and verifiable:
   side-effect annotations; `pixshift tools --json` exposes it to shell agents.
 - `pixshift apply` executes plans emitted by `optimize` (and future planners)
   through the same ops wrappers as interactive commands.
-- `docs/schemas/v1/` holds JSON Schema files for command payloads; CI validates
-  live outputs against them, and breaking changes require a `schema_version` bump.
+- `docs/schemas/v1/` holds the shared envelope and dedicated schemas for the
+  automation/verification payloads; CI validates live outputs against them,
+  and breaking changes require a `schema_version` bump.
 - `pixshift.mcp` is a thin stdio JSON-RPC adapter that maps catalog entries to
   CLI invocations; it never reimplements engines or safety policy.
 
 ## Performance Model
 
 - Single-file conversion stays in-process to avoid process startup overhead.
-- Batch conversion uses at most eight workers by default to bound decoder memory;
-  callers can override this with `--jobs`.
+- Batch conversion uses at most eight workers and further reduces concurrency
+  against an estimated decode-memory budget; callers can request a lower limit
+  with `--jobs`.
+- Image comparison deterministically samples very large inputs and discloses the
+  sample scale instead of retaining multiple full-resolution working copies.
 - Perceptual duplicate search uses multi-index hashing plus union-find instead of
   comparing every pair. Threshold zero uses direct hash grouping.
 - Exact-file SHA-256 is computed only for equal-size candidates.

@@ -199,6 +199,28 @@ def test_convert_uses_requested_codec(runner, ffmpeg_ready, clip):
     assert any("libx265" in call for call in ffmpeg_ready)
 
 
+def test_convert_discloses_preserved_audio_policy(runner, ffmpeg_ready, clip):
+    result = runner.invoke(
+        cli,
+        [
+            "video",
+            "convert",
+            str(clip),
+            "-t",
+            "mkv",
+            "--audio-policy",
+            "preserve",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    entry = json.loads(result.output)["results"][0]
+    assert entry["audio_policy"] == "preserve"
+    assert entry["audio_action"] == "copy_if_present"
+    assert any(call[call.index("-c:a") + 1] == "copy" for call in ffmpeg_ready if "-c:a" in call)
+
+
 def test_convert_skips_existing_output(runner, ffmpeg_ready, clip, tmp_path):
     (tmp_path / "clip.webm").write_bytes(b"already here")
     result = runner.invoke(cli, ["video", "convert", str(clip), "-t", "webm", "--json"])
@@ -230,8 +252,9 @@ def test_convert_human_output_lists_states(runner, ffmpeg_ready, tmp_path):
     result = runner.invoke(cli, ["video", "convert", str(tmp_path), "-t", "webm"])
     assert result.exit_code == 1
     assert "完成" in result.output
-    assert "跳过" in result.output
     assert "boom" in result.output
+    converted_inputs = {Path(args[args.index("-i") + 1]).name for args in ffmpeg_ready}
+    assert "kept.webm" in converted_inputs
 
 
 def test_convert_into_output_directory(runner, ffmpeg_ready, clip, tmp_path):
@@ -241,6 +264,16 @@ def test_convert_into_output_directory(runner, ffmpeg_ready, clip, tmp_path):
     )
     assert result.exit_code == 0
     assert (outdir / "clip.webm").is_file()
+
+
+def test_convert_rejects_incompatible_codec_container_as_usage_error(runner, monkeypatch, clip):
+    monkeypatch.setattr("pixshift.ops.video.FFMPEG_AVAILABLE", True)
+    result = runner.invoke(
+        cli,
+        ["video", "convert", str(clip), "-t", "webm", "--codec", "h264", "--json"],
+    )
+    assert result.exit_code == 2
+    assert json.loads(result.output)["error"] == "unsupported_codec_for_container:h264:webm"
 
 
 def test_compress_json_names_and_crf_override(runner, ffmpeg_ready, clip, tmp_path):
@@ -313,7 +346,8 @@ def test_trim_reencode_and_custom_output(runner, ffmpeg_ready, clip, tmp_path):
     assert target.is_file()
     argv = ffmpeg_ready[0]
     assert "libx264" in argv
-    assert _argv_value(argv, "-to") == "3.000"
+    assert _argv_value(argv, "-t") == "2.000"
+    assert "-to" not in argv
 
 
 def test_trim_failure_human_exits_nonzero(runner, ffmpeg_ready, tmp_path):

@@ -55,7 +55,7 @@ def test_compress_tiny_keeps_software_downscale_with_hw_encode():
         "/a/in.mp4", "/a/out.mp4", preset="tiny", codec="h264", hwaccel="videotoolbox"
     )
     assert "h264_videotoolbox" in args
-    assert "scale='min(1280,iw)':-2" in args
+    assert args[args.index("-vf") + 1] == ("scale='min(1280,iw)':-2,scale=-2:'min(1280,ih)'")
     # tiny h264 CRF 32 -> (51 - 32) * 2 = 38.
     assert args[args.index("-q:v") + 1] == "38"
 

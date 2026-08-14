@@ -77,6 +77,18 @@ def test_prep_manifest_hash_payloads_match_schema(tmp_path):
     _validate(hash_payload, "envelope.json")
 
 
+def test_verify_payload_matches_schema(tmp_path):
+    source = tmp_path / "source.png"
+    candidate = tmp_path / "candidate.png"
+    image = Image.new("RGB", (24, 18), (10, 80, 160))
+    image.save(source)
+    image.save(candidate)
+
+    payload = _run(["verify", str(source), str(candidate), "--json"])
+    _validate(payload, "verify.json")
+    _validate(payload, "envelope.json")
+
+
 @pytest.mark.parametrize(
     "args",
     [

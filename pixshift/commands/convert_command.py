@@ -5,7 +5,6 @@ import multiprocessing
 import os
 import time
 from collections.abc import Callable
-from concurrent.futures import ProcessPoolExecutor, as_completed
 from typing import Any
 
 import click
@@ -30,6 +29,7 @@ from ..converter import (
 )
 from ..core.defaults import DEFAULT_CONVERT_QUALITY
 from ..core.files import filter_generated_inputs, partition_existing_outputs
+from ..core.parallel import bounded_worker_count
 from ..ops import convert as convert_ops
 from ..presenters.cli_presenters import print_failures, show_dry_run_table
 from ..presenters.json_presenters import emit_json, emit_json_and_exit
@@ -46,6 +46,43 @@ def _convert_worker(args: tuple[str, str, dict[str, Any]]) -> ConvertResult:
     """Multiprocessing worker for conversion."""
     input_path, output_path, converter_kwargs = args
     return convert_ops.convert_one(input_path, output_path, converter_kwargs)
+
+
+def _convert_indexed_worker(
+    item: tuple[int, tuple[str, str, dict[str, Any]]],
+) -> tuple[int, ConvertResult]:
+    """Return the task index so unordered completion stays deterministic."""
+    index, arguments = item
+    return index, _convert_worker(arguments)
+
+
+def _run_converter_tasks(
+    worker_args: list[tuple[str, str, dict[str, Any]]],
+    jobs: int,
+    on_result: Callable[[], None] | None = None,
+) -> list[ConvertResult]:
+    """Run conversions in order and terminate workers promptly on cancellation."""
+    if jobs <= 1 or len(worker_args) <= 1:
+        results = []
+        for arguments in worker_args:
+            results.append(_convert_worker(arguments))
+            if on_result is not None:
+                on_result()
+        return results
+    ordered: list[ConvertResult | None] = [None] * len(worker_args)
+    pool = multiprocessing.Pool(processes=jobs)
+    try:
+        for index, result in pool.imap_unordered(_convert_indexed_worker, enumerate(worker_args)):
+            ordered[index] = result
+            if on_result is not None:
+                on_result()
+        pool.close()
+    except BaseException:
+        pool.terminate()
+        raise
+    finally:
+        pool.join()
+    return [result for result in ordered if result is not None]
 
 
 def register_convert_command(
@@ -128,6 +165,12 @@ def register_convert_command(
         "--no-icc", is_flag=True, default=False, help="不保留 ICC 颜色配置文件. 默认: 保留"
     )
     @click.option(
+        "--color-space",
+        default="preserve",
+        type=click.Choice(["preserve", "srgb"], case_sensitive=False),
+        help="色彩策略: preserve 保留源空间；srgb 经 ICC 转换为 sRGB",
+    )
+    @click.option(
         "--no-orient",
         is_flag=True,
         default=False,
@@ -173,6 +216,7 @@ def register_convert_command(
         strip_alpha: bool,
         no_exif: bool,
         no_icc: bool,
+        color_space: str,
         no_orient: bool,
         jobs: int,
         flatten: bool,
@@ -307,6 +351,7 @@ def register_convert_command(
                         "skipped": len(skipped_tasks),
                         "output_format": output_format.lower(),
                         "quality": quality,
+                        "color_space": color_space.lower(),
                         "ignored_generated": ignored_generated,
                         "preview": [
                             {
@@ -348,39 +393,17 @@ def register_convert_command(
             "strip_alpha": strip_alpha,
             "background_color": bg_rgb,
             "auto_orient": not no_orient,
+            "color_space": color_space.lower(),
         }
 
-        if jobs <= 0:
-            # Image decoders are memory-heavy; an unbounded CPU-count default can
-            # make large batches slower through memory pressure and process setup.
-            jobs = min(multiprocessing.cpu_count(), len(tasks), 8)
-        jobs = min(jobs, len(tasks))
+        jobs = bounded_worker_count(tasks, requested=jobs)
 
         batch_result = BatchResult(total=len(all_tasks), skipped=len(skipped_tasks))
         start_time = time.time()
         worker_args = [(inp, out, converter_kwargs) for inp, out in tasks]
 
         if as_json:
-            if not tasks:
-                pass
-            elif jobs == 1 or len(tasks) == 1:
-                for inp, out in tasks:
-                    result = convert_ops.convert_one(inp, out, converter_kwargs)
-                    batch_result.results.append(result)
-                    if result.success:
-                        batch_result.success += 1
-                    else:
-                        batch_result.failed += 1
-            else:
-                with ProcessPoolExecutor(max_workers=jobs) as executor:
-                    futures = {executor.submit(_convert_worker, arg): arg for arg in worker_args}
-                    for future in as_completed(futures):
-                        result = future.result()
-                        batch_result.results.append(result)
-                        if result.success:
-                            batch_result.success += 1
-                        else:
-                            batch_result.failed += 1
+            batch_result.results = _run_converter_tasks(worker_args, jobs)
         else:
             with Progress(
                 SpinnerColumn(),
@@ -393,30 +416,14 @@ def register_convert_command(
             ) as progress:
                 task_id = progress.add_task("转换中", total=len(tasks))
 
-                if not tasks:
-                    pass
-                elif jobs == 1 or len(tasks) == 1:
-                    for inp, out in tasks:
-                        result = convert_ops.convert_one(inp, out, converter_kwargs)
-                        batch_result.results.append(result)
-                        if result.success:
-                            batch_result.success += 1
-                        else:
-                            batch_result.failed += 1
-                        progress.advance(task_id)
-                else:
-                    with ProcessPoolExecutor(max_workers=jobs) as executor:
-                        futures = {
-                            executor.submit(_convert_worker, arg): arg for arg in worker_args
-                        }
-                        for future in as_completed(futures):
-                            result = future.result()
-                            batch_result.results.append(result)
-                            if result.success:
-                                batch_result.success += 1
-                            else:
-                                batch_result.failed += 1
-                            progress.advance(task_id)
+                batch_result.results = _run_converter_tasks(
+                    worker_args,
+                    jobs,
+                    on_result=lambda: progress.advance(task_id),
+                )
+
+        batch_result.success = sum(result.success for result in batch_result.results)
+        batch_result.failed = len(batch_result.results) - batch_result.success
 
         batch_result.total_duration = time.time() - start_time
         batch_result.total_input_size = sum(r.input_size for r in batch_result.results)

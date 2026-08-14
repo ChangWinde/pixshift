@@ -2,6 +2,16 @@
 
 ## 安装
 
+本手册跟随开发分支；若要使用文档中的完整 2.0 命令面，请从仓库安装。PyPI 命令安装的是最近一次已发布版本，可能暂时落后于本手册。
+
+=== "当前源码"
+
+    ```bash
+    git clone https://github.com/ChangWinde/pixshift.git
+    cd pixshift
+    pip install .
+    ```
+
 === "pip"
 
     ```bash
@@ -20,7 +30,7 @@
     pip install "pixshift[avif]"
     ```
 
-要求 Python 3.10 及以上，在 Linux、macOS、Windows 上均有持续集成覆盖。
+要求 Python 3.10 及以上。Linux、macOS、Windows 在主分支推送和 Pull Request 上均有持续集成覆盖。
 
 ## 依赖说明
 
