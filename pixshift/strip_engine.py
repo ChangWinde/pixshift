@@ -383,8 +383,16 @@ def _iter_exif_entries(exif: Any) -> list[tuple[int, Any]]:
 
 
 def _remove_named_tags(exif_fields: Any, tags_to_remove: set[str]) -> int:
-    """Remove matching EXIF fields from one mutable IFD mapping."""
-    keys = [key for key in exif_fields if ExifTags.TAGS.get(key, "") in tags_to_remove]
+    """Remove matching EXIF fields from one mutable IFD mapping.
+
+    Matching is case-insensitive because Pillow's table and the EXIF
+    specification disagree on capitalisation for some tags: the spec writes
+    ``SubSecTimeOriginal`` while Pillow stores ``SubsecTimeOriginal``. Exact
+    string comparison silently matched nothing for those tags, so a sub-second
+    timestamp survived a strip that reported success.
+    """
+    wanted = {name.casefold() for name in tags_to_remove}
+    keys = [key for key in exif_fields if ExifTags.TAGS.get(key, "").casefold() in wanted]
     for key in keys:
         del exif_fields[key]
     return len(keys)

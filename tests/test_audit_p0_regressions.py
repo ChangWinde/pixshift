@@ -97,6 +97,62 @@ class TestDedupHardlinkAccounting:
         assert result.recoverable_size == original.stat().st_size
 
 
+class TestStripRemovesEveryDeclaredTimeTag:
+    """``--mode time`` must remove sub-second timestamps too.
+
+    Asserted by numeric EXIF tag id rather than by name: the defect was that
+    Pillow's spelling (``SubsecTimeOriginal``) differs from the specification's
+    (``SubSecTimeOriginal``), so a name-based test could pass while the tag
+    survived in the file.
+    """
+
+    SUBSEC_ORIGINAL = 37521
+    DATETIME_ORIGINAL = 36867
+
+    def _image_with_timestamps(self, path: Path) -> Path:
+        from PIL import Image as PILImage
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        image = PILImage.new("RGB", (32, 32), (70, 110, 160))
+        exif = image.getexif()
+        ifd = exif.get_ifd(0x8769)
+        ifd[self.DATETIME_ORIGINAL] = "2020:01:01 00:00:00"
+        ifd[self.SUBSEC_ORIGINAL] = "123456"
+        image.save(path, "JPEG", quality=90, exif=exif)
+        return path
+
+    def _exif_ids(self, path: Path) -> set[int]:
+        from PIL import Image as PILImage
+
+        with PILImage.open(path) as image:
+            exif = image.getexif()
+            ids = set(exif.keys())
+            ids |= set(exif.get_ifd(0x8769).keys())
+        return ids
+
+    def test_sub_second_timestamp_does_not_survive_time_mode(self, tmp_path: Path) -> None:
+        from pixshift import strip_engine
+
+        source = self._image_with_timestamps(tmp_path / "shot.jpg")
+        assert self.SUBSEC_ORIGINAL in self._exif_ids(source), "fixture lacks the tag"
+
+        destination = tmp_path / "out" / "shot.jpg"
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        strip_engine.strip_metadata(
+            str(source),
+            str(destination),
+            strip_exif=False,
+            strip_gps=False,
+            strip_device=False,
+            strip_personal=False,
+            strip_time=True,
+        )
+
+        remaining = self._exif_ids(destination)
+        assert self.SUBSEC_ORIGINAL not in remaining
+        assert self.DATETIME_ORIGINAL not in remaining
+
+
 class TestBatchOutputOverwritesInput:
     """One task's output must not silently destroy another task's source."""
 
