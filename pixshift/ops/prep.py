@@ -21,6 +21,7 @@ from ..core.files import (
     plan_output_path,
     validate_unique_output_paths,
 )
+from ..core.metadata import open_image
 from ..core.parallel import run_batch_tasks
 from . import convert as convert_ops
 from . import strip as strip_ops
@@ -196,9 +197,7 @@ def _sha256(path: str) -> str:
 
 def _dims(path: str) -> tuple[int | None, int | None]:
     try:
-        from PIL import Image
-
-        with Image.open(path) as image:
+        with open_image(path) as image:
             return int(image.width), int(image.height)
     except Exception:
         return None, None

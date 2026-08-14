@@ -23,7 +23,7 @@ from pathlib import Path
 from PIL import Image
 
 from .converter import SUPPORTED_INPUT_FORMATS, _human_size
-from .core.metadata import ensure_static_image
+from .core.metadata import ensure_static_image, open_image
 
 # ============================================================
 #  数据结构
@@ -157,7 +157,7 @@ def _hash_one_file(
     except OSError:
         return filepath, None, None
     try:
-        with Image.open(filepath) as img:
+        with open_image(filepath) as img:
             ensure_static_image(img)
             img.draft("L", (64, 64))
             h = hash_func(img, hash_size)

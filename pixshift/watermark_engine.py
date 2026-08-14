@@ -19,7 +19,12 @@ from PIL import Image, ImageDraw, ImageFont
 
 from .converter import SUPPORTED_INPUT_FORMATS
 from .core.files import SelectionFilters, atomic_output_path, collect_supported_files
-from .core.metadata import ensure_static_image, normalize_orientation, normalized_exif_bytes
+from .core.metadata import (
+    ensure_static_image,
+    normalize_orientation,
+    normalized_exif_bytes,
+    open_image,
+)
 
 # ============================================================
 #  数据结构
@@ -236,7 +241,7 @@ def add_text_watermark(
         if tile_spacing < 0 or margin < 0:
             raise ValueError("间距和边距不能为负数")
 
-        with Image.open(input_path) as source:
+        with open_image(input_path) as source:
             ensure_static_image(source)
             original_format = source.format
             original = normalize_orientation(source)
@@ -382,7 +387,7 @@ def add_image_watermark(
         if tile_spacing < 0 or margin < 0:
             raise ValueError("间距和边距不能为负数")
 
-        with Image.open(input_path) as source, Image.open(watermark_path) as wm_source:
+        with open_image(input_path) as source, open_image(watermark_path) as wm_source:
             ensure_static_image(source)
             ensure_static_image(wm_source)
             original_format = source.format

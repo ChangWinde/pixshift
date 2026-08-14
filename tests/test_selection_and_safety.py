@@ -1,6 +1,11 @@
 """Tests for batch selection filters, the pixel budget, and reversible dedup."""
 
+import io
 import json
+import os
+import subprocess
+import sys
+import warnings
 
 import pytest
 from click.testing import CliRunner
@@ -9,7 +14,7 @@ from PIL import Image
 from pixshift.cli import cli
 from pixshift.core.errors import ImageTooLargeError
 from pixshift.core.files import SelectionFilters, collect_supported_files
-from pixshift.core.metadata import ensure_within_pixel_limit, max_image_pixels
+from pixshift.core.metadata import ensure_within_pixel_limit, max_image_pixels, open_image
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg"}
 
@@ -146,6 +151,147 @@ def test_oversized_image_reports_a_stable_error(runner, tmp_path, monkeypatch):
     result = runner.invoke(cli, ["compress", str(source), "-o", str(tmp_path / "o"), "--json"])
     assert result.exit_code == 1
     assert "image_too_large" in json.loads(result.output)["errors"][0]["error"]
+
+
+def test_pixel_budget_guards_info_without_polluting_json(runner, tmp_path, monkeypatch):
+    """The shared Image.open guard must cover paths without an explicit check."""
+    source = tmp_path / "wide.png"
+    Image.new("RGB", (64, 64), "green").save(source)
+    monkeypatch.setenv("PIXSHIFT_MAX_PIXELS", "100")
+
+    rejected = runner.invoke(cli, ["info", str(source), "--json"])
+
+    assert rejected.exit_code == 1
+    assert rejected.stderr == ""
+    rejected_payload = json.loads(rejected.stdout)
+    assert rejected_payload["ok"] is False
+    assert rejected_payload["files"][0]["error"] == "image_too_large:4096>100"
+
+    monkeypatch.setenv("PIXSHIFT_MAX_PIXELS", "0")
+    accepted = runner.invoke(cli, ["info", str(source), "--json"])
+    assert accepted.exit_code == 0
+    assert json.loads(accepted.stdout)["ok"] is True
+
+
+def test_import_does_not_replace_the_host_pillow_policy():
+    script = """
+from PIL import Image
+Image.MAX_IMAGE_PIXELS = 100
+original_open = Image.open
+import pixshift
+assert Image.MAX_IMAGE_PIXELS == 100
+assert Image.open is original_open
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, check=False
+    )
+    assert completed.returncode == 0, completed.stderr
+
+
+def test_open_image_does_not_suppress_host_pillow_warnings(tmp_path, monkeypatch):
+    source = tmp_path / "host-policy.png"
+    Image.new("RGB", (11, 10), "green").save(source)
+    monkeypatch.setenv("PIXSHIFT_MAX_PIXELS", "0")
+    monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 100)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", Image.DecompressionBombWarning)
+        with open_image(source):
+            pass
+
+    assert any(item.category is Image.DecompressionBombWarning for item in caught)
+
+
+def test_open_image_preserves_host_warning_threshold_as_error(tmp_path, monkeypatch):
+    source = tmp_path / "host-policy.png"
+    Image.new("RGB", (11, 10), "green").save(source)
+    monkeypatch.setenv("PIXSHIFT_MAX_PIXELS", "0")
+    monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 100)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", Image.DecompressionBombWarning)
+        with pytest.raises(ImageTooLargeError, match=r"image_too_large:110>100"):
+            open_image(source)
+
+
+def test_open_image_does_not_close_a_caller_owned_stream(monkeypatch):
+    stream = io.BytesIO()
+    Image.new("RGB", (16, 16), "green").save(stream, format="PNG")
+    stream.seek(0)
+    monkeypatch.setenv("PIXSHIFT_MAX_PIXELS", "100")
+
+    with pytest.raises(ImageTooLargeError):
+        open_image(stream)
+
+    assert stream.closed is False
+
+
+def test_open_image_cleanup_cannot_mask_the_policy_error(monkeypatch):
+    class BrokenCloseImage:
+        size = (16, 16)
+
+        def close(self):
+            raise RuntimeError("plugin_close_failed")
+
+    monkeypatch.setattr(Image, "open", lambda path: BrokenCloseImage())
+    monkeypatch.setenv("PIXSHIFT_MAX_PIXELS", "100")
+
+    with pytest.raises(ImageTooLargeError, match=r"image_too_large:256>100"):
+        open_image("broken.plugin")
+
+
+def test_budget_can_be_enabled_after_startup_with_zero(tmp_path):
+    source = tmp_path / "wide.png"
+    Image.new("RGB", (64, 64), "green").save(source)
+    script = f"""
+import json, os
+from click.testing import CliRunner
+from pixshift.cli import cli
+os.environ['PIXSHIFT_MAX_PIXELS'] = '100'
+result = CliRunner().invoke(cli, ['info', {str(source)!r}, '--json'])
+assert result.exit_code == 1, result.output
+assert json.loads(result.stdout)['files'][0]['error'] == 'image_too_large:4096>100'
+"""
+    environment = dict(os.environ)
+    environment["PIXSHIFT_MAX_PIXELS"] = "0"
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=environment,
+    )
+    assert completed.returncode == 0, completed.stderr
+
+
+def test_animation_checks_every_frame_before_copying(runner, tmp_path, monkeypatch):
+    source = tmp_path / "frames.tiff"
+    first = Image.new("RGB", (8, 8), "green")
+    second = Image.new("RGB", (64, 64), "blue")
+    first.save(source, save_all=True, append_images=[second])
+    monkeypatch.setenv("PIXSHIFT_MAX_PIXELS", "100")
+
+    result = runner.invoke(
+        cli, ["convert", str(source), "--to", "webp", "--output", str(tmp_path / "out"), "--json"]
+    )
+
+    assert result.exit_code == 1
+    assert json.loads(result.stdout)["errors"][0]["error"] == "image_too_large:4096>100"
+
+
+def test_animation_enforces_an_aggregate_frame_budget(runner, tmp_path, monkeypatch):
+    source = tmp_path / "many-frames.tiff"
+    first = Image.new("RGB", (8, 8), "green")
+    second = Image.new("RGB", (8, 8), "blue")
+    first.save(source, save_all=True, append_images=[second])
+    monkeypatch.setenv("PIXSHIFT_MAX_PIXELS", "100")
+
+    result = runner.invoke(
+        cli, ["convert", str(source), "--to", "webp", "--output", str(tmp_path / "out"), "--json"]
+    )
+
+    assert result.exit_code == 1
+    assert json.loads(result.stdout)["errors"][0]["error"] == "image_too_large:128>100"
 
 
 # ------------------------------------------------------------------

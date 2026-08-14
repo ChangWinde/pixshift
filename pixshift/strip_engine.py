@@ -17,7 +17,7 @@ from typing import Any
 from PIL import ExifTags, Image
 
 from .core.files import SelectionFilters, atomic_output_path, collect_supported_files
-from .core.metadata import ensure_static_image, normalize_orientation
+from .core.metadata import ensure_static_image, normalize_orientation, open_image
 
 # ============================================================
 #  数据结构
@@ -191,7 +191,7 @@ def strip_metadata(
 
         os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
 
-        with Image.open(input_path) as opened:
+        with open_image(input_path) as opened:
             ensure_static_image(opened)
             img = opened.copy()
             img.info.update(opened.info)
@@ -421,7 +421,7 @@ def analyze_metadata(filepath: str) -> dict[str, Any]:
     }
 
     try:
-        with Image.open(filepath) as img:
+        with open_image(filepath) as img:
             if img.info.get("icc_profile"):
                 info["has_icc"] = True
 

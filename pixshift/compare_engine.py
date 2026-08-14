@@ -16,7 +16,7 @@ from dataclasses import dataclass
 
 from PIL import Image, ImageChops, ImageFilter, ImageStat
 
-from .core.metadata import ensure_static_image, normalize_orientation
+from .core.metadata import ensure_static_image, normalize_orientation, open_image
 
 # ============================================================
 #  数据结构
@@ -217,7 +217,7 @@ def compare_images(
         result.filesize_a = os.path.getsize(image_a)
         result.filesize_b = os.path.getsize(image_b)
 
-        with Image.open(image_a) as source_a, Image.open(image_b) as source_b:
+        with open_image(image_a) as source_a, open_image(image_b) as source_b:
             ensure_static_image(source_a)
             ensure_static_image(source_b)
             img_a = normalize_orientation(source_a).copy()

@@ -22,6 +22,7 @@ from .core.metadata import (
     ensure_static_image,
     image_has_transparency,
     normalize_orientation,
+    open_image,
 )
 
 # ============================================================
@@ -112,7 +113,7 @@ def create_montage(
         image_specs: list[tuple[str, int, int]] = []
         for p in input_paths:
             try:
-                with Image.open(p) as source:
+                with open_image(p) as source:
                     ensure_static_image(source)
                     normalized = normalize_orientation(source)
                     image_specs.append((p, normalized.width, normalized.height))
@@ -180,7 +181,7 @@ def create_montage(
             y = gap + row * (cell_height + label_height + gap)
 
             # 缩放图片以适应单元格
-            with Image.open(image_path) as source:
+            with open_image(image_path) as source:
                 ensure_static_image(source)
                 img = normalize_orientation(source)
                 resized = _fit_image(img, cell_width, cell_height)

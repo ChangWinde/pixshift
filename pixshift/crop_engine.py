@@ -24,6 +24,7 @@ from .core.metadata import (
     image_has_transparency,
     normalize_orientation,
     normalized_exif_bytes,
+    open_image,
 )
 
 # ============================================================
@@ -137,7 +138,7 @@ def crop_single(
 
         os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
 
-        with Image.open(input_path) as source:
+        with open_image(input_path) as source:
             ensure_static_image(source)
             original_format = source.format
             img = normalize_orientation(source)

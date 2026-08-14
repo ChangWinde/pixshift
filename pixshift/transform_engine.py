@@ -14,6 +14,7 @@ from .core.metadata import (
     ensure_static_image,
     normalize_orientation,
     normalized_exif_bytes,
+    open_image,
 )
 
 _ROTATE_TRANSPOSE = {
@@ -85,7 +86,7 @@ def rotate_image(
         if save_format is None:
             raise ValueError(f"unsupported_output_format:{extension}")
 
-        with Image.open(input_path) as img:
+        with open_image(input_path) as img:
             ensure_static_image(img)
             frame: Image.Image = normalize_orientation(img)
             if degrees:

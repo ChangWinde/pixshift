@@ -30,6 +30,7 @@ from .core.metadata import (
     image_has_transparency,
     normalize_orientation,
     normalized_exif_bytes,
+    open_image,
 )
 
 # ============================================================
@@ -233,7 +234,7 @@ def compress_single(
             result.quality_used = 100
             result.iterations = 1
         else:
-            with Image.open(input_path) as source:
+            with open_image(input_path) as source:
                 ensure_static_image(source)
                 img = normalize_orientation(source)
 
