@@ -8,7 +8,8 @@ import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
-from ..core.files import atomic_output_path
+from ..core.errors import OperationPolicyError
+from ..core.files import atomic_output_path, validate_aggregate_output_path
 from ..video_engine import (
     FFMPEG_AVAILABLE,
     MIN_TARGET_VIDEO_BPS,
@@ -217,8 +218,13 @@ def compress_to_target_one(
 
     if result.input_bytes <= target_bytes:
         # Already within budget: re-encoding could only lose quality.
-        with atomic_output_path(dst) as temporary:
-            shutil.copyfile(src, temporary)
+        try:
+            with atomic_output_path(dst) as temporary:
+                shutil.copyfile(src, temporary)
+        except OSError as error:
+            result.error = "output_not_created"
+            result.detail = str(error)
+            return result
         result.output_bytes = os.path.getsize(dst)
         result.success = True
         result.detail = "already_within_target"
@@ -332,6 +338,11 @@ def concat_videos(
     result = VideoResult(input_path=paths[0] if paths else "", output_path=dst)
     if len(paths) < 2:
         result.error = "concat_requires_two_inputs"
+        return result
+    try:
+        validate_aggregate_output_path(paths, dst)
+    except OperationPolicyError as error:
+        result.error = error.code
         return result
     for path in paths:
         if not os.path.exists(path):

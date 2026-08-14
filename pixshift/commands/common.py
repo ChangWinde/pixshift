@@ -15,7 +15,12 @@ import click
 
 from ..compress_engine import parse_target_size
 from ..core.errors import OperationPolicyError
-from ..core.files import SelectionFilters, validate_filename_affix, validate_unique_output_paths
+from ..core.files import (
+    SelectionFilters,
+    validate_aggregate_output_path,
+    validate_filename_affix,
+    validate_unique_output_paths,
+)
 from ..core.parallel import run_batch_tasks
 from ..presenters.json_presenters import emit_json_and_exit
 
@@ -27,6 +32,7 @@ __all__ = [
     "selection_options",
     "usage_error_or_exit",
     "validate_affixes_or_exit",
+    "validate_aggregate_output_or_exit",
     "validate_tasks_or_exit",
 ]
 
@@ -144,6 +150,16 @@ def validate_tasks_or_exit(
     """Validate the entire batch before the first output is written."""
     try:
         validate_unique_output_paths(tasks)
+    except OperationPolicyError as error:
+        _exit_policy_error(command=command, as_json=as_json, error=error)
+
+
+def validate_aggregate_output_or_exit(
+    *, command: str, as_json: bool, inputs: Sequence[str], output: str
+) -> None:
+    """Reject aggregate output/input aliases before any source is filtered or read."""
+    try:
+        validate_aggregate_output_path(inputs, output)
     except OperationPolicyError as error:
         _exit_policy_error(command=command, as_json=as_json, error=error)
 

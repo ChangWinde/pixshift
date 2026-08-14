@@ -20,6 +20,7 @@ import os
 import shutil
 import subprocess
 import threading
+from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -851,6 +852,15 @@ def run_ffmpeg(args: list[str], *, timeout: float = DEFAULT_RUN_TIMEOUT_S) -> tu
         process.wait()
         thread.join(timeout=1.0)
         return 124, "ffmpeg_timeout"
+    except BaseException:
+        # KeyboardInterrupt/SystemExit must not leave ffmpeg encoding after the
+        # PixShift caller has stopped or while an atomic temp path is removed.
+        with suppress(OSError):
+            process.kill()
+        with suppress(OSError, subprocess.TimeoutExpired):
+            process.wait(timeout=1.0)
+        thread.join(timeout=1.0)
+        raise
     thread.join(timeout=1.0)
     tail = "".join(captured[-5:]).strip()
     return process.returncode, tail

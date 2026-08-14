@@ -202,6 +202,22 @@ def test_target_size_copies_when_already_small(monkeypatch, clip, tmp_path):
     assert (tmp_path / "out.mp4").read_bytes() == clip.read_bytes()
 
 
+def test_target_size_empty_input_returns_stable_json_error(runner, monkeypatch, tmp_path):
+    monkeypatch.setattr(video_ops, "FFMPEG_AVAILABLE", True)
+    source = tmp_path / "empty.mp4"
+    source.write_bytes(b"")
+
+    result = runner.invoke(
+        cli, ["video", "compress", str(source), "--target-size", "1MB", "--json"]
+    )
+
+    assert result.exit_code == 1, result.output
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is False
+    assert payload["results"][0]["error"] == "output_not_created"
+    assert not (tmp_path / "empty_compressed.mp4").exists()
+
+
 def test_target_size_rejects_impossible_budget(monkeypatch, clip, tmp_path):
     _install_probe(monkeypatch, duration=3600.0)
     result = video_ops.compress_to_target_one(
@@ -318,6 +334,33 @@ def test_concat_stream_copy_success(runner, monkeypatch, tmp_path):
     assert "concat" in argv
     assert "copy" in argv
     assert list_path.endswith("clips.txt")
+
+
+def test_video_concat_cli_rejects_an_input_as_output(runner, monkeypatch, tmp_path):
+    first = tmp_path / "first.mp4"
+    second = tmp_path / "second.mp4"
+    first.write_bytes(b"original first")
+    second.write_bytes(b"second")
+    original = first.read_bytes()
+    monkeypatch.setattr(video_ops, "FFMPEG_AVAILABLE", True)
+
+    result = runner.invoke(
+        cli,
+        [
+            "video",
+            "concat",
+            str(first),
+            str(second),
+            "--output",
+            str(first),
+            "--overwrite",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 2, result.output
+    assert json.loads(result.stdout)["error"] == "output_collision"
+    assert first.read_bytes() == original
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="NTFS forbids newlines in names")

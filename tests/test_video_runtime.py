@@ -184,6 +184,29 @@ def test_run_ffmpeg_kills_hung_process(monkeypatch):
     assert process.killed is True
 
 
+def test_run_ffmpeg_kills_and_reaps_on_keyboard_interrupt(monkeypatch):
+    class _InterruptedProcess(_FakeProcess):
+        def __init__(self):
+            super().__init__()
+            self.wait_calls = 0
+
+        def wait(self, timeout=None):
+            self.wait_calls += 1
+            if self.wait_calls == 1:
+                raise KeyboardInterrupt
+            return self.returncode
+
+    process = _InterruptedProcess()
+    monkeypatch.setattr(video_engine, "FFMPEG_AVAILABLE", True)
+    monkeypatch.setattr(video_engine.subprocess, "Popen", lambda *a, **k: process)
+
+    with pytest.raises(KeyboardInterrupt):
+        run_ffmpeg(["-i", "in.mp4", "out.mp4"])
+
+    assert process.killed is True
+    assert process.wait_calls == 2
+
+
 def test_collect_video_files(tmp_path):
     (tmp_path / "a.mp4").write_bytes(b"a")
     (tmp_path / "b.MOV").write_bytes(b"b")

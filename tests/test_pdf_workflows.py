@@ -8,9 +8,118 @@ from click.testing import CliRunner
 from PIL import Image
 
 from pixshift.cli import cli
+from pixshift.pdf_engine import pdf_concat, pdf_merge_images
 
 
-def test_pdf_transform_workflow_and_concat_excludes_own_output(tmp_path: Path) -> None:
+def _one_page_pdf(path: Path, label: str) -> None:
+    document = fitz.open()
+    page = document.new_page(width=100, height=100)
+    page.insert_text((10, 50), label)
+    document.save(path)
+    document.close()
+
+
+def test_concat_rejects_an_output_that_is_also_an_input(tmp_path: Path) -> None:
+    first = tmp_path / "first.pdf"
+    second = tmp_path / "second.pdf"
+    third = tmp_path / "third.pdf"
+    _one_page_pdf(first, "ORIGINAL-A")
+    _one_page_pdf(second, "B")
+    _one_page_pdf(third, "C")
+    original_bytes = first.read_bytes()
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "pdf",
+            "concat",
+            str(first),
+            str(second),
+            str(third),
+            "--output",
+            str(first),
+            "--overwrite",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 2, result.output
+    assert json.loads(result.output)["error"] == "output_collision"
+    assert first.read_bytes() == original_bytes
+
+
+def test_merge_rejects_an_output_that_is_also_an_input(tmp_path: Path) -> None:
+    source = tmp_path / "source.png"
+    Image.new("RGB", (16, 16), "red").save(source)
+    original_bytes = source.read_bytes()
+
+    cli_result = CliRunner().invoke(
+        cli,
+        [
+            "pdf",
+            "merge",
+            str(source),
+            "--output",
+            str(source),
+            "--overwrite",
+            "--page",
+            "fit",
+            "--margin",
+            "0",
+            "--json",
+        ],
+    )
+    engine_result = pdf_merge_images([str(source)], str(source), overwrite=True)
+
+    assert cli_result.exit_code == 2, cli_result.output
+    assert json.loads(cli_result.output)["error"] == "output_collision"
+    assert engine_result.success is False
+    assert engine_result.error == "output_collision"
+    assert source.read_bytes() == original_bytes
+
+
+def test_concat_engine_rejects_an_output_that_is_also_an_input(tmp_path: Path) -> None:
+    first = tmp_path / "first.pdf"
+    second = tmp_path / "second.pdf"
+    _one_page_pdf(first, "A")
+    _one_page_pdf(second, "B")
+    original_bytes = first.read_bytes()
+
+    result = pdf_concat([str(first), str(second)], str(first), overwrite=True)
+
+    assert result.success is False
+    assert result.error == "output_collision"
+    assert first.read_bytes() == original_bytes
+
+
+def test_concat_rejects_a_scanned_input_as_the_output(tmp_path: Path) -> None:
+    source_dir = tmp_path / "pdfs"
+    source_dir.mkdir()
+    first = source_dir / "first.pdf"
+    second = source_dir / "second.pdf"
+    _one_page_pdf(first, "REAL-A")
+    _one_page_pdf(second, "B")
+    original_bytes = first.read_bytes()
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "pdf",
+            "concat",
+            str(source_dir),
+            "--output",
+            str(first),
+            "--overwrite",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 2, result.output
+    assert json.loads(result.output)["error"] == "output_collision"
+    assert first.read_bytes() == original_bytes
+
+
+def test_pdf_transform_workflow(tmp_path: Path) -> None:
     runner = CliRunner()
     images = tmp_path / "images"
     images.mkdir()
@@ -71,12 +180,21 @@ def test_pdf_transform_workflow_and_concat_excludes_own_output(tmp_path: Path) -
     stale.close()
     concatenated = runner.invoke(
         cli,
-        ["pdf", "concat", str(tmp_path), "--output", str(output), "--overwrite", "--json"],
+        [
+            "pdf",
+            "concat",
+            str(first_pdf),
+            str(second_pdf),
+            "--output",
+            str(output),
+            "--overwrite",
+            "--json",
+        ],
     )
     assert concatenated.exit_code == 0, concatenated.output
     concat_payload = json.loads(concatenated.output)
     assert concat_payload["input_count"] == 2
-    assert concat_payload["ignored_generated"] == 1
+    assert concat_payload["ignored_generated"] == 0
     assert concat_payload["page_count"] == 3
 
     compressed = tmp_path / "compressed.pdf"

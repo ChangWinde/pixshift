@@ -121,6 +121,35 @@ def test_silent_encoder_failure_is_a_stable_error(monkeypatch, clip, tmp_path):
     assert not dst.exists()
 
 
+def test_empty_encoder_output_does_not_replace_an_existing_file(monkeypatch, clip, tmp_path):
+    def fake_run_empty_output(args, **kwargs):
+        open(args[-1], "wb").close()
+        return 0, ""
+
+    monkeypatch.setattr(video_ops, "run_ffmpeg", fake_run_empty_output)
+    dst = tmp_path / "o.webm"
+    dst.write_bytes(b"keep me")
+
+    result = video_ops.convert_one(str(clip), str(dst), container="webm", overwrite=True)
+
+    assert result.success is False
+    assert result.error == "output_not_created"
+    assert dst.read_bytes() == b"keep me"
+
+
+def test_concat_direct_api_rejects_an_input_as_aggregate_output(monkeypatch, clip, tmp_path):
+    second = tmp_path / "second.mp4"
+    second.write_bytes(b"second clip")
+    original = clip.read_bytes()
+    monkeypatch.setattr(video_ops, "probe", lambda path: pytest.fail("must reject before probe"))
+
+    result = video_ops.concat_videos([str(clip), str(second)], str(clip), overwrite=True)
+
+    assert result.success is False
+    assert result.error == "output_collision"
+    assert clip.read_bytes() == original
+
+
 @pytest.mark.parametrize(
     "operation,kwargs,expected_error",
     [

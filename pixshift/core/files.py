@@ -161,8 +161,10 @@ def filter_generated_inputs(
             continue
         if generated_suffix and resolved.stem.endswith(generated_suffix):
             original_stem = resolved.stem[: -len(generated_suffix)]
-            original = resolved.with_name(f"{original_stem}{resolved.suffix}")
-            if original in candidates:
+            if any(
+                candidate.parent == resolved.parent and candidate.stem == original_stem
+                for candidate in candidates
+            ):
                 ignored += 1
                 continue
         if normalized_extension and resolved.suffix.lower() == normalized_extension:
@@ -338,6 +340,20 @@ def validate_unique_output_paths(tasks: Sequence[tuple[str, str]]) -> None:
         destinations[key] = source
 
 
+def validate_aggregate_output_path(inputs: Sequence[str], output: str) -> None:
+    """Reject an aggregate output that aliases any of its source paths.
+
+    Aggregate commands intentionally map several inputs to one destination, so
+    ``validate_unique_output_paths`` does not apply. Replacing one of those
+    inputs after consuming it is still destructive and surprising, even with
+    ``--overwrite``.
+    """
+    output_key = _output_collision_key(output)
+    for input_path in inputs:
+        if _output_collision_key(input_path) == output_key:
+            raise OutputCollisionError(f"aggregate output is also an input: {output}")
+
+
 @contextmanager
 def atomic_output_path(output_path: str) -> Iterator[str]:
     """Yield a same-directory temporary path and atomically replace on success."""
@@ -348,6 +364,8 @@ def atomic_output_path(output_path: str) -> Iterator[str]:
         yield str(temporary)
         if not temporary.is_file():
             raise OSError("encoder did not create its planned output")
+        if temporary.stat().st_size == 0:
+            raise OSError("encoder created an empty output")
         # "rb+" rather than "rb": Windows' os.fsync (_commit) requires a
         # write-capable handle and fails with EBADF on a read-only one —
         # which made every single output write fail on Windows.

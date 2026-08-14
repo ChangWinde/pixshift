@@ -100,3 +100,42 @@ def test_pdf_compress_preserves_soft_masked_image(tmp_path):
     )
     doc.close()
     assert has_soft_masked_image
+
+
+def _pdf_with_colour_key_mask(path):
+    image = Image.new("RGB", (160, 80), (128, 0, 0))
+    for x in range(80, 160):
+        for y in range(80):
+            image.putpixel((x, y), (0, 0, 200))
+    buf = io.BytesIO()
+    image.save(buf, "JPEG", quality=95)
+    doc = fitz.open()
+    page = doc.new_page(width=160, height=80)
+    xref = page.insert_image(page.rect, stream=buf.getvalue())
+    doc.xref_set_key(xref, "Mask", "[120 136 0 255 0 255]")
+    doc.save(path)
+    doc.close()
+
+
+def _transparent_pixels(path) -> int:
+    with fitz.open(path) as doc:
+        pixmap = doc[0].get_pixmap(alpha=True)
+        return sum(alpha < 255 for alpha in pixmap.samples[3::4])
+
+
+def test_pdf_compress_preserves_colour_key_masked_image(tmp_path):
+    src = tmp_path / "masked.pdf"
+    out = tmp_path / "compressed.pdf"
+    _pdf_with_colour_key_mask(src)
+    before = _transparent_pixels(src)
+
+    result = pdf_compress(str(src), str(out), preset="extreme")
+
+    assert result.success, result.error
+    assert result.details["images_replaced"] == 0
+    assert result.details["images_skipped"] == 1
+    assert before > 0
+    assert _transparent_pixels(out) == before
+    with fitz.open(out) as doc:
+        xref = doc[0].get_images(full=True)[0][0]
+        assert doc.xref_get_key(xref, "Mask")[0] != "null"
