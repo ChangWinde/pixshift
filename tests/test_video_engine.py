@@ -57,6 +57,28 @@ def test_build_convert_args_webm_uses_vp9():
     assert "libopus" in args
 
 
+@pytest.mark.parametrize(
+    "policy,expected_codec,expected_bitrate",
+    [
+        ("preserve", "copy", None),
+        ("compatible", "aac", "192000"),
+        ("compact", "aac", "96000"),
+    ],
+)
+def test_audio_policy_is_explicit_in_convert_argv(policy, expected_codec, expected_bitrate):
+    args = build_convert_args("/a/in.mov", "/a/out.mp4", container="mp4", audio_policy=policy)
+    assert args[args.index("-c:a") + 1] == expected_codec
+    if expected_bitrate is None:
+        assert "-b:a" not in args
+    else:
+        assert args[args.index("-b:a") + 1] == expected_bitrate
+
+
+def test_audio_policy_rejects_unknown_value():
+    with pytest.raises(ValueError, match="unsupported_audio_policy:unknown"):
+        build_convert_args("/a/in.mov", "/a/out.mp4", container="mp4", audio_policy="unknown")
+
+
 def test_build_compress_args_crf_override():
     args = build_compress_args("/a/in.mp4", "/a/out.mp4", preset="web", codec="h264", crf=30)
     assert "-crf" in args
@@ -66,7 +88,7 @@ def test_build_compress_args_crf_override():
 def test_build_compress_args_tiny_scales_down():
     args = build_compress_args("/a/in.mp4", "/a/o.mp4", preset="tiny", codec="h264")
     assert "-vf" in args
-    assert "scale='min(1280,iw)':-2" in args
+    assert args[args.index("-vf") + 1] == ("scale='min(1280,iw)':-2,scale=-2:'min(1280,ih)'")
 
 
 def test_build_compress_args_rejects_bad_preset_and_codec():
@@ -82,7 +104,8 @@ def test_build_trim_args_stream_copy_and_reencode():
     assert "-t" in copy_args
     reenc = build_trim_args("/a/in.mp4", "/a/o.mp4", start=1.0, end=6.0, reencode=True)
     assert "libx264" in reenc
-    assert "-to" in reenc
+    assert reenc[reenc.index("-t") + 1] == "5.000"
+    assert "-to" not in reenc
 
 
 def test_build_trim_args_validation():

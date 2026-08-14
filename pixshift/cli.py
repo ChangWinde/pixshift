@@ -17,6 +17,7 @@ from .commands.convert_command import register_convert_command
 from .commands.pdf_commands import register_pdf_commands
 from .commands.system_commands import register_system_commands
 from .commands.transform_commands import register_transform_commands
+from .commands.verify_command import register_verify_command
 from .commands.video_commands import register_video_commands
 from .commands.workflow_commands import register_workflow_commands
 from .converter import _human_size
@@ -75,6 +76,24 @@ class JsonAwareGroup(click.Group):
             if standalone_mode:
                 raise SystemExit(error.exit_code) from None
             raise
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except Exception as error:
+            # JSON is an automation boundary: an unexpected library or OS
+            # exception must not turn into an empty stdout plus traceback.
+            # Keep the classification stable and place volatile diagnostics
+            # (paths, locale text, dependency messages) in ``detail``.
+            emit_json(
+                {
+                    "command": _command_identifier(invocation_args),
+                    "ok": False,
+                    "error": "operation_failed",
+                    "detail": str(error),
+                }
+            )
+            if standalone_mode:
+                raise SystemExit(1) from None
+            return 1
 
         if standalone_mode and isinstance(result, int) and result != 0:
             raise SystemExit(result)
@@ -177,6 +196,12 @@ register_transform_commands(
     human_size=_human_size,
 )
 register_video_commands(
+    cli_group=cli,
+    console=console,
+    mini_logo=MINI_LOGO,
+    human_size=_human_size,
+)
+register_verify_command(
     cli_group=cli,
     console=console,
     mini_logo=MINI_LOGO,

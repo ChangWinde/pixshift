@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from pathlib import Path
 from typing import IO
@@ -18,7 +19,7 @@ from ..ops import hashing as hashing_ops
 from ..ops import inventory as inventory_ops
 from ..ops import prep as prep_ops
 from ..presenters.json_presenters import emit_json, emit_json_and_exit
-from .common import selection_filters_or_exit, selection_options
+from .common import selection_filters_or_exit, selection_options, usage_error_or_exit
 
 _HASH_ALGORITHMS = ["sha256", "sha1", "sha512", "blake2b", "md5"]
 
@@ -84,11 +85,22 @@ def register_agent_commands(
         raw = plan_file.read()
         try:
             steps = apply_ops.load_plan_document(raw)
+        except json.JSONDecodeError as error:
+            usage_error_or_exit(
+                command="apply",
+                as_json=as_json,
+                error="invalid_plan_json",
+                detail=str(error),
+                human_message="计划文件不是有效 JSON。",
+            )
         except ValueError as error:
-            payload = {"command": "apply", "ok": False, "error": str(error)}
-            if as_json:
-                emit_json_and_exit(payload, 1)
-            raise click.ClickException(f"计划文件无效: {error}") from error
+            usage_error_or_exit(
+                command="apply",
+                as_json=as_json,
+                error=str(error),
+                detail=str(error),
+                human_message=f"计划文件无效: {error}",
+            )
 
         result = apply_ops.apply_plans(
             steps,
@@ -107,6 +119,7 @@ def register_agent_commands(
             "skipped": skipped,
             "failed": failed,
             "dry_run": dry_run,
+            "error": result.error,
             "steps": [
                 {
                     "input": step.input_path,
@@ -123,7 +136,7 @@ def register_agent_commands(
         }
         if as_json:
             if not result.ok:
-                emit_json_and_exit(payload, 1)
+                emit_json_and_exit(payload, 2 if result.rejected else 1)
             emit_json(payload)
             return
         console.print(f"\n{mini_logo} [bold]计划执行[/bold]\n")
@@ -150,7 +163,7 @@ def register_agent_commands(
             console.print(f"[dim]... 还有 {len(result.steps) - 50} 个步骤[/dim]")
         console.print()
         if not result.ok:
-            raise click.exceptions.Exit(1)
+            raise click.exceptions.Exit(2 if result.rejected else 1)
 
     @cli_group.command("prep")
     @click.argument("inputs", nargs=-1, required=True, type=click.Path(exists=True))
@@ -184,6 +197,12 @@ def register_agent_commands(
         help="编码质量；默认 high",
     )
     @click.option("--keep-metadata", is_flag=True, default=False, help="保留元数据（默认隐私清理）")
+    @click.option(
+        "--color-space",
+        default="srgb",
+        type=click.Choice(["preserve", "srgb"], case_sensitive=False),
+        help="色彩策略；交付默认转换并嵌入 sRGB",
+    )
     @click.option("-r", "--recursive", is_flag=True, default=False, help="递归处理目录")
     @click.option("--overwrite", is_flag=True, default=False, help="覆盖已存在输出")
     @click.option("--dry-run", is_flag=True, default=False, help="仅预览")
@@ -198,6 +217,7 @@ def register_agent_commands(
         max_size: int,
         quality: str,
         keep_metadata: bool,
+        color_space: str,
         recursive: bool,
         overwrite: bool,
         dry_run: bool,
@@ -217,6 +237,7 @@ def register_agent_commands(
             overwrite=overwrite,
             dry_run=dry_run,
             strip_privacy=not keep_metadata,
+            color_space=color_space.lower(),
             selection=selection_filters_or_exit(
                 command="prep",
                 as_json=as_json,

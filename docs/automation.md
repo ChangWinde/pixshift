@@ -66,6 +66,7 @@ pixshift optimize ./media -r --json | pixshift apply --plan - -o ./out --json
 pixshift hash ./out -r --json        # 内容哈希，用于前后审计
 pixshift manifest ./out -r --json    # 清单：尺寸、格式、帧数、敏感 EXIF 概览
 pixshift compare a.jpg b.jpg --json  # 两图画质对比
+pixshift verify a.jpg out.webp --min-ssim 0.99 --json  # 跨媒体质量门
 ```
 
 ## 一步到位的交付流程
@@ -73,10 +74,10 @@ pixshift compare a.jpg b.jpg --json  # 两图画质对比
 如果需求是「把素材整理成可交付资产」，不必自己拼装上面四步：
 
 ```bash
-pixshift prep ./raw -o ./deliver --max-size 2048 -t webp --json
+pixshift prep ./raw -r -o ./deliver --max-size 2048 -t webp --json
 ```
 
-`prep` 一次完成限宽缩放、格式转换、隐私元数据清理，并为每个产物给出 SHA-256。默认清理隐私元数据，需要保留时加 `--keep-metadata`。
+`prep` 一次完成限宽缩放、格式转换、隐私元数据清理，并为每个产物给出 SHA-256。默认清理隐私元数据并转换/嵌入 sRGB；需要保留时分别加 `--keep-metadata`、`--color-space preserve`。
 
 ## 幂等与重复执行
 
@@ -96,7 +97,7 @@ SRC=${1:?用法: prepare.sh <素材目录>}
 pixshift doctor --json > doctor.json
 
 # 生成可交付资产并留存清单
-pixshift prep "$SRC" -o ./deliver --max-size 2048 -t webp --json > prep.json
+pixshift prep "$SRC" -r -o ./deliver --max-size 2048 -t webp --json > prep.json
 
 # 交付前核对：所有产物的内容哈希
 pixshift hash ./deliver -r --json > deliver-hashes.json

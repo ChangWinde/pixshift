@@ -41,6 +41,7 @@ COMMAND_SCHEMAS = {
     "prep": "prep.json",
     "manifest": "manifest.json",
     "hash": "hash.json",
+    "verify": "verify.json",
 }
 
 

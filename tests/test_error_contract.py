@@ -46,6 +46,7 @@ USAGE_CASES = [
     (["resize", "{src}", "--percent", "50", "--max-size", "100"], "conflicting_options"),
     (["resize", "{src}", "--size", "bogus"], "invalid_size"),
     (["rotate", "{src}"], "nothing_to_do"),
+    (["crop", "{src}", "--aspect", "0:1"], "invalid_aspect_ratio"),
 ]
 
 
@@ -98,3 +99,21 @@ def test_watermark_failures_use_object_errors(runner, corrupt):
     entry = json.loads(result.output)["errors"][0]
     assert set(entry) == {"input", "output", "error"}
     assert entry["input"] == str(corrupt)
+
+
+def test_unexpected_json_exception_stays_on_the_json_channel(runner, still, monkeypatch):
+    from pixshift.commands import advanced_commands
+
+    monkeypatch.setattr(
+        advanced_commands.compare_ops,
+        "compare",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("controlled disk fault")),
+    )
+
+    result = runner.invoke(cli, ["compare", str(still), str(still), "--json"])
+
+    assert result.exit_code == 1
+    assert result.stderr == ""
+    payload = json.loads(result.output)
+    assert payload["error"] == "operation_failed"
+    assert payload["detail"] == "controlled disk fault"

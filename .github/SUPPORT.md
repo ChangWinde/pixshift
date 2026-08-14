@@ -3,7 +3,7 @@
 ## Usage Help
 
 - Read `README.md` for common workflows.
-- Read `docs/COMMANDS.md` for complete command reference.
+- Read the user manual in `docs/images.md`, `docs/pdf.md`, and `docs/video.md`.
 - Use `pixshift --help` and command-specific `--help`.
 - Review `docs/JSON_OUTPUT.md` for automation usage.
 
@@ -23,4 +23,3 @@ Please use the Feature Request issue template and describe:
 - problem statement,
 - expected command UX,
 - expected output.
-

@@ -1,11 +1,12 @@
 """Canonical image metadata and visual-orientation helpers."""
 
+import io
 import os
 import re
 from contextlib import suppress
 from typing import Any
 
-from PIL import Image, ImageOps
+from PIL import Image, ImageCms, ImageOps, ImageSequence
 
 from .errors import AnimatedInputNotSupportedError, ImageTooLargeError
 
@@ -18,6 +19,7 @@ ORIENTATION_TAG = 274
 # reported as `image_too_large`. 120 megapixels still admits current 100MP
 # medium-format photos while bounding one decoded RGB frame to roughly 360 MB.
 DEFAULT_MAX_IMAGE_PIXELS = 120_000_000
+DEFAULT_FRAME_DURATION_MS = 100
 
 
 def max_image_pixels() -> int:
@@ -120,7 +122,53 @@ def image_has_transparency(image: Image.Image) -> bool:
     Returns:
         ``True`` for explicit alpha channels and indexed transparency metadata.
     """
-    return "A" in image.getbands() or "transparency" in image.info
+    # LAB names its chroma channels ``A`` and ``B``; checking band names alone
+    # therefore misclassifies every LAB image as transparent. Pillow's alpha-
+    # bearing modes are explicit, while palette transparency lives in info.
+    return image.mode in {"RGBA", "RGBa", "LA", "La", "PA"} or (
+        image.mode == "P" and "transparency" in image.info
+    )
+
+
+def extract_animation(
+    image: Image.Image,
+) -> tuple[list[Image.Image], list[int], int | None, Image.Image | None]:
+    """Copy the semantic playback frames, timings, loop value, and optional poster.
+
+    APNG counts a non-playing default image in ``n_frames`` while GIF and WebP
+    do not. Centralising that distinction keeps conversion and verification
+    from disagreeing about the same animation. A missing loop value is retained
+    as ``None`` here; callers can use :func:`normalized_animation_loop` when
+    comparing playback semantics across formats.
+    """
+    default_duration = int(image.info.get("duration") or DEFAULT_FRAME_DURATION_MS)
+    if default_duration <= 0:
+        default_duration = DEFAULT_FRAME_DURATION_MS
+    has_default_image = bool(image.info.get("default_image"))
+    loop_value = image.info.get("loop")
+    frames: list[Image.Image] = []
+    durations: list[int] = []
+    default_frame: Image.Image | None = None
+    total_pixels = 0
+    for index, frame in enumerate(ImageSequence.Iterator(image)):
+        ensure_within_pixel_limit(frame)
+        total_pixels += int(frame.width) * int(frame.height)
+        ensure_pixel_count_within_limit(total_pixels)
+        # copy() forces load(); some decoders only expose timing after load.
+        copied = frame.copy()
+        if has_default_image and index == 0:
+            default_frame = copied
+            continue
+        duration = int(copied.info.get("duration") or default_duration)
+        durations.append(duration if duration > 0 else default_duration)
+        frames.append(copied)
+    loop = int(loop_value) if loop_value is not None else None
+    return frames, durations, loop, default_frame
+
+
+def normalized_animation_loop(loop: int | None) -> int:
+    """Return a cross-format playback-loop value (missing means play once)."""
+    return 1 if loop is None else loop
 
 
 def flatten_transparency(
@@ -142,6 +190,94 @@ def flatten_transparency(
     flattened.info.update(image.info)
     flattened.info.pop("transparency", None)
     return flattened
+
+
+def convert_color_to_rgb(image: Image.Image) -> Image.Image:
+    """Convert CMYK/LAB pixels to RGB without relabelling their ICC profile.
+
+    A valid embedded source profile is transformed through LittleCMS and replaced
+    with an sRGB profile. Missing or invalid profiles fall back to Pillow's numeric
+    conversion and deliberately drop the stale source profile.
+    """
+    if image.mode not in {"CMYK", "YCCK", "LAB"}:
+        return image
+
+    source_info = {key: value for key, value in image.info.items() if key != "icc_profile"}
+    profile_bytes = image.info.get("icc_profile")
+    converted: Image.Image
+    output_profile: bytes | None = None
+    if profile_bytes:
+        try:
+            source_profile = ImageCms.ImageCmsProfile(io.BytesIO(profile_bytes))
+            destination_profile = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB"))
+            transformed = ImageCms.profileToProfile(
+                image,
+                source_profile,
+                destination_profile,
+                outputMode="RGB",
+            )
+            if transformed is None:  # Pillow typing permits an in-place result.
+                raise OSError("icc_transform_failed")
+            converted = transformed
+            output_profile = destination_profile.tobytes()
+        except (OSError, TypeError, ValueError):
+            converted = image.convert("RGB")
+    else:
+        converted = image.convert("RGB")
+
+    converted.info.update(source_info)
+    converted.info.pop("icc_profile", None)
+    if output_profile:
+        converted.info["icc_profile"] = output_profile
+    return converted
+
+
+def convert_color_to_srgb(image: Image.Image) -> Image.Image:
+    """Convert pixels to the sRGB colour space and attach an sRGB profile.
+
+    Untagged inputs are interpreted as already using sRGB, which matches the
+    de-facto browser and Pillow convention. A tagged input is transformed via
+    LittleCMS. Unlike the compatibility conversion above, an invalid embedded
+    profile is a stable error: silently treating those pixels as sRGB would
+    relabel colours rather than convert them.
+    """
+    source_info = {
+        key: value
+        for key, value in image.info.items()
+        if key not in {"icc_profile", "transparency"}
+    }
+    profile_bytes = image.info.get("icc_profile")
+    destination_profile = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB"))
+    alpha = image.convert("RGBA").getchannel("A") if image_has_transparency(image) else None
+
+    if profile_bytes:
+        try:
+            source_profile = ImageCms.ImageCmsProfile(io.BytesIO(profile_bytes))
+            source_pixels = (
+                image
+                if image.mode in {"RGB", "CMYK", "LAB"} and alpha is None
+                else image.convert("RGB")
+            )
+            transformed = ImageCms.profileToProfile(
+                source_pixels,
+                source_profile,
+                destination_profile,
+                outputMode="RGB",
+            )
+            if transformed is None:
+                raise OSError("icc_transform_failed")
+            converted = transformed
+        except (OSError, TypeError, ValueError) as error:
+            raise ValueError("invalid_icc_profile") from error
+    else:
+        converted = image.convert("RGB")
+
+    if alpha is not None:
+        converted.putalpha(alpha)
+    converted.info.update(source_info)
+    converted.info.pop("transparency", None)
+    converted.info["icc_profile"] = destination_profile.tobytes()
+    return converted
 
 
 def normalize_orientation(image: Image.Image) -> Image.Image:

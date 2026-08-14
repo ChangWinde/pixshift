@@ -18,7 +18,10 @@ from typing import Any
 from PIL import Image, ImageStat
 
 from .converter import _human_size
+from .core.errors import AnimatedInputNotSupportedError
 from .core.metadata import (
+    convert_color_to_rgb,
+    ensure_pixel_count_within_limit,
     ensure_within_pixel_limit,
     flatten_transparency,
     image_frame_count,
@@ -88,6 +91,8 @@ def _detect_image_type(img: Image.Image) -> tuple[str, str]:
     # 统一为可见 RGB 像素，避免透明调色板索引影响内容分类。
     if image_has_transparency(img):
         analyze_img = flatten_transparency(img)
+    elif img.mode in {"CMYK", "YCCK", "LAB"}:
+        analyze_img = convert_color_to_rgb(img)
     elif img.mode != "RGB":
         analyze_img = img.convert("RGB")
     else:
@@ -194,6 +199,8 @@ def analyze_image(input_path: str) -> OptimizeResult:
             ensure_within_pixel_limit(source)
             frame_total = image_frame_count(source)
             if frame_total > 1:
+                if source.format == "TIFF":
+                    raise AnimatedInputNotSupportedError()
                 _analyze_animation(result, source, frame_total)
                 result.duration = time.time() - start_time
                 return result
@@ -340,6 +347,7 @@ def _analyze_animation(result: OptimizeResult, source: Image.Image, frame_total:
     re-encoding it would only lose quality.
     """
     result.width, result.height = source.size
+    ensure_pixel_count_within_limit(int(source.width) * int(source.height) * frame_total)
     result.has_alpha = image_has_transparency(source)
     result.image_type = "animation"
     result.image_type_reason = f"{frame_total} 帧动画"
@@ -366,6 +374,8 @@ def _estimate_format(
     est = FormatEstimate()
 
     save_img = img
+    if save_img.mode in {"CMYK", "YCCK", "LAB"}:
+        save_img = convert_color_to_rgb(save_img)
     if format_name == "JPEG" and image_has_transparency(save_img):
         save_img = flatten_transparency(save_img)
     elif format_name == "JPEG" and save_img.mode not in ("RGB", "L"):

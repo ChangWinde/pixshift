@@ -298,6 +298,7 @@ def register_transform_commands(
     @click.option("-o", "--output", "output_dir", default=None, type=click.Path(), help="输出目录")
     @click.option("-r", "--recursive", is_flag=True, default=False, help="递归处理目录")
     @click.option("--overwrite", is_flag=True, default=False, help="覆盖已存在输出")
+    @click.option("--dry-run", is_flag=True, default=False, help="仅预览")
     @click.option(
         "--json", "as_json", is_flag=True, default=False, help="以 JSON 输出结果（适合脚本调用）"
     )
@@ -309,6 +310,7 @@ def register_transform_commands(
         output_dir: str | None,
         recursive: bool,
         overwrite: bool,
+        dry_run: bool,
         include_globs: tuple[str, ...],
         exclude_globs: tuple[str, ...],
         min_file_size: str | None,
@@ -363,6 +365,33 @@ def register_transform_commands(
         validate_tasks_or_exit(command="rotate", as_json=as_json, tasks=tasks)
         all_tasks = tasks
         tasks, skipped_tasks = partition_existing_outputs(tasks, overwrite=overwrite)
+
+        if dry_run:
+            skipped_outputs = {output for _, output in skipped_tasks}
+            payload = {
+                "command": "rotate",
+                "ok": True,
+                "mode": "dry_run",
+                "total": len(all_tasks),
+                "pending": len(tasks),
+                "skipped": len(skipped_tasks),
+                "ignored_generated": ignored_generated,
+                "degrees": degrees,
+                "flip": flip or "",
+                "preview": [
+                    {
+                        "input": input_path,
+                        "output": output_path,
+                        "action": "skip_existing" if output_path in skipped_outputs else "rotate",
+                    }
+                    for input_path, output_path in all_tasks
+                ],
+            }
+            if as_json:
+                emit_json(payload)
+            else:
+                console.print(f"将旋转 {len(tasks)} 个文件，跳过 {len(skipped_tasks)} 个既有输出。")
+            return
 
         if output_dir:
             os.makedirs(output_dir, exist_ok=True)

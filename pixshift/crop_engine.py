@@ -19,6 +19,7 @@ from PIL import Image, ImageChops
 from .converter import SUPPORTED_INPUT_FORMATS
 from .core.files import SelectionFilters, atomic_output_path, collect_supported_files
 from .core.metadata import (
+    convert_color_to_rgb,
     ensure_static_image,
     flatten_transparency,
     image_has_transparency,
@@ -168,7 +169,7 @@ def crop_single(
                 return result
 
             result.cropped_size = cropped.size
-            _save_cropped(cropped, output_path, img, original_format)
+            _save_cropped(cropped, output_path, img, original_format, overwrite=overwrite)
 
         result.output_size = os.path.getsize(output_path)
         result.success = True
@@ -232,21 +233,18 @@ def _auto_trim(
 
     使用图片四角的颜色作为背景色参考
     """
-    if img.mode in ("RGBA", "LA"):
-        # 有 Alpha 通道，检测透明区域
-        bg = Image.new(img.mode, img.size, (0, 0, 0, 0))
+    if "A" in img.getbands():
+        # Alpha is the visibility oracle. Converting an RGBA difference to L
+        # discards alpha and makes opaque black content indistinguishable from
+        # transparent black padding.
+        diff = img.getchannel("A")
     else:
         # 使用左上角像素作为背景色
         bg_color = img.getpixel((0, 0))
         bg = Image.new(img.mode, img.size, bg_color)
-
-    diff = ImageChops.difference(img, bg)
-
-    if diff.mode in ("RGBA",):
-        # 转为灰度来找边界
-        diff = diff.convert("L")
-    elif diff.mode in ("RGB",):
-        diff = diff.convert("L")
+        diff = ImageChops.difference(img, bg)
+        if diff.mode == "RGB":
+            diff = diff.convert("L")
 
     # 应用容差
     if fuzz > 0:
@@ -275,17 +273,24 @@ def _save_cropped(
     output_path: str,
     original: Image.Image,
     original_format: str | None,
+    *,
+    overwrite: bool,
 ) -> None:
     """保存裁剪后的图片，保持原格式和质量"""
     ext = Path(output_path).suffix.lower()
 
     save_kwargs: dict[str, Any] = {}
 
+    if cropped.mode in {"CMYK", "YCCK", "LAB"} and ext not in {".tiff", ".tif"}:
+        cropped = convert_color_to_rgb(cropped)
+
     if ext in (".jpg", ".jpeg"):
         if image_has_transparency(cropped):
             cropped = flatten_transparency(cropped)
         elif cropped.mode not in ("RGB", "L"):
-            cropped = cropped.convert("RGB")
+            cropped = convert_color_to_rgb(cropped)
+            if cropped.mode not in ("RGB", "L"):
+                cropped = cropped.convert("RGB")
         save_kwargs = {"format": "JPEG", "quality": 95, "optimize": True}
     elif ext == ".png":
         save_kwargs = {"format": "PNG", "optimize": True}
@@ -306,13 +311,13 @@ def _save_cropped(
         pass
 
     try:
-        icc = original.info.get("icc_profile")
+        icc = cropped.info.get("icc_profile")
         if icc:
             save_kwargs["icc_profile"] = icc
     except Exception:
         pass
 
-    with atomic_output_path(output_path) as temporary:
+    with atomic_output_path(output_path, overwrite=overwrite) as temporary:
         cropped.save(temporary, **save_kwargs)
 
 

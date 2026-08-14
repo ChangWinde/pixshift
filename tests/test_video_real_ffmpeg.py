@@ -16,6 +16,7 @@ import pytest
 from click.testing import CliRunner
 
 from pixshift.cli import cli
+from pixshift.verify_engine import verify_media
 
 pytestmark = pytest.mark.skipif(
     shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None,
@@ -228,6 +229,68 @@ def test_concat_stream_copy_sums_durations(clips, tmp_path):
     )
     duration = float(json.loads(probe.stdout)["format"]["duration"])
     assert 3.4 <= duration <= 4.6
+
+
+def test_verify_audio_snr_uses_the_unscaled_residual(tmp_path):
+    """A 19% level loss is about 14.4 dB SNR and must fail the 20 dB gate."""
+    source = tmp_path / "source.mkv"
+    candidate = tmp_path / "candidate.mkv"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=black:size=64x64:rate=10:duration=1",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:sample_rate=48000:duration=1",
+            "-c:v",
+            "ffv1",
+            "-c:a",
+            "pcm_s16le",
+            "-shortest",
+            str(source),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            str(source),
+            "-map",
+            "0:v:0",
+            "-map",
+            "0:a:0",
+            "-c:v",
+            "copy",
+            "-af",
+            "volume=0.81",
+            "-c:a",
+            "pcm_s16le",
+            str(candidate),
+        ],
+        check=True,
+        capture_output=True,
+    )
+
+    result = verify_media(str(source), str(candidate))
+
+    assert result.success is True
+    assert result.passed is False
+    assert result.checks["audio_content"] is False
+    assert result.observations["audio_snr_db"] == pytest.approx(14.4249, abs=0.15)
 
 
 def test_concat_rejects_mismatched_then_reencodes(clips, tmp_path):

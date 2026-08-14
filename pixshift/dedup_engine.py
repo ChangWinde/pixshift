@@ -9,14 +9,17 @@ PixShift Dedup Engine — 图片哈希去重
   - 相似度阈值可调
 """
 
+import errno
 import hashlib
 import os
 import shutil
 import stat
+import tempfile
 import time
 from collections import defaultdict
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -415,6 +418,63 @@ def _backup_destination(source: str, backup_dir: str) -> Path:
     return target
 
 
+def _publish_backup_no_clobber(source: Path, backup_dir: str) -> Path:
+    """Publish an isolated duplicate under a collision-free backup name.
+
+    Hard-link publication is atomic on the common same-filesystem path. The
+    exclusive-create fallback keeps the same no-clobber guarantee across
+    filesystems, where ``shutil.move`` would otherwise overwrite a race winner.
+    """
+    origin = Path(source)
+    backup = Path(backup_dir)
+    index = 0
+    while True:
+        suffix = "" if index == 0 else f"_{index}"
+        destination = backup / f"{origin.stem}{suffix}{origin.suffix}"
+        try:
+            os.link(source, destination, follow_symlinks=False)
+        except FileExistsError:
+            index += 1
+            continue
+        except OSError as error:
+            if error.errno != getattr(errno, "EXDEV", 18):
+                raise
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+            try:
+                descriptor = os.open(destination, flags, stat.S_IMODE(source.stat().st_mode))
+            except FileExistsError:
+                index += 1
+                continue
+            try:
+                with source.open("rb") as incoming, os.fdopen(descriptor, "wb") as outgoing:
+                    shutil.copyfileobj(incoming, outgoing, 1024 * 1024)
+                    outgoing.flush()
+                    os.fsync(outgoing.fileno())
+                if _sha256_file(str(destination)) != _sha256_file(str(source)):
+                    raise OSError("backup_verification_failed")
+            except Exception:
+                destination.unlink(missing_ok=True)
+                raise
+        source.unlink()
+        return destination
+
+
+def _restore_isolated_no_clobber(isolated: Path, original: Path) -> bool:
+    """Restore an isolated file without overwriting a concurrent replacement."""
+    if os.name == "nt":
+        try:
+            os.rename(isolated, original)
+        except FileExistsError:
+            return False
+        return True
+    try:
+        os.link(isolated, original, follow_symlinks=False)
+    except FileExistsError:
+        return False
+    isolated.unlink()
+    return True
+
+
 def delete_duplicates(
     candidates: list[DeleteCandidate],
     dry_run: bool = True,
@@ -440,7 +500,11 @@ def delete_duplicates(
     kept = set()
 
     if backup_dir and not dry_run:
-        Path(backup_dir).mkdir(parents=True, exist_ok=True)
+        try:
+            Path(backup_dir).mkdir(parents=True, exist_ok=True)
+        except OSError as error:
+            result["errors"].append(f"{backup_dir}: {error}")
+            return result
 
     for candidate in candidates:
         kept.add(candidate.keep)
@@ -454,20 +518,50 @@ def delete_duplicates(
                     f"{candidate.duplicate}: file changed or is no longer byte-identical"
                 )
                 continue
-            if not _still_the_same_object(candidate.duplicate, identity):
-                result["skipped"].append(
-                    f"{candidate.duplicate}: file was replaced after verification"
-                )
-                continue
-            if backup_dir:
-                destination = _backup_destination(candidate.duplicate, backup_dir)
-                # move, not copy+unlink: the duplicate must never exist twice
-                # nor vanish if the write fails halfway.
-                shutil.move(candidate.duplicate, str(destination))
-                result["deleted"].append(f"{candidate.duplicate} -> {destination}")
-            else:
-                os.remove(candidate.duplicate)
-                result["deleted"].append(candidate.duplicate)
+            duplicate = Path(candidate.duplicate)
+            isolation_dir = Path(tempfile.mkdtemp(prefix=".pixshift-delete-", dir=duplicate.parent))
+            isolated = isolation_dir / duplicate.name
+            keep_isolation = False
+            try:
+                # Rename first, then verify the object now under our private
+                # name. A race can make us isolate a replacement, but can no
+                # longer make us delete it after the identity check.
+                os.rename(duplicate, isolated)
+                if (
+                    _file_identity(str(isolated)) != identity
+                    or _verified_identity(str(isolated), candidate) != identity
+                ):
+                    restored = _restore_isolated_no_clobber(isolated, duplicate)
+                    keep_isolation = not restored
+                    message = f"{candidate.duplicate}: file was replaced after verification"
+                    if not restored:
+                        message += f"; preserved at {isolated}"
+                    result["skipped"].append(message)
+                    continue
+                if backup_dir:
+                    destination = _publish_backup_no_clobber(isolated, backup_dir)
+                    result["deleted"].append(f"{candidate.duplicate} -> {destination}")
+                else:
+                    isolated.unlink()
+                    result["deleted"].append(candidate.duplicate)
+            except Exception as error:
+                message = f"{candidate.duplicate}: {error}"
+                if isolated.exists():
+                    try:
+                        restored = _restore_isolated_no_clobber(isolated, duplicate)
+                    except OSError as restore_error:
+                        restored = False
+                        message += f"; restore failed: {restore_error}"
+                    if restored:
+                        message += "; restored to original path"
+                    else:
+                        keep_isolation = True
+                        message += f"; preserved at {isolated}"
+                result["errors"].append(message)
+            finally:
+                if not keep_isolation:
+                    with suppress(OSError):
+                        isolation_dir.rmdir()
         except Exception as e:
             result["errors"].append(f"{candidate.duplicate}: {e}")
 

@@ -22,8 +22,11 @@ from .core.files import (
     plan_output_path,
 )
 from .core.metadata import (
+    convert_color_to_rgb,
+    convert_color_to_srgb,
     ensure_pixel_count_within_limit,
     ensure_within_pixel_limit,
+    extract_animation,
     flatten_transparency,
     image_frame_count,
     image_has_transparency,
@@ -34,14 +37,14 @@ from .core.metadata import (
 
 try:
     import pillow_heif
-    from PIL import ExifTags, Image, ImageFile, ImageSequence
+    from PIL import ExifTags, Image, ImageFile
 
     pillow_heif.register_heif_opener()
     HEIF_SUPPORT = True
 except ImportError:
     HEIF_SUPPORT = False
     try:
-        from PIL import ExifTags, Image, ImageFile, ImageSequence
+        from PIL import ExifTags, Image, ImageFile
     except ImportError:
         print("请先安装 Pillow: pip install Pillow")
         sys.exit(1)
@@ -113,25 +116,9 @@ FORMAT_ALIASES = {
 # 其余格式保持稳定报错，绝不静默丢帧。
 ANIMATED_OUTPUT_FORMATS = {"webp", "gif", "png"}
 
-_DEFAULT_FRAME_DURATION_MS = 100
-
 # 能够存储 CMYK 像素的输出格式（已按 FORMAT_ALIASES 归一化）。
 _CMYK_CAPABLE = {"jpg", "jpeg", "tiff", "tif", "pdf"}
-
-
-def _color_family(mode: str) -> str:
-    """Group a Pillow mode into an ICC-compatible colour family.
-
-    An embedded ICC profile describes one colour space; once the pixels move
-    to another family (notably CMYK -> RGB) the profile is meaningless and
-    must be dropped. RGB/RGBA/L/P all share device-RGB handling, so flatten or
-    palette changes keep the profile valid.
-    """
-    if mode in ("CMYK", "YCCK"):
-        return "cmyk"
-    if mode == "LAB":
-        return "lab"
-    return "rgb"
+_LAB_CAPABLE = {"tiff", "tif"}
 
 
 # 每种输出格式的最佳质量参数
@@ -238,6 +225,7 @@ class PixShiftConverter:
         strip_alpha: bool = False,
         background_color: tuple[int, int, int] = (255, 255, 255),
         auto_orient: bool = True,
+        color_space: str = "preserve",
     ):
         if quality not in QUALITY_PRESETS:
             raise ValueError(f"unsupported_quality_preset: {quality}")
@@ -252,6 +240,8 @@ class PixShiftConverter:
             raise ValueError("resize_percent_must_be_positive_and_finite")
         if max_size is not None and max_size <= 0:
             raise ValueError("max_size_must_be_positive")
+        if color_space not in {"preserve", "srgb"}:
+            raise ValueError(f"unsupported_color_space:{color_space}")
         self.quality = quality
         self.resize = resize
         self.resize_percent = resize_percent
@@ -262,6 +252,7 @@ class PixShiftConverter:
         self.strip_alpha = strip_alpha
         self.background_color = background_color
         self.auto_orient = auto_orient
+        self.color_space = color_space
 
     def get_save_params(self, fmt: str) -> dict[str, Any]:
         """获取指定格式和质量等级的保存参数"""
@@ -295,14 +286,19 @@ class PixShiftConverter:
 
         # 调整大小
         if self.resize:
+            ensure_pixel_count_within_limit(int(self.resize[0]) * int(self.resize[1]))
             img = img.resize(self.resize, Image.Resampling.LANCZOS)
         elif self.resize_percent:
             w, h = img.size
             new_w = max(1, int(w * self.resize_percent / 100))
             new_h = max(1, int(h * self.resize_percent / 100))
+            ensure_pixel_count_within_limit(new_w * new_h)
             img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
         elif self.max_size:
             img.thumbnail((self.max_size, self.max_size), Image.Resampling.LANCZOS)
+
+        if self.color_space == "srgb":
+            img = convert_color_to_srgb(img)
 
         # 处理 Alpha 通道
         output_fmt_lower = output_fmt.lower()
@@ -311,13 +307,23 @@ class PixShiftConverter:
         if output_fmt_lower in no_alpha_formats or self.strip_alpha:
             if image_has_transparency(img):
                 img = flatten_transparency(img, self.background_color)
-            elif img.mode not in ("RGB", "L"):
-                img = img.convert("RGB")
+            elif (
+                img.mode not in ("RGB", "L")
+                and not (img.mode in {"CMYK", "YCCK"} and output_fmt_lower in _CMYK_CAPABLE)
+                and not (img.mode == "LAB" and output_fmt_lower in _LAB_CAPABLE)
+            ):
+                img = (
+                    convert_color_to_rgb(img)
+                    if img.mode in {"CMYK", "YCCK", "LAB"}
+                    else img.convert("RGB")
+                )
 
         # 只有 JPEG/TIFF/PDF 能存 CMYK；其余格式（PNG/WEBP/HEIC…）直接保存
         # CMYK 会失败，需先转 RGB。
         if img.mode in ("CMYK", "YCCK") and output_fmt_lower not in _CMYK_CAPABLE:
-            img = img.convert("RGB")
+            img = convert_color_to_rgb(img)
+        if img.mode == "LAB" and output_fmt_lower not in _LAB_CAPABLE:
+            img = convert_color_to_rgb(img)
 
         return img, orientation_normalized
 
@@ -332,14 +338,18 @@ class PixShiftConverter:
         animations are undefined in practice, and rotating frames against
         inconsistent per-frame EXIF would corrupt the stream.
         """
+        if self.color_space == "srgb":
+            frame = convert_color_to_srgb(frame)
         if frame.mode not in ("RGB", "RGBA"):
             frame = frame.convert("RGBA" if image_has_transparency(frame) else "RGB")
         if self.resize:
+            ensure_pixel_count_within_limit(int(self.resize[0]) * int(self.resize[1]))
             frame = frame.resize(self.resize, Image.Resampling.LANCZOS)
         elif self.resize_percent:
             width, height = frame.size
             new_width = max(1, int(width * self.resize_percent / 100))
             new_height = max(1, int(height * self.resize_percent / 100))
+            ensure_pixel_count_within_limit(new_width * new_height)
             frame = frame.resize((new_width, new_height), Image.Resampling.LANCZOS)
         elif self.max_size:
             frame.thumbnail((self.max_size, self.max_size), Image.Resampling.LANCZOS)
@@ -351,15 +361,22 @@ class PixShiftConverter:
         self,
         frames: list[Image.Image],
         durations: list[int],
-        loop: int,
+        loop: int | None,
         output_fmt: str,
         output_path: str,
+        default_frame: Image.Image | None = None,
     ) -> None:
         """Encode a multi-frame image preserving frames, timing, and loop."""
         processed = [self._process_animation_frame(frame) for frame in frames]
+        processed_default = (
+            self._process_animation_frame(default_frame)
+            if default_frame is not None and output_fmt == "png"
+            else None
+        )
 
         save_params = self.get_save_params(output_fmt)
-        first = processed[0]
+        first = processed_default if processed_default is not None else processed[0]
+        appended = processed if processed_default is not None else processed[1:]
         exif_bytes = None
         if self.keep_exif:
             try:
@@ -367,7 +384,7 @@ class PixShiftConverter:
             except Exception:
                 exif_bytes = None
         icc_profile = first.info.get("icc_profile") if self.keep_icc else None
-        for frame in processed:
+        for frame in [first, *appended]:
             # 同静态路径：编码器会从 info 回捞元数据，清洗必须显式删除。
             frame.info.pop("exif", None)
             frame.getexif().clear()
@@ -381,15 +398,26 @@ class PixShiftConverter:
 
         save_params.update(
             save_all=True,
-            append_images=processed[1:],
+            append_images=appended,
             duration=durations,
-            loop=loop,
         )
+        if output_fmt == "gif" and any(duration % 10 for duration in durations):
+            # GIF stores delays in centiseconds. Rounding each frame would
+            # silently change animation rhythm and can accumulate large drift.
+            raise ValueError("animation_timing_not_representable:gif")
+        if processed_default is not None:
+            save_params["default_image"] = True
+        if loop is not None:
+            save_params["loop"] = loop
+        elif output_fmt != "gif":
+            # GIF without a loop extension plays once. WebP/APNG encoders default
+            # to 0 (infinite), so spell out the equivalent single play.
+            save_params["loop"] = 1
         if output_fmt == "gif":
             # Full-frame replacement disposal: frames were composited on
             # decode, so carrying over partial-frame disposal would smear.
             save_params["disposal"] = 2
-        with atomic_output_path(output_path) as temporary:
+        with atomic_output_path(output_path, overwrite=self.overwrite) as temporary:
             first.save(temporary, **save_params)
 
     def convert_single(self, input_path: str, output_path: str) -> ConvertResult:
@@ -423,18 +451,21 @@ class PixShiftConverter:
             output_fmt = FORMAT_ALIASES.get(output_fmt, output_fmt)
 
             # 打开图片并复制到内存，避免覆盖源文件时依赖惰性文件句柄。
-            animation: tuple[list[Image.Image], list[int], int] | None = None
+            animation: (
+                tuple[list[Image.Image], list[int], int | None, Image.Image | None] | None
+            ) = None
             with open_image(input_path) as opened:
                 # Checked before any pixel is decoded: convert is the one path
                 # that also accepts animations, so it cannot rely on
                 # ensure_static_image for the pixel budget.
                 ensure_within_pixel_limit(opened)
                 result.width, result.height = opened.size
-                source_mode = opened.mode
                 if image_frame_count(opened) > 1:
+                    if opened.format == "TIFF":
+                        raise AnimatedInputNotSupportedError()
                     if output_fmt not in ANIMATED_OUTPUT_FORMATS:
                         raise AnimatedInputNotSupportedError()
-                    animation = _extract_animation(opened)
+                    animation = extract_animation(opened)
                 else:
                     img = opened.copy()
                     img.info.update(opened.info)
@@ -443,8 +474,15 @@ class PixShiftConverter:
                 # Save only after the source handle is closed: Windows cannot
                 # atomically replace a file that is still open, so an in-place
                 # --overwrite re-encode would fail there.
-                frames, durations, loop = animation
-                self._save_animated(frames, durations, loop, output_fmt, output_path)
+                frames, durations, loop, default_frame = animation
+                self._save_animated(
+                    frames,
+                    durations,
+                    loop,
+                    output_fmt,
+                    output_path,
+                    default_frame,
+                )
                 result.output_size = os.path.getsize(output_path)
                 result.success = True
                 result.duration = time.time() - start_time
@@ -466,10 +504,8 @@ class PixShiftConverter:
                     )
                 except Exception:
                     exif_bytes = None
-            # CMYK→RGB 之类的色彩模型变换会让内嵌 ICC 失效，必须丢弃。
-            color_space_changed = _color_family(source_mode) != _color_family(img.mode)
             icc_profile = None
-            if self.keep_icc and not color_space_changed:
+            if self.keep_icc:
                 icc_profile = img.info.get("icc_profile")
 
             # Pillow 各编码器（PNG/WEBP/TIFF/HEIF…）会从 img.info 回捞
@@ -487,7 +523,7 @@ class PixShiftConverter:
                 save_params["icc_profile"] = icc_profile
 
             # 保存到同目录临时文件，编码成功后原子替换。
-            with atomic_output_path(output_path) as temporary:
+            with atomic_output_path(output_path, overwrite=self.overwrite) as temporary:
                 img.save(temporary, **save_params)
 
             result.output_size = os.path.getsize(output_path)
@@ -545,33 +581,6 @@ class PixShiftConverter:
 # ============================================================
 #  工具函数
 # ============================================================
-
-
-def _extract_animation(opened: Image.Image) -> tuple[list[Image.Image], list[int], int]:
-    """Copy every frame with its duration (ms) and the stream's loop count.
-
-    Pillow composites partial GIF frames on seek, so each copy is the full
-    visible frame. Non-positive or missing durations fall back to a sane
-    default rather than producing a zero-length frame.
-    """
-    default_duration = int(opened.info.get("duration") or _DEFAULT_FRAME_DURATION_MS)
-    if default_duration <= 0:
-        default_duration = _DEFAULT_FRAME_DURATION_MS
-    frames: list[Image.Image] = []
-    durations: list[int] = []
-    total_pixels = 0
-    for frame in ImageSequence.Iterator(opened):
-        ensure_within_pixel_limit(frame)
-        total_pixels += int(frame.width) * int(frame.height)
-        ensure_pixel_count_within_limit(total_pixels)
-        # copy() forces load(), and some decoders (WebP) only publish the
-        # frame duration after load — so read timing from the copy.
-        copied = frame.copy()
-        duration = int(copied.info.get("duration") or default_duration)
-        durations.append(duration if duration > 0 else default_duration)
-        frames.append(copied)
-    loop = int(opened.info.get("loop") or 0)
-    return frames, durations, loop
 
 
 def _human_size(size_bytes: int) -> str:

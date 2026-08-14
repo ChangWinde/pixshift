@@ -4,7 +4,7 @@
 
 ## 批量筛选
 
-处理大目录时，很少需要「全都要」。下面三个选项在**所有批处理命令**上通用，语义完全一致：
+处理大目录时，很少需要「全都要」。下面三个选项在图片与工作流批处理命令上通用，语义完全一致；PDF 与视频子命令各自按其输入模型提供参数：
 
 | 选项 | 作用 |
 | --- | --- |
@@ -24,7 +24,7 @@ pixshift compress ./photos -r --include '*.jpg' --min-file-size 1MB --exclude '*
 ## convert — 格式转换
 
 ```bash
-pixshift convert INPUTS... -t webp [-o 输出目录] [-r] [--json]
+pixshift convert INPUTS... -t webp [--color-space preserve|srgb] [-o 输出目录] [-r] [--json]
 ```
 
 | 参数 | 说明 |
@@ -37,12 +37,15 @@ pixshift convert INPUTS... -t webp [-o 输出目录] [-r] [--json]
 | `--prefix` / `--suffix` | 给输出文件名加前后缀 |
 | `--strip-alpha` | 去掉透明通道，用 `--bg-color`（默认白色）填充 |
 | `--no-exif` / `--no-icc` / `--no-orient` | 分别关闭 EXIF、ICC 保留与方向自动校正 |
+| `--color-space` | `preserve`（默认）保留可承载的源色彩空间；`srgb` 经 ICC 转换并嵌入 sRGB |
 | `-j, --jobs` | 并行进程数，默认自动（最多 8） |
 | `--flatten` | 输出不保留子目录结构 |
 
 默认的 `high` 在画质、体积、编码速度之间取平衡；归档场景再显式指定 `-q max`。扫描目录时会自动跳过已经是目标格式的文件，但显式传入的文件参数一定会被处理。
 
-**动图会保留动画。** GIF、APNG、动画 WebP 转换到同样支持动画的格式（`webp` / `gif` / `png`）时，帧、每帧时长、循环次数和透明度都会保留；转到无法承载动画的格式（如 `jpg`）则返回 `animated_input_not_supported` 错误而不是悄悄丢帧。缩放参数会逐帧生效。
+CMYK/LAB 转到不能承载这些空间的格式时，会使用有效的嵌入 ICC 通过 LittleCMS 转到 sRGB；无效 ICC 不会被继续挂在 RGB 像素上。显式 `--color-space srgb` 对坏 ICC 返回 `invalid_icc_profile`，避免把未转换的像素错误标记为 sRGB。
+
+**动图会保留动画。** GIF、APNG、动画 WebP 转换到同样支持动画的格式（`webp` / `gif` / `png`）时，帧、每帧时长、循环次数和透明度都会保留；转到无法承载动画的格式（如 `jpg`）则返回 `animated_input_not_supported` 错误而不是悄悄丢帧。GIF 只能表示 10ms 的整数倍；无法无损表示的时长会以 `animation_timing_not_representable:gif` 明确拒绝，不会静默舍入并改变播放节奏。缩放参数会逐帧生效。
 
 ## compress — 保持格式压缩
 
@@ -59,7 +62,7 @@ pixshift compress INPUTS... [-p medium] [-o 输出目录] [-r] [--json]
 
 输出为 `_compressed` 派生文件。PNG、TIFF 始终无损，此时 `--quality` 不生效，JSON 输出会给出 `quality_ignored_for_lossless` 警告。
 
-**`--target-size` 回答的是最常见的诉求：不超过某个体积，同时保留尽可能好的画质。** 实现方式是在质量区间内二分搜索，取满足体积约束的最高质量。若连最低质量也超出预算，命令报错而不是交付一个不达标的文件。该参数与 `--quality` 互斥。
+**`--target-size` 回答的是最常见的诉求：不超过某个体积，同时保留尽可能好的画质。** JPEG/WebP/AVIF/HEIF 从最高到最低检查完整的有限质量区间，避免编码体积的非单调变化让二分搜索漏掉更高的可行质量。PNG/TIFF 保持原尺寸无损编码；若完整像素无法达到预算，会返回 `target_size_unreachable`，绝不暗中缩图。该参数与 `--quality` 互斥。
 
 ## resize — 保持格式缩放
 
@@ -148,7 +151,7 @@ pixshift dedup ./photos -r --delete --yes --backup-dir ./_dupes
 pixshift compare A.jpg B.jpg [--json]
 ```
 
-输出 MSE、PSNR、SSIM 与综合评级。宽高比相同的图片会被归一化到同一尺寸后比较；宽高比差异明显时命令直接失败，而不是给出会误导人的相似度。评级为「完美」要求像素与透明度完全一致，仅靠亮度 SSIM 不足以判定相等。
+输出 MSE、PSNR、SSIM 与综合评级。两侧有效 ICC 会先经 LittleCMS 归一到 sRGB，再比较 Y/Cb/Cr 与独立 alpha；坏 profile 会明确失败。宽高比相同的图片会被归一化到同一尺寸后比较；宽高比差异明显时命令直接失败，而不是给出会误导人的相似度。评级为「完美」要求像素与透明度完全一致，仅靠亮度 SSIM 不足以判定相等。超大图逐侧尽早缩到确定性上限，避免同时保留两个全尺寸解码副本；JSON 的 `sampled_for_comparison` 与 `sample_scale` 会明确披露。
 
 ## info — 查看信息
 

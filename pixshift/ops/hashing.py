@@ -100,6 +100,6 @@ def _collect_all_files(input_paths: list[str], *, recursive: bool) -> list[str]:
         if path.is_dir():
             iterator = path.rglob("*") if recursive else path.glob("*")
             for child in sorted(iterator):
-                if child.is_file():
+                if not child.is_symlink() and child.is_file():
                     files.append(str(child))
     return files

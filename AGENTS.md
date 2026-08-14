@@ -11,7 +11,9 @@ PixShift is a local-first, agent-safe image, PDF, and video toolkit.
    videos are analysed from probe metadata and may plan `keep` = no action)
 4. Apply: `pixshift apply --plan plan.json --json` (supports `--dry-run`)
 5. Prepare assets: `pixshift prep PATH -o OUT --max-size 2048 -t webp --json`
-6. Verify: `pixshift hash PATH --json` / `pixshift compare A B --json` / `pixshift doctor --json`
+6. Verify: `pixshift verify SOURCE CANDIDATE --json` for media quality,
+   `pixshift hash PATH --json` for byte identity, and `pixshift doctor --json`
+   for runtime readiness
 
 Always pass `--json` for machine use. Failures set `ok: false` and exit
 non-zero: `1` means work was attempted and something failed (see the

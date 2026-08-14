@@ -142,6 +142,7 @@ def test_schema_version_is_stated_consistently():
     contract = _read("docs/JSON_OUTPUT.md")
     assert f'`"{version}"`' in contract, f"JSON_OUTPUT.md does not state schema {version}"
     assert f"schema_version {version}" in _read("docs/ARCHITECTURE.md")
+    assert f'"schema_version": "{version}"' in _read("README.md")
 
     for schema_file in sorted((DOCS / "schemas" / "v1").glob("*.json")):
         text = schema_file.read_text(encoding="utf-8")
@@ -212,6 +213,6 @@ def test_referenced_repository_paths_exist():
     for markdown in sorted(REPO.glob("*.md")) + sorted(DOCS.rglob("*.md")):
         for target in pattern.findall(markdown.read_text(encoding="utf-8")):
             path = REPO / target
-            if not path.exists() and not path.parent.exists():
+            if not path.exists():
                 missing.append(f"{markdown.relative_to(REPO)} -> {target}")
     assert not missing, f"documentation references missing repository paths: {missing}"

@@ -23,6 +23,7 @@ from ..core.files import (
 )
 from ..core.metadata import open_image
 from ..core.parallel import run_batch_tasks
+from ..strip_engine import resolve_strip_mode
 from . import convert as convert_ops
 from . import strip as strip_ops
 
@@ -67,6 +68,7 @@ def prep_files(
     overwrite: bool = False,
     dry_run: bool = False,
     strip_privacy: bool = True,
+    color_space: str = "srgb",
     selection: SelectionFilters | None = None,
 ) -> PrepResult:
     """Prepare delivery-ready assets under ``output_dir``.
@@ -75,6 +77,8 @@ def prep_files(
     privacy-stripped, and atomically published. Existing outputs are
     idempotent skips unless ``overwrite`` is set.
     """
+    if color_space not in {"preserve", "srgb"}:
+        raise ValueError(f"unsupported_color_space:{color_space}")
     collected = collect_supported_files(
         input_paths, SUPPORTED_INPUT_FORMATS, recursive=recursive, selection=selection
     )
@@ -121,6 +125,7 @@ def prep_files(
         overwrite=overwrite,
         dry_run=dry_run,
         strip_privacy=strip_privacy,
+        color_space=color_space,
     )
     if dry_run:
         # Previews only stat files; a worker pool would cost more than it saves.
@@ -140,6 +145,7 @@ def _prep_one(
     overwrite: bool,
     dry_run: bool,
     strip_privacy: bool,
+    color_space: str,
 ) -> PrepItem:
     item = PrepItem(input_path=source, output_path=dest)
     item.input_bytes = Path(source).stat().st_size
@@ -153,7 +159,12 @@ def _prep_one(
             convert_result = convert_ops.convert_one(
                 source,
                 tmp_convert,
-                {"quality": quality, "max_size": max_size, "overwrite": True},
+                {
+                    "quality": quality,
+                    "max_size": max_size,
+                    "overwrite": True,
+                    "color_space": color_space,
+                },
             )
             if not convert_result.success:
                 item.error = convert_result.error or "convert_failed"
@@ -161,15 +172,18 @@ def _prep_one(
             final_source = tmp_convert
             if strip_privacy:
                 tmp_strip = str(Path(tmp) / f"stripped-{Path(dest).name}")
+                strip_exif, strip_gps, strip_device, strip_personal, strip_time = (
+                    resolve_strip_mode("privacy")
+                )
                 strip_result = strip_ops.strip_one(
                     tmp_convert,
                     tmp_strip,
-                    strip_exif=True,
-                    strip_gps=True,
+                    strip_exif=strip_exif,
+                    strip_gps=strip_gps,
                     strip_icc=False,
-                    strip_device=True,
-                    strip_personal=True,
-                    strip_time=False,
+                    strip_device=strip_device,
+                    strip_personal=strip_personal,
+                    strip_time=strip_time,
                     keep_orientation=True,
                     overwrite=True,
                 )
@@ -177,7 +191,7 @@ def _prep_one(
                     item.error = strip_result.error or "strip_failed"
                     return item
                 final_source = tmp_strip
-            atomic_copy_file(final_source, dest)
+            atomic_copy_file(final_source, dest, overwrite=overwrite)
         item.success = True
         item.output_bytes = Path(dest).stat().st_size
         item.sha256 = _sha256(dest)

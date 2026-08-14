@@ -20,6 +20,7 @@ from PIL import Image, ImageDraw, ImageFont
 from .converter import SUPPORTED_INPUT_FORMATS
 from .core.files import SelectionFilters, atomic_output_path, collect_supported_files
 from .core.metadata import (
+    convert_color_to_rgb,
     ensure_static_image,
     normalize_orientation,
     normalized_exif_bytes,
@@ -244,7 +245,7 @@ def add_text_watermark(
         with open_image(input_path) as source:
             ensure_static_image(source)
             original_format = source.format
-            original = normalize_orientation(source)
+            original = convert_color_to_rgb(normalize_orientation(source))
             img = original.convert("RGBA")
             resolved_font_size = resolve_font_size(font_size, img.size)
             font = _get_font(font_path, resolved_font_size)
@@ -272,12 +273,14 @@ def add_text_watermark(
                     txt_img = txt_img.rotate(
                         rotation, expand=True, resample=Image.Resampling.BICUBIC
                     )
-                    watermark_layer.paste(txt_img, (int(x), int(y)), txt_img)
+                    watermark_layer.paste(txt_img, (int(x), int(y)))
                 else:
                     draw.text((x, y), text, font=font, fill=fill_color)
 
             result_img = Image.alpha_composite(img, watermark_layer)
-            _save_watermarked(result_img, output_path, original, original_format)
+            _save_watermarked(
+                result_img, output_path, original, original_format, overwrite=overwrite
+            )
 
         result.output_size = os.path.getsize(output_path)
         result.success = True
@@ -324,7 +327,7 @@ def _create_tiled_text_layer(
     for y_pos in range(-tile_h, h + tile_h, step_y):
         for x_pos in range(-tile_w, w + tile_w, step_x):
             with suppress(Exception):
-                layer.paste(txt_img, (x_pos, y_pos), txt_img)
+                layer.paste(txt_img, (x_pos, y_pos))
 
     return layer
 
@@ -391,9 +394,9 @@ def add_image_watermark(
             ensure_static_image(source)
             ensure_static_image(wm_source)
             original_format = source.format
-            original = normalize_orientation(source)
+            original = convert_color_to_rgb(normalize_orientation(source))
             img = original.convert("RGBA")
-            wm = normalize_orientation(wm_source).convert("RGBA")
+            wm = convert_color_to_rgb(normalize_orientation(wm_source)).convert("RGBA")
 
             target_w = max(1, int(img.width * scale))
             ratio = target_w / wm.width
@@ -411,15 +414,17 @@ def add_image_watermark(
                 step_y = target_h + tile_spacing
                 for y_pos in range(0, img.height, step_y):
                     for x_pos in range(0, img.width, step_x):
-                        layer.paste(wm, (x_pos, y_pos), wm)
+                        layer.paste(wm, (x_pos, y_pos))
                 result_img = Image.alpha_composite(img, layer)
             else:
                 x, y = _calc_position(img.size, wm.size, position, margin)
                 layer = Image.new("RGBA", img.size, (0, 0, 0, 0))
-                layer.paste(wm, (int(x), int(y)), wm)
+                layer.paste(wm, (int(x), int(y)))
                 result_img = Image.alpha_composite(img, layer)
 
-            _save_watermarked(result_img, output_path, original, original_format)
+            _save_watermarked(
+                result_img, output_path, original, original_format, overwrite=overwrite
+            )
 
         result.output_size = os.path.getsize(output_path)
         result.success = True
@@ -471,6 +476,8 @@ def _save_watermarked(
     output_path: str,
     original: Image.Image,
     original_format: str | None,
+    *,
+    overwrite: bool,
 ) -> None:
     """保存水印后的图片，保持原格式"""
     ext = Path(output_path).suffix.lower()
@@ -500,7 +507,7 @@ def _save_watermarked(
     if icc_profile:
         save_kwargs["icc_profile"] = icc_profile
 
-    with atomic_output_path(output_path) as temporary:
+    with atomic_output_path(output_path, overwrite=overwrite) as temporary:
         result_img.save(temporary, **save_kwargs)
 
 

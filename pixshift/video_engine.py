@@ -18,8 +18,10 @@ import json
 import math
 import os
 import shutil
+import signal
 import subprocess
 import threading
+from collections import deque
 from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -33,10 +35,15 @@ DEFAULT_RUN_TIMEOUT_S = 3600.0
 DEFAULT_VIDEO_CONTAINER = "mp4"
 DEFAULT_VIDEO_PRESET = "web"
 DEFAULT_VIDEO_CODEC = "h264"
+DEFAULT_AUDIO_POLICY = "compatible"
 DEFAULT_AUDIO_FORMAT = "mp3"
 DEFAULT_THUMBNAIL_AT = "25%"
 DEFAULT_GIF_FPS = 12
 DEFAULT_GIF_WIDTH = 480
+
+AUDIO_POLICIES = ("preserve", "compatible", "compact")
+COMPATIBLE_AUDIO_BPS = 192_000
+COMPACT_AUDIO_BPS = 96_000
 
 VIDEO_INPUT_FORMATS = {
     ".mp4",
@@ -67,6 +74,13 @@ CONTAINER_DEFAULT_CODEC: dict[str, str] = {
     "mov": "h264",
     "mkv": "h265",
     "webm": "vp9",
+}
+
+CONTAINER_VIDEO_CODECS: dict[str, set[str]] = {
+    "mp4": {"h264", "h265"},
+    "mov": {"h264", "h265"},
+    "mkv": set(VIDEO_CODECS),
+    "webm": {"vp9", "av1"},
 }
 
 AUDIO_CODECS: dict[str, tuple[str, str]] = {
@@ -121,7 +135,24 @@ class VideoInfo:
     width: int = 0
     height: int = 0
     video_codec: str = ""
+    video_profile: str = ""
+    video_level: int = 0
+    pixel_format: str = ""
+    frame_rate: str = ""
+    video_time_base: str = ""
+    sample_aspect_ratio: str = ""
+    field_order: str = ""
+    video_extradata_hash: str = ""
+    color_range: str = ""
+    color_space: str = ""
+    color_primaries: str = ""
+    color_transfer: str = ""
     audio_codec: str = ""
+    audio_sample_rate: int = 0
+    audio_channels: int = 0
+    audio_channel_layout: str = ""
+    audio_sample_format: str = ""
+    audio_time_base: str = ""
     fps: float = 0.0
     bit_rate: int = 0
     container: str = ""
@@ -142,6 +173,8 @@ class VideoResult:
     duration_sec: float = 0.0
     error: str = ""
     detail: str = ""
+    audio_policy: str = ""
+    audio_action: str = ""
 
 
 @dataclass
@@ -265,6 +298,27 @@ def _video_encoder_args(
     return args
 
 
+def validate_container_codec(container: str, codec: str) -> None:
+    """Reject container / video-codec pairs the CLI does not support."""
+    normalized = container.lower().lstrip(".")
+    if normalized not in CONTAINER_VIDEO_CODECS:
+        raise ValueError(f"unsupported_target_container:{normalized}")
+    if codec not in VIDEO_CODECS:
+        raise ValueError(f"unsupported_video_codec:{codec}")
+    if codec not in CONTAINER_VIDEO_CODECS[normalized]:
+        raise ValueError(f"unsupported_codec_for_container:{codec}:{normalized}")
+
+
+def _audio_args(codec: str, audio_policy: str) -> list[str]:
+    """Return explicit audio handling for a video transcode."""
+    if audio_policy not in AUDIO_POLICIES:
+        raise ValueError(f"unsupported_audio_policy:{audio_policy}")
+    if audio_policy == "preserve":
+        return ["-c:a", "copy"]
+    bitrate = COMPATIBLE_AUDIO_BPS if audio_policy == "compatible" else COMPACT_AUDIO_BPS
+    return ["-c:a", VIDEO_CODECS[codec][2], "-b:a", str(bitrate)]
+
+
 def build_convert_args(
     src: str,
     dst: str,
@@ -272,13 +326,14 @@ def build_convert_args(
     container: str,
     codec: str | None = None,
     hwaccel: str | None = None,
+    audio_policy: str = DEFAULT_AUDIO_POLICY,
 ) -> list[str]:
     """Argv to transcode ``src`` into ``container`` (default codec per container)."""
     container = container.lower().lstrip(".")
-    codec_key = codec or CONTAINER_DEFAULT_CODEC.get(container, "h264")
-    if codec_key not in VIDEO_CODECS:
-        raise ValueError(f"unsupported_video_codec:{codec_key}")
-    audio_encoder = VIDEO_CODECS[codec_key][2]
+    if container not in CONTAINER_DEFAULT_CODEC:
+        raise ValueError(f"unsupported_target_container:{container}")
+    codec_key = codec or CONTAINER_DEFAULT_CODEC[container]
+    validate_container_codec(container, codec_key)
     defaults: dict[str, tuple[int, str | None]] = {
         "h264": (23, "medium"),
         "h265": (23, "medium"),
@@ -286,9 +341,9 @@ def build_convert_args(
         "av1": (35, "8"),
     }
     crf, speed_preset = defaults[codec_key]
-    args = ["-i", _safe_path(src)]
+    args = ["-i", _safe_path(src), "-map", "0:V:0", "-map", "0:a:0?", "-sn", "-dn"]
     args += _video_encoder_args(codec_key, crf=crf, speed_preset=speed_preset, hwaccel=hwaccel)
-    args += ["-c:a", audio_encoder, "-b:a", "128k"]
+    args += _audio_args(codec_key, audio_policy)
     if container in ("mp4", "mov"):
         args += ["-movflags", "+faststart"]
     args.append(_safe_path(dst))
@@ -303,6 +358,7 @@ def build_compress_args(
     codec: str,
     crf: int | None = None,
     hwaccel: str | None = None,
+    audio_policy: str = DEFAULT_AUDIO_POLICY,
 ) -> list[str]:
     """Argv to compress ``src`` using a preset/codec, optional CRF override."""
     if preset not in VIDEO_COMPRESS_PRESETS:
@@ -310,17 +366,17 @@ def build_compress_args(
     if codec not in VIDEO_CODECS:
         raise ValueError(f"unsupported_video_codec:{codec}")
     knobs = VIDEO_COMPRESS_PRESETS[preset][codec]
-    audio_encoder = VIDEO_CODECS[codec][2]
     effective_crf = crf if crf is not None else int(knobs["crf"])
     speed_preset = str(knobs["preset"]) if "preset" in knobs else None
-    args = ["-i", _safe_path(src)]
+    args = ["-i", _safe_path(src), "-map", "0:V:0", "-map", "0:a:0?", "-sn", "-dn"]
     args += _video_encoder_args(
         codec, crf=effective_crf, speed_preset=speed_preset, hwaccel=hwaccel
     )
     if preset == "tiny":
-        # Cap the long edge; -2 keeps the other dimension even for the encoder.
-        args += ["-vf", "scale='min(1280,iw)':-2"]
-    args += ["-c:a", audio_encoder, "-b:a", "128k"]
+        # Two aspect-preserving passes cap landscape width and portrait height;
+        # -2 keeps the derived dimension even for the encoder.
+        args += ["-vf", "scale='min(1280,iw)':-2,scale=-2:'min(1280,ih)'"]
+    args += _audio_args(codec, audio_policy)
     container = VIDEO_CODECS[codec][1]
     if container in ("mp4", "mov"):
         args += ["-movflags", "+faststart"]
@@ -344,9 +400,20 @@ def build_trim_args(
         raise ValueError("trim_end_must_exceed_start")
     if duration is not None and duration <= 0:
         raise ValueError("trim_duration_must_be_positive")
-    args = ["-ss", f"{start:.3f}", "-i", _safe_path(src)]
+    args = [
+        "-ss",
+        f"{start:.3f}",
+        "-i",
+        _safe_path(src),
+        "-map",
+        "0:V:0",
+        "-map",
+        "0:a:0?",
+        "-sn",
+        "-dn",
+    ]
     if end is not None:
-        args += ["-to", f"{end:.3f}"]
+        args += ["-t", f"{end - start:.3f}"]
     elif duration is not None:
         args += ["-t", f"{duration:.3f}"]
     if reencode:
@@ -366,6 +433,11 @@ def build_thumbnail_args(src: str, dst: str, *, at_seconds: float) -> list[str]:
         f"{at_seconds:.3f}",
         "-i",
         _safe_path(src),
+        "-map",
+        "0:V:0",
+        "-an",
+        "-sn",
+        "-dn",
         "-frames:v",
         "1",
         _safe_path(dst),
@@ -378,7 +450,17 @@ def build_extract_audio_args(src: str, dst: str, *, audio_ext: str) -> list[str]
     if audio_ext not in AUDIO_CODECS:
         raise ValueError(f"unsupported_audio_format:{audio_ext}")
     encoder, bitrate = AUDIO_CODECS[audio_ext]
-    args = ["-i", _safe_path(src), "-vn", "-c:a", encoder]
+    args = [
+        "-i",
+        _safe_path(src),
+        "-map",
+        "0:a:0",
+        "-vn",
+        "-sn",
+        "-dn",
+        "-c:a",
+        encoder,
+    ]
     if bitrate:
         args += ["-b:a", bitrate]
     args.append(_safe_path(dst))
@@ -401,7 +483,17 @@ def build_gif_args(
         raise ValueError("gif_width_out_of_range")
     if start < 0:
         raise ValueError("gif_start_must_be_non_negative")
-    args = ["-ss", f"{start:.3f}", "-i", _safe_path(src)]
+    args = [
+        "-ss",
+        f"{start:.3f}",
+        "-i",
+        _safe_path(src),
+        "-map",
+        "0:V:0",
+        "-an",
+        "-sn",
+        "-dn",
+    ]
     if duration is not None:
         if duration <= 0:
             raise ValueError("gif_duration_must_be_positive")
@@ -427,10 +519,16 @@ MIN_TARGET_VIDEO_BPS = 8_000
 MAX_TARGET_VIDEO_BPS = 2_000_000_000
 # Durations below this are probe garbage, not encodable clips.
 MIN_USABLE_DURATION_SEC = 0.05
-TARGET_AUDIO_BPS = 128_000
+TARGET_AUDIO_BPS = COMPATIBLE_AUDIO_BPS
 
 
-def compute_target_video_bitrate(target_bytes: int, duration_sec: float, *, has_audio: bool) -> int:
+def compute_target_video_bitrate(
+    target_bytes: int,
+    duration_sec: float,
+    *,
+    has_audio: bool,
+    audio_bps: int = TARGET_AUDIO_BPS,
+) -> int:
     """Video bitrate (bps) that fits ``target_bytes`` over ``duration_sec``.
 
     Deterministic budget math: total bits over the duration, minus a fixed
@@ -446,7 +544,7 @@ def compute_target_video_bitrate(target_bytes: int, duration_sec: float, *, has_
     total_bps = target_bytes * 8.0 / duration_sec
     video_bps = total_bps * (1.0 - TARGET_SIZE_OVERHEAD)
     if has_audio:
-        video_bps -= TARGET_AUDIO_BPS
+        video_bps -= audio_bps
     if not math.isfinite(video_bps) or video_bps <= 0:
         return 0
     return min(int(video_bps), MAX_TARGET_VIDEO_BPS)
@@ -462,6 +560,7 @@ def build_bitrate_pass_args(
     pass_number: int | None,
     passlog: str,
     hwaccel: str | None = None,
+    audio_policy: str = DEFAULT_AUDIO_POLICY,
 ) -> list[str]:
     """Argv for one bitrate-targeted encode pass.
 
@@ -473,8 +572,9 @@ def build_bitrate_pass_args(
         raise ValueError(f"unsupported_video_codec:{codec}")
     if video_bps <= 0:
         raise ValueError("target_bitrate_must_be_positive")
-    audio_encoder = VIDEO_CODECS[codec][2]
-    args = ["-i", _safe_path(src)]
+    args = ["-i", _safe_path(src), "-map", "0:V:0", "-sn", "-dn"]
+    if pass_number != 1 and has_audio:
+        args += ["-map", "0:a:0"]
     if hwaccel is not None:
         args += ["-c:v", _hw_encoder(codec, hwaccel)]
         if hwaccel == "nvenc":
@@ -492,7 +592,7 @@ def build_bitrate_pass_args(
         args += ["-an", "-f", "null", os.devnull]
         return args
     if has_audio:
-        args += ["-c:a", audio_encoder, "-b:a", str(TARGET_AUDIO_BPS)]
+        args += _audio_args(codec, audio_policy)
     else:
         args += ["-an"]
     container = VIDEO_CODECS[codec][1]
@@ -535,8 +635,15 @@ def build_concat_args(list_path: str, dst: str, *, reencode: bool = False) -> li
         "file",
         "-i",
         _safe_path(list_path),
+        "-map",
+        "0:V:0",
+        "-map",
+        "0:a:0?",
+        "-sn",
+        "-dn",
     ]
     if reencode:
+        validate_container_codec(Path(dst).suffix, "h264")
         args += ["-c:v", "libx264", "-crf", "23", "-preset", "medium", "-c:a", "aac"]
         args += ["-b:a", "128k"]
     else:
@@ -544,6 +651,72 @@ def build_concat_args(list_path: str, dst: str, *, reencode: bool = False) -> li
     if Path(dst).suffix.lower() in (".mp4", ".mov"):
         args += ["-movflags", "+faststart"]
     args.append(_safe_path(dst))
+    return args
+
+
+def build_concat_segment_args(
+    src: str,
+    dst: str,
+    *,
+    width: int,
+    height: int,
+    fps: float,
+    source_has_audio: bool,
+    include_audio: bool,
+) -> list[str]:
+    """Normalize one heterogeneous concat segment to a common MP4 signature."""
+    if width <= 0 or height <= 0:
+        raise ValueError("concat_missing_dimensions")
+    if not math.isfinite(fps) or fps <= 0 or fps > 240:
+        raise ValueError("concat_invalid_frame_rate")
+    args = ["-i", _safe_path(src)]
+    if include_audio and not source_has_audio:
+        args += [
+            "-f",
+            "lavfi",
+            "-i",
+            "anullsrc=channel_layout=stereo:sample_rate=48000",
+        ]
+    args += ["-map", "0:V:0"]
+    if include_audio:
+        args += ["-map", "0:a:0" if source_has_audio else "1:a:0"]
+    args += ["-sn", "-dn"]
+    filtergraph = (
+        f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
+        f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps:.6f}"
+    )
+    args += [
+        "-vf",
+        filtergraph,
+        "-c:v",
+        "libx264",
+        "-crf",
+        "23",
+        "-preset",
+        "medium",
+        "-pix_fmt",
+        "yuv420p",
+    ]
+    if include_audio:
+        # Pad a short real track (or the synthetic silent track) and let the
+        # video stream determine segment duration. Bare ``-shortest`` would
+        # truncate video whenever its original audio ended first.
+        args += [
+            "-af",
+            "apad",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "128k",
+            "-ar",
+            "48000",
+            "-ac",
+            "2",
+            "-shortest",
+        ]
+    else:
+        args += ["-an"]
+    args += ["-movflags", "+faststart", _safe_path(dst)]
     return args
 
 
@@ -773,6 +946,8 @@ def probe(path: str) -> VideoInfo:
                 "json",
                 "-show_format",
                 "-show_streams",
+                "-show_data_hash",
+                "sha256",
                 _safe_path(path),
             ],
             capture_output=True,
@@ -812,12 +987,40 @@ def probe(path: str) -> VideoInfo:
     for stream in streams:
         kind = stream.get("codec_type")
         if kind == "video" and not info.video_codec:
+            if bool((stream.get("disposition") or {}).get("attached_pic", 0)):
+                continue
             info.video_codec = str(stream.get("codec_name", ""))
+            info.video_profile = str(stream.get("profile", ""))
+            try:
+                info.video_level = int(stream.get("level", 0) or 0)
+            except (TypeError, ValueError):
+                info.video_level = 0
+            info.pixel_format = str(stream.get("pix_fmt", ""))
+            info.frame_rate = str(stream.get("avg_frame_rate", ""))
+            info.video_time_base = str(stream.get("time_base", ""))
+            info.sample_aspect_ratio = str(stream.get("sample_aspect_ratio", ""))
+            info.field_order = str(stream.get("field_order", ""))
+            info.video_extradata_hash = str(stream.get("extradata_hash", ""))
+            info.color_range = str(stream.get("color_range", ""))
+            info.color_space = str(stream.get("color_space", ""))
+            info.color_primaries = str(stream.get("color_primaries", ""))
+            info.color_transfer = str(stream.get("color_transfer", ""))
             info.width = int(stream.get("width", 0) or 0)
             info.height = int(stream.get("height", 0) or 0)
             info.fps = _ffprobe_fps(str(stream.get("avg_frame_rate", "0/0")))
         elif kind == "audio" and not info.audio_codec:
             info.audio_codec = str(stream.get("codec_name", ""))
+            try:
+                info.audio_sample_rate = int(stream.get("sample_rate", 0) or 0)
+            except (TypeError, ValueError):
+                info.audio_sample_rate = 0
+            try:
+                info.audio_channels = int(stream.get("channels", 0) or 0)
+            except (TypeError, ValueError):
+                info.audio_channels = 0
+            info.audio_channel_layout = str(stream.get("channel_layout", ""))
+            info.audio_sample_format = str(stream.get("sample_fmt", ""))
+            info.audio_time_base = str(stream.get("time_base", ""))
     return info
 
 
@@ -835,8 +1038,19 @@ def run_ffmpeg(args: list[str], *, timeout: float = DEFAULT_RUN_TIMEOUT_S) -> tu
         stderr=subprocess.PIPE,
         stdin=subprocess.DEVNULL,
         text=True,
+        start_new_session=os.name == "posix",
     )
-    captured: list[str] = []
+    captured: deque[str] = deque(maxlen=5)
+
+    def _kill_process_group() -> None:
+        if os.name == "posix" and getattr(process, "pid", None) is not None:
+            try:
+                os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+                return
+            except OSError:
+                pass
+        with suppress(OSError):
+            process.kill()
 
     def _drain() -> None:
         if process.stderr is not None:
@@ -848,21 +1062,21 @@ def run_ffmpeg(args: list[str], *, timeout: float = DEFAULT_RUN_TIMEOUT_S) -> tu
     try:
         process.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
-        process.kill()
-        process.wait()
+        _kill_process_group()
+        with suppress(OSError, subprocess.TimeoutExpired):
+            process.wait(timeout=1.0)
         thread.join(timeout=1.0)
         return 124, "ffmpeg_timeout"
     except BaseException:
         # KeyboardInterrupt/SystemExit must not leave ffmpeg encoding after the
         # PixShift caller has stopped or while an atomic temp path is removed.
-        with suppress(OSError):
-            process.kill()
+        _kill_process_group()
         with suppress(OSError, subprocess.TimeoutExpired):
             process.wait(timeout=1.0)
         thread.join(timeout=1.0)
         raise
     thread.join(timeout=1.0)
-    tail = "".join(captured[-5:]).strip()
+    tail = "".join(captured).strip()
     return process.returncode, tail
 
 
@@ -877,7 +1091,11 @@ def collect_video_files(input_paths: list[str], recursive: bool = False) -> list
         elif path.is_dir():
             pattern = "**/*" if recursive else "*"
             for item in sorted(path.glob(pattern)):
-                if item.is_file() and item.suffix.lower() in VIDEO_INPUT_FORMATS:
+                if (
+                    not item.is_symlink()
+                    and item.is_file()
+                    and item.suffix.lower() in VIDEO_INPUT_FORMATS
+                ):
                     files.append(str(item.resolve()))
     return sorted(set(files))
 

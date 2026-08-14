@@ -32,6 +32,9 @@ pixshift pdf merge ./scans -o 合同.pdf
 
 # 视频压到 25MB 以内（需要 ffmpeg）
 pixshift video compress talk.mp4 --target-size 25MB
+
+# 交付前验证结构、体积与感知质量
+pixshift verify source.jpg delivered.webp --min-ssim 0.99 --json
 ```
 
 ## 能力速查
@@ -44,6 +47,7 @@ pixshift video compress talk.mp4 --target-size 25MB
 | 控制体积上限 | `--target-size` | `--target-size` | `--target-size` |
 | 合并 | `montage`、`pdf merge` | `pdf concat` | `video concat` |
 | 拆分与截取 | `crop`、`resize` | `pdf split` | `video trim` |
+| 跨媒体验收 | `verify` | `verify` | `verify` |
 | 其他 | `strip`、`rotate`、`watermark`、`dedup`、`compare` | — | `video thumbnail`、`video extract-audio`、`video gif` |
 
 完整参数见[图片](images.md)、[PDF](pdf.md)、[视频](video.md)三章。
@@ -66,7 +70,7 @@ pixshift video compress talk.mp4 --target-size 25MB
 # 发现能力 → 生成计划 → 执行 → 校验
 pixshift tools --json
 pixshift optimize ./media --json | pixshift apply --plan - --dry-run --json
-pixshift hash ./media -r --json
+pixshift verify source.png candidate.webp --min-ssim 0.99 --json
 ```
 
 详见[脚本与 Agent 集成](automation.md)与[JSON 输出契约](JSON_OUTPUT.md)。

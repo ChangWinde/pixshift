@@ -110,10 +110,18 @@ DEVICE_TAGS = {
     # MakerNote 常含厂商序列号/固件，部分机型还嵌 GPS；ImageUniqueID 可追踪单张照片。
     "MakerNote",
     "ImageUniqueID",
+    "UniqueCameraModel",
+    "LocalizedCameraModel",
+    "CameraSerialNumber",
+    "RawDataUniqueID",
+    "CameraCalibrationSignature",
+    "DeviceSettingDescription",
 }
 
 # 个人信息标签
 PERSONAL_TAGS = {
+    "DocumentName",
+    "PageName",
     "Artist",
     "Copyright",
     "ImageDescription",
@@ -123,6 +131,7 @@ PERSONAL_TAGS = {
     "XPKeywords",
     "XPSubject",
     "XPTitle",
+    "ImageHistory",
 }
 
 # 时间信息标签
@@ -141,6 +150,26 @@ TIME_TAGS = {
 # 所有敏感标签
 ALL_SENSITIVE_TAGS = GPS_TAGS | DEVICE_TAGS | PERSONAL_TAGS | TIME_TAGS
 EXIF_IFD_TAG = 34665
+
+
+def resolve_strip_mode(mode: str) -> tuple[bool, bool, bool, bool, bool]:
+    """Resolve a public strip mode to the engine's five policy flags.
+
+    Returns ``(strip_exif, strip_gps, strip_device, strip_personal, strip_time)``.
+    """
+    normalized = mode.strip().casefold()
+    policies = {
+        "privacy": (False, True, True, True, False),
+        "all": (True, False, False, False, False),
+        "gps": (False, True, False, False, False),
+        "device": (False, False, True, False, False),
+        "personal": (False, False, False, True, False),
+        "time": (False, False, False, False, True),
+    }
+    try:
+        return policies[normalized]
+    except KeyError:
+        raise ValueError(f"unsupported_strip_mode:{normalized or '?'}") from None
 
 
 # ============================================================
@@ -210,7 +239,7 @@ def strip_metadata(
 
         if strip_exif:
             # 完全清除所有 EXIF
-            _save_clean(img, output_path, input_path, strip_icc=strip_icc)
+            _save_clean(img, output_path, input_path, strip_icc=strip_icc, overwrite=overwrite)
             result.exif_removed = True
             result.fields_removed = original_fields
         else:
@@ -224,6 +253,7 @@ def strip_metadata(
                 strip_personal=strip_personal,
                 strip_time=strip_time,
                 strip_icc=strip_icc,
+                overwrite=overwrite,
             )
             result.fields_removed = fields_removed
             result.gps_removed = strip_gps
@@ -246,7 +276,16 @@ def _apply_orientation(img: Image.Image) -> Image.Image:
 # 编码器会从 img.info 回捞的元数据通道；隐私清洗必须显式删除它们，
 # 只是"不传对应 kwarg"并不能阻止 Pillow 把它们写回（HEIC 的 EXIF/XMP、
 # PNG 的 ICC、JPEG 的注释此前都因此泄漏）。
-_AUTO_METADATA_KEYS = ("exif", "xmp", "comment", "photoshop", "iptc")
+_AUTO_METADATA_KEYS = (
+    "exif",
+    "xmp",
+    "XML:com.adobe.xmp",
+    "Raw profile type xmp",
+    "comment",
+    "photoshop",
+    "iptc",
+    "Raw profile type iptc",
+)
 
 # 各扩展名的干净编码参数（不含任何元数据）。
 _STRIP_SAVE_KWARGS: dict[str, dict[str, Any]] = {
@@ -269,6 +308,7 @@ def _save_clean(
     *,
     strip_icc: bool,
     exif_bytes: bytes | None = None,
+    overwrite: bool,
 ) -> None:
     """清除所有会被编码器回捞的元数据通道后原子保存。
 
@@ -302,7 +342,7 @@ def _save_clean(
     if icc:
         kwargs["icc_profile"] = icc
 
-    with atomic_output_path(output_path) as temporary:
+    with atomic_output_path(output_path, overwrite=overwrite) as temporary:
         save.save(temporary, **kwargs)
 
 
@@ -315,6 +355,7 @@ def _selective_strip(
     strip_personal: bool,
     strip_time: bool,
     strip_icc: bool,
+    overwrite: bool,
 ) -> int:
     """选择性清除指定类别的 EXIF 标签"""
     fields_removed = 0
@@ -322,7 +363,7 @@ def _selective_strip(
     try:
         exif = img.getexif()
         if not exif:
-            _save_clean(img, output_path, input_path, strip_icc=strip_icc)
+            _save_clean(img, output_path, input_path, strip_icc=strip_icc, overwrite=overwrite)
             return 0
 
         # 构建要删除的标签集合
@@ -355,11 +396,18 @@ def _selective_strip(
 
         # 保存（重建后的 EXIF 经 kwarg 显式写回）
         exif_bytes = exif.tobytes() if exif else None
-        _save_clean(img, output_path, input_path, strip_icc=strip_icc, exif_bytes=exif_bytes)
+        _save_clean(
+            img,
+            output_path,
+            input_path,
+            strip_icc=strip_icc,
+            exif_bytes=exif_bytes,
+            overwrite=overwrite,
+        )
 
     except Exception:
         # 如果选择性清除失败，回退到完全清除
-        _save_clean(img, output_path, input_path, strip_icc=strip_icc)
+        _save_clean(img, output_path, input_path, strip_icc=strip_icc, overwrite=overwrite)
         fields_removed = -1  # 标记为完全清除
 
     return fields_removed

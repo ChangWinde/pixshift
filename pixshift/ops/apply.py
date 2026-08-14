@@ -3,20 +3,27 @@
 from __future__ import annotations
 
 import json
-import os
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from ..compress_engine import COMPRESS_PRESETS
+from ..converter import SUPPORTED_OUTPUT_FORMATS
 from ..core.defaults import DEFAULT_COMPRESS_PRESET, DEFAULT_CONVERT_QUALITY
 from ..core.errors import OperationPolicyError, OutputCollisionError
 from ..core.files import (
     conversion_output_name,
     derivative_output_name,
     plan_output_path,
+    validate_unique_output_paths,
 )
-from ..video_engine import VIDEO_CODECS, VIDEO_COMPRESS_PRESETS
+from ..strip_engine import resolve_strip_mode
+from ..video_engine import (
+    CONTAINER_DEFAULT_CODEC,
+    VIDEO_CODECS,
+    VIDEO_COMPRESS_PRESETS,
+    validate_container_codec,
+)
 from . import compress as compress_ops
 from . import convert as convert_ops
 from . import strip as strip_ops
@@ -46,6 +53,7 @@ class ApplyResult:
 
     steps: list[AppliedStep] = field(default_factory=list)
     error: str = ""
+    rejected: bool = False
 
     @property
     def ok(self) -> bool:
@@ -81,7 +89,7 @@ def load_plan_document(raw: str) -> list[dict[str, Any]]:
                 {
                     "input": item.get("input") or item.get("input_path"),
                     "command": plan.get("command"),
-                    "arguments": dict(plan.get("arguments") or {}),
+                    "arguments": plan.get("arguments", {}),
                 }
             )
         return [_normalize_step(step) for step in steps]
@@ -105,7 +113,7 @@ def _normalize_step(item: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("invalid_plan_step")
     input_path = item.get("input") or item.get("input_path")
     command = item.get("command")
-    arguments = item.get("arguments") or {}
+    arguments = item.get("arguments", {})
     if not input_path or not isinstance(input_path, str):
         raise ValueError("missing_input")
     if not command or not isinstance(command, str):
@@ -122,7 +130,12 @@ def apply_plans(
     overwrite: bool = False,
     dry_run: bool = False,
 ) -> ApplyResult:
-    """Apply normalized plan steps sequentially."""
+    """Validate a complete batch before executing any step.
+
+    The preflight uses the exact command validators and output planner used by
+    dry-run. Destination collisions (including an output that aliases another
+    step's input) are checked for the whole batch before the first write.
+    """
     result = ApplyResult()
     claimed: set[str] = set()
     for step in steps:
@@ -132,11 +145,49 @@ def apply_plans(
             arguments=step["arguments"],
             output_dir=output_dir,
             overwrite=overwrite,
-            dry_run=dry_run,
+            dry_run=True,
             claimed=claimed,
         )
         result.steps.append(applied)
-    return result
+
+    if any(not (step.success or step.skipped) for step in result.steps):
+        result.error = "plan_validation_failed"
+        result.rejected = True
+        return result
+
+    planned_tasks = [
+        (step.input_path, step.output_path)
+        for step in result.steps
+        if step.output_path and not step.skipped
+    ]
+    try:
+        validate_unique_output_paths(planned_tasks)
+    except OutputCollisionError as error:
+        result.error = error.code
+        result.rejected = True
+        if result.steps:
+            result.steps[-1].success = False
+            result.steps[-1].error = error.code
+            result.steps[-1].detail = str(error)
+        return result
+
+    if dry_run:
+        return result
+
+    executed = ApplyResult()
+    claimed = set()
+    for step in steps:
+        applied = _apply_one(
+            input_path=step["input"],
+            command=step["command"],
+            arguments=step["arguments"],
+            output_dir=output_dir,
+            overwrite=overwrite,
+            dry_run=False,
+            claimed=claimed,
+        )
+        executed.steps.append(applied)
+    return executed
 
 
 def _apply_one(
@@ -231,9 +282,10 @@ def _output_for(
     # same destination. Check that before the existing-output skip, otherwise
     # the first step's fresh write makes the second look like an idempotent
     # skip and the collision is masked.
-    key = os.path.normcase(str(Path(target).resolve(strict=False)))
-    if sys.platform == "darwin":
-        key = key.casefold()
+    # ``claimed`` only catches duplicate destinations within this planning
+    # pass; the shared full-batch validator below also checks input aliases and
+    # filesystem-specific canonical identity.
+    key = str(Path(target).resolve(strict=False))
     if key in claimed:
         raise OutputCollisionError(f"multiple plan steps map to the same output: {target}")
     if Path(target).exists() and not overwrite:
@@ -258,7 +310,17 @@ def _apply_convert(
         return applied
     if target_format == "jpeg":
         target_format = "jpg"
+    if target_format not in SUPPORTED_OUTPUT_FORMATS:
+        applied.error = "unsupported_target_format"
+        return applied
     quality = str(applied.arguments.get("quality") or DEFAULT_CONVERT_QUALITY)
+    if quality not in {"max", "high", "medium", "low", "web"}:
+        applied.error = "unsupported_quality"
+        return applied
+    color_space = str(applied.arguments.get("color_space") or "preserve").lower()
+    if color_space not in {"preserve", "srgb"}:
+        applied.error = "unsupported_color_space"
+        return applied
     output_path, skipped = _output_for(
         applied.input_path,
         output_dir=output_dir,
@@ -278,7 +340,7 @@ def _apply_convert(
     result = convert_ops.convert_one(
         applied.input_path,
         output_path,
-        {"quality": quality, "overwrite": overwrite},
+        {"quality": quality, "overwrite": overwrite, "color_space": color_space},
     )
     applied.success = bool(result.success)
     applied.error = result.error or ""
@@ -293,6 +355,20 @@ def _apply_compress(
     dry_run: bool,
     claimed: set[str],
 ) -> AppliedStep:
+    preset = str(applied.arguments.get("preset") or DEFAULT_COMPRESS_PRESET)
+    if preset not in COMPRESS_PRESETS:
+        applied.error = "unsupported_compress_preset"
+        return applied
+    quality_raw = applied.arguments.get("quality")
+    quality: int | None
+    try:
+        quality = None if quality_raw is None else int(quality_raw)
+    except (TypeError, ValueError):
+        applied.error = "invalid_quality"
+        return applied
+    if quality is not None and not 1 <= quality <= 100:
+        applied.error = "invalid_quality"
+        return applied
     output_path, skipped = _output_for(
         applied.input_path,
         output_dir=output_dir,
@@ -309,15 +385,6 @@ def _apply_compress(
     if dry_run:
         applied.success = True
         return applied
-    preset = str(applied.arguments.get("preset") or DEFAULT_COMPRESS_PRESET)
-    quality_raw = applied.arguments.get("quality")
-    quality: int | None
-    if quality_raw is None:
-        quality = None
-    elif isinstance(quality_raw, int):
-        quality = quality_raw
-    else:
-        quality = int(quality_raw)
     result = compress_ops.compress_one(
         applied.input_path,
         output_path,
@@ -347,15 +414,32 @@ def _apply_video(
     only real execution requires the optional dependency.
     """
     arguments = applied.arguments
+    audio_policy = str(arguments.get("audio_policy") or "compatible").lower()
+    if audio_policy not in {"preserve", "compatible", "compact"}:
+        applied.error = f"unsupported_audio_policy:{audio_policy}"
+        return applied
     codec = str(arguments.get("codec") or "")
     preset = str(arguments.get("preset") or "web")
+    crf_raw = arguments.get("crf")
+    try:
+        crf = int(crf_raw) if crf_raw is not None else None
+    except (TypeError, ValueError):
+        applied.error = "invalid_crf"
+        return applied
+    if crf is not None and not 0 <= crf <= 63:
+        applied.error = "invalid_crf"
+        return applied
     if applied.command == "video.convert":
         container = str(arguments.get("to") or "").lower().lstrip(".")
         if container not in _VIDEO_CONVERT_CONTAINERS:
             applied.error = f"unsupported_target_container:{container or '?'}"
             return applied
-        if codec and codec not in VIDEO_CODECS:
-            applied.error = f"unsupported_video_codec:{codec}"
+        try:
+            validate_container_codec(
+                codec=codec or CONTAINER_DEFAULT_CODEC[container], container=container
+            )
+        except ValueError as error:
+            applied.error = str(error)
             return applied
         output_name = conversion_output_name(applied.input_path, container)
     else:
@@ -396,16 +480,17 @@ def _apply_video(
             container=container,
             codec=codec or None,
             overwrite=overwrite,
+            audio_policy=audio_policy,
         )
     else:
-        crf_raw = arguments.get("crf")
         result = video_ops.compress_one(
             applied.input_path,
             output_path,
             preset=preset,
             codec=codec,
-            crf=int(crf_raw) if crf_raw is not None else None,
+            crf=crf,
             overwrite=overwrite,
+            audio_policy=audio_policy,
         )
     applied.success = bool(result.success)
     applied.error = result.error or ""
@@ -421,6 +506,12 @@ def _apply_strip(
     dry_run: bool,
     claimed: set[str],
 ) -> AppliedStep:
+    mode = str(applied.arguments.get("mode") or "privacy")
+    try:
+        strip_exif, strip_gps, strip_device, strip_personal, strip_time = resolve_strip_mode(mode)
+    except ValueError:
+        applied.error = "invalid_strip_mode"
+        return applied
     output_path, skipped = _output_for(
         applied.input_path,
         output_dir=output_dir,
@@ -437,17 +528,15 @@ def _apply_strip(
     if dry_run:
         applied.success = True
         return applied
-    mode = str(applied.arguments.get("mode") or "privacy")
-    privacy = mode == "privacy"
     result = strip_ops.strip_one(
         applied.input_path,
         output_path,
-        strip_exif=privacy or bool(applied.arguments.get("strip_exif", False)),
-        strip_gps=privacy or bool(applied.arguments.get("strip_gps", True)),
+        strip_exif=strip_exif or bool(applied.arguments.get("strip_exif", False)),
+        strip_gps=strip_gps or bool(applied.arguments.get("strip_gps", False)),
         strip_icc=bool(applied.arguments.get("strip_icc", False)),
-        strip_device=privacy or bool(applied.arguments.get("strip_device", True)),
-        strip_personal=privacy or bool(applied.arguments.get("strip_personal", True)),
-        strip_time=bool(applied.arguments.get("strip_time", False)),
+        strip_device=strip_device or bool(applied.arguments.get("strip_device", False)),
+        strip_personal=strip_personal or bool(applied.arguments.get("strip_personal", False)),
+        strip_time=strip_time or bool(applied.arguments.get("strip_time", False)),
         keep_orientation=bool(applied.arguments.get("keep_orientation", True)),
         overwrite=overwrite,
     )

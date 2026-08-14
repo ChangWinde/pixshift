@@ -32,6 +32,7 @@ from ..presenters.cli_presenters import (
     size_ratio_text,
 )
 from ..presenters.json_presenters import emit_json, emit_json_and_exit
+from ..strip_engine import resolve_strip_mode
 from .common import (
     failure_entry,
     failure_lines,
@@ -469,7 +470,7 @@ def register_workflow_commands(
         if output_dir:
             os.makedirs(output_dir, exist_ok=True)
 
-        mode_flags = _resolve_strip_mode(mode.lower())
+        mode_flags = resolve_strip_mode(mode)
 
         summary = OperationSummary(total=len(skipped_tasks), skipped=len(skipped_tasks))
         fields_removed = 0
@@ -611,21 +612,39 @@ def register_workflow_commands(
             return
         if result.duplicate_groups == 0 and result.deletable_files == 0:
             if as_json:
-                emit_json(
-                    {
-                        "command": "dedup",
-                        "ok": True,
-                        "mode": "analyze",
-                        "total_files": result.total_files,
-                        "duplicate_groups": 0,
-                        "duplicate_files": 0,
-                        "deletable_files": result.deletable_files,
-                        "recoverable_bytes": result.recoverable_size,
-                        "skipped_invalid": result.skipped_invalid,
-                        "duration_sec": round(result.duration, 4),
-                        "preview": [],
-                    }
-                )
+                payload: dict[str, Any] = {
+                    "command": "dedup",
+                    "ok": True,
+                    "mode": (
+                        "delete_dry_run"
+                        if apply_delete and dry_run
+                        else "delete"
+                        if apply_delete
+                        else "analyze"
+                    ),
+                    "total_files": result.total_files,
+                    "duplicate_groups": 0,
+                    "duplicate_files": 0,
+                    "deletable_files": 0,
+                    "recoverable_bytes": 0,
+                    "skipped_invalid": result.skipped_invalid,
+                    "duration_sec": round(result.duration, 4),
+                }
+                if apply_delete and dry_run:
+                    payload.update({"would_delete": 0, "keep": 0})
+                elif apply_delete:
+                    payload.update(
+                        {
+                            "deleted": 0,
+                            "kept": 0,
+                            "skipped": [],
+                            "errors": [],
+                            "message": "no_exact_duplicates",
+                        }
+                    )
+                else:
+                    payload["preview"] = []
+                emit_json(payload)
             else:
                 console.print("[green]未发现重复或相似图片。[/green]\n")
                 if result.skipped_invalid:
@@ -835,13 +854,3 @@ def _build_derivative_tasks(
         )
         tasks.append((file_path, out_path))
     return tasks
-
-
-def _resolve_strip_mode(mode: str) -> tuple[bool, bool, bool, bool, bool]:
-    """Resolve strip mode to (strip_exif, strip_gps, strip_device, strip_personal, strip_time)."""
-    strip_exif = mode == "all"
-    strip_gps = mode in {"privacy", "gps"}
-    strip_device = mode in {"privacy", "device"}
-    strip_personal = mode in {"privacy", "personal"}
-    strip_time = mode == "time"
-    return strip_exif, strip_gps, strip_device, strip_personal, strip_time

@@ -14,6 +14,7 @@ from pixshift.ops import video as video_ops
 from pixshift.pdf_engine import pdf_compress_to_target, pdf_merge_images
 from pixshift.video_engine import (
     MIN_TARGET_VIDEO_BPS,
+    TARGET_AUDIO_BPS,
     VideoInfo,
     build_bitrate_pass_args,
     build_concat_args,
@@ -27,11 +28,11 @@ from pixshift.video_engine import (
 
 
 def test_target_bitrate_budget_math():
-    # 25MB over 100s with audio: (25*8*1024*1024/100)*0.98 - 128000
+    # Compatible audio is reserved before assigning the remaining budget to video.
     bps = compute_target_video_bitrate(25 * 1024 * 1024, 100.0, has_audio=True)
-    assert bps == int(25 * 1024 * 1024 * 8 / 100 * 0.98 - 128_000)
+    assert bps == int(25 * 1024 * 1024 * 8 / 100 * 0.98 - TARGET_AUDIO_BPS)
     silent = compute_target_video_bitrate(25 * 1024 * 1024, 100.0, has_audio=False)
-    assert silent == bps + 128_000
+    assert silent == bps + TARGET_AUDIO_BPS
 
 
 def test_target_bitrate_rejects_bad_signals():
@@ -385,6 +386,34 @@ def test_concat_needs_two_inputs(runner, monkeypatch, clip, tmp_path):
     )
     assert result.exit_code == 2
     assert json.loads(result.output)["error"] == "concat_requires_two_inputs"
+
+
+def test_concat_reencode_rejects_webm_before_probe(runner, monkeypatch, tmp_path):
+    first = tmp_path / "first.mp4"
+    second = tmp_path / "second.mp4"
+    first.write_bytes(b"a")
+    second.write_bytes(b"b")
+    monkeypatch.setattr(video_ops, "FFMPEG_AVAILABLE", True)
+    monkeypatch.setattr(
+        video_ops, "probe", lambda path: pytest.fail("invalid destination must be rejected first")
+    )
+
+    result = runner.invoke(
+        cli,
+        [
+            "video",
+            "concat",
+            str(first),
+            str(second),
+            "--reencode",
+            "-o",
+            str(tmp_path / "joined.webm"),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert json.loads(result.output)["error"] == "unsupported_codec_for_container:h264:webm"
 
 
 # ------------------------------------------------------------------

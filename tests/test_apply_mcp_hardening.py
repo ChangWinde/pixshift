@@ -40,6 +40,8 @@ def test_apply_flags_second_colliding_step(tmp_path):
     result = apply_ops.apply_plans(steps, output_dir=str(tmp_path / "out"))
     assert result.steps[0].success
     assert result.steps[1].error == "output_collision"
+    assert result.rejected
+    assert not (tmp_path / "out" / "a.webp").exists()
 
 
 def test_load_plan_skips_failed_optimize_entries():
@@ -56,10 +58,56 @@ def test_load_plan_skips_failed_optimize_entries():
     assert steps[0]["input"] == "ok.png"
 
 
-@pytest.mark.parametrize("raw", ['{"plans": 5}', "[1]", "42"])
+@pytest.mark.parametrize(
+    "raw",
+    [
+        '{"plans": 5}',
+        "[1]",
+        "42",
+        '{"input":"in.png","command":"strip","arguments":[]}',
+        '{"input":"in.png","command":"strip","arguments":false}',
+    ],
+)
 def test_load_plan_raises_valueerror_not_typeerror(raw):
     with pytest.raises(ValueError):
         apply_ops.load_plan_document(raw)
+
+
+def test_apply_preflight_rejects_output_that_is_another_input(tmp_path):
+    first = _img(tmp_path / "a.png")
+    second = _img(tmp_path / "a.jpg")
+    original = second.read_bytes()
+    steps = [
+        {"input": str(first), "command": "convert", "arguments": {"to": "jpg"}},
+        {"input": str(second), "command": "compress", "arguments": {}},
+    ]
+
+    result = apply_ops.apply_plans(steps, overwrite=True)
+
+    assert result.rejected
+    assert result.error == "output_collision"
+    assert second.read_bytes() == original
+
+
+@pytest.mark.parametrize(
+    "step",
+    [
+        {"command": "compress", "arguments": {"preset": "definitely-invalid"}},
+        {"command": "compress", "arguments": {"quality": "bogus"}},
+        {"command": "strip", "arguments": {"mode": "unknown"}},
+        {"command": "video.compress", "arguments": {"crf": "bogus"}},
+        {"command": "video.convert", "arguments": {"to": "webm", "codec": "h264"}},
+    ],
+)
+def test_apply_dry_run_validates_runtime_parameters(tmp_path, step):
+    source = _img(tmp_path / "source.png")
+    plan = {"input": str(source), **step}
+
+    result = apply_ops.apply_plans([plan], output_dir=str(tmp_path / "out"), dry_run=True)
+
+    assert result.rejected
+    assert not result.ok
+    assert not (tmp_path / "out").exists()
 
 
 def test_mcp_call_tool_isolates_stdin_and_bounds_time(monkeypatch):
@@ -85,7 +133,8 @@ def test_mcp_call_tool_isolates_stdin_and_bounds_time(monkeypatch):
 
     assert captured["stdin"] is server.subprocess.DEVNULL
     assert captured["timeout"] == server._TOOL_TIMEOUT
-    assert captured["command"][1:4] == ["-I", "-m", "pixshift"]
+    assert captured["command"][1:3] == ["-I", "-c"]
+    assert "sys.path.insert" in captured["command"][3]
     assert captured["start_new_session"] is (server.os.name != "nt")
 
 

@@ -2,7 +2,7 @@
 
 所有命令加 `--json` 后输出**单行 JSON**。字段定义稳定，可直接用于脚本与 agent；调用方式与推荐流程见[脚本与 Agent 集成](automation.md)。
 
-正式的 JSON Schema 位于仓库 `docs/schemas/v1/`，CI 会用它校验真实命令输出。
+正式的共享 envelope，以及 `tools` / `optimize` / `apply` / `prep` / `manifest` / `hash` / `verify` 的专用 JSON Schema 位于仓库 `docs/schemas/v1/`，CI 会用它校验真实命令输出。其他命令由共享 envelope 与本页字段契约覆盖；不声称每个命令都有独立 schema。
 
 ## 版本
 
@@ -74,7 +74,7 @@
 
 ### `compare`
 
-`image_a`、`image_b`、`mse`、`psnr`、`ssim`、`quality_rating`、`quality_detail`、`comparison_size`、`resized_for_comparison`。
+`image_a`、`image_b`、`mse`、`psnr`、`ssim`、`quality_rating`、`quality_detail`、`comparison_size`、`resized_for_comparison`、`sampled_for_comparison`、`sample_scale`。
 
 ### `dedup`
 
@@ -118,13 +118,13 @@
 
 ## PDF 命令
 
-`pdf merge`、`pdf extract`、`pdf compress`、`pdf concat`、`pdf info` 均遵循公共字段，并给出 `page_count`、`input_bytes`、`output_bytes`、`duration_sec` 等。
+`pdf merge`、`pdf extract`、`pdf compress`、`pdf concat`、`pdf info` 均遵循公共字段，并给出 `page_count`、`input_bytes`、`output_bytes`、`duration_sec` 等。`pdf concat` 的 `warnings` 会列出无法由拼接模型保留的文档级语义。
 
 `pdf split` 另有：`mode`（`each` 或 `single`）、`total_pages`、`requested_pages`、`written_files`、`skipped_existing`、`input_bytes`、`output_bytes`、`duration_sec`。
 
 ## 视频命令
 
-批处理类（`video convert` / `compress` / `thumbnail` / `extract-audio`）：`total`、`succeeded`、`failed`、`skipped_existing`，以及 `results` 数组（每项含 `input`、`output`、`ok`、`input_bytes`、`output_bytes`、`error`）。
+批处理类（`video convert` / `compress` / `thumbnail` / `extract-audio`）：`total`、`succeeded`、`failed`、`skipped_existing`，以及 `results` 数组（每项含 `input`、`output`、`ok`、`input_bytes`、`output_bytes`、`error`；转码/压缩另含 `audio_policy` 与 `audio_action`）。
 
 单文件类（`video trim` / `gif` / `concat`）直接在顶层给出 `input`、`output`、`ok`、`input_bytes`、`output_bytes`、`error`；`concat` 另有 `clips`。
 
@@ -133,6 +133,10 @@
 未安装 ffmpeg 时，所有视频命令返回 `error: "ffmpeg_missing"`。
 
 ## Agent 命令
+
+### `verify`
+
+跨图片、PDF、视频使用同一质量门。返回 `passed`、`media_type`、源/候选体积、`thresholds`、`metrics`（SSIM、PSNR、是否采样）、布尔结构 `checks` 与数值 `observations`。PDF checks 包括文本层、链接、注释、表单、附件与 outline；带音轨的视频会检查声道/采样率并在 `observations.audio_snr_db` 披露流式差分信噪比（至少 20 dB）。门槛未通过是退出码 `1`；不支持的媒体组合或非法阈值是退出码 `2`。
 
 ### `tools`
 

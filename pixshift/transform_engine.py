@@ -11,6 +11,7 @@ from PIL import Image
 from .core.errors import OperationPolicyError
 from .core.files import atomic_output_path
 from .core.metadata import (
+    convert_color_to_rgb,
     ensure_static_image,
     normalize_orientation,
     normalized_exif_bytes,
@@ -94,6 +95,9 @@ def rotate_image(
             if flip is not None:
                 frame = frame.transpose(_FLIP_TRANSPOSE[flip])
 
+            if frame.mode in {"CMYK", "YCCK", "LAB"} and save_format != "TIFF":
+                frame = convert_color_to_rgb(frame)
+
             save_kwargs: dict[str, object] = {}
             exif_bytes = normalized_exif_bytes(frame)
             if exif_bytes:
@@ -103,12 +107,14 @@ def rotate_image(
                 save_kwargs["icc_profile"] = icc_profile
             if save_format == "JPEG":
                 if frame.mode not in ("RGB", "L"):
-                    frame = frame.convert("RGB")
+                    frame = convert_color_to_rgb(frame)
+                    if frame.mode not in ("RGB", "L"):
+                        frame = frame.convert("RGB")
                 save_kwargs.update({"quality": 95, "subsampling": 0, "optimize": True})
             elif save_format == "WEBP":
                 save_kwargs.update({"quality": 95, "method": 4})
 
-            with atomic_output_path(output_path) as temporary:
+            with atomic_output_path(output_path, overwrite=overwrite) as temporary:
                 frame.save(temporary, format=save_format, **save_kwargs)
 
         result.output_size = os.path.getsize(output_path)

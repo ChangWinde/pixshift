@@ -4,6 +4,7 @@ import json
 import re
 import subprocess
 import sys
+import time
 
 import pytest
 
@@ -180,3 +181,116 @@ def test_stdio_round_trip_through_a_real_subprocess(tmp_path):
     document = json.loads(call["content"][0]["text"])
     assert document["command"] == "optimize"
     assert document["results"][0]["plan"]["command"] in ("convert", "compress", "strip", "keep")
+
+
+def test_slow_tool_does_not_block_ping(monkeypatch, capsys):
+    import io
+
+    def slow_call(name, arguments, *, request_id=None):
+        time.sleep(0.15)
+        return {"content": [{"type": "text", "text": "{}"}], "isError": False}
+
+    messages = [
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": "tools", "arguments": {"args": []}},
+        },
+        {"jsonrpc": "2.0", "id": 2, "method": "ping"},
+    ]
+    monkeypatch.setattr(server, "call_tool", slow_call)
+    monkeypatch.setattr("sys.stdin", io.StringIO("\n".join(map(json.dumps, messages)) + "\n"))
+
+    server.serve()
+
+    responses = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert [response["id"] for response in responses] == [2, 1]
+
+
+def test_cancel_notification_terminates_registered_process(monkeypatch):
+    terminated = []
+
+    class Process:
+        pass
+
+    process = Process()
+    server._ACTIVE_PROCESSES[77] = process  # type: ignore[assignment]
+    monkeypatch.setattr(server, "_terminate_process_tree", terminated.append)
+    try:
+        server._cancel_request(77)
+        assert terminated == [process]
+        assert 77 in server._CANCELLED_REQUESTS
+    finally:
+        server._ACTIVE_PROCESSES.clear()
+        server._CANCELLED_REQUESTS.clear()
+
+
+def test_unknown_cancellations_are_not_retained():
+    server._ACTIVE_PROCESSES.clear()
+    server._OUTSTANDING_REQUESTS.clear()
+    server._CANCELLED_REQUESTS.clear()
+
+    for request_id in range(5000):
+        server._cancel_request(request_id)
+
+    assert not server._CANCELLED_REQUESTS
+
+
+def test_mcp_input_frames_are_bounded_and_stream_recovers(monkeypatch):
+    import io
+
+    monkeypatch.setattr(server, "_MAX_MESSAGE_BYTES", 16)
+    stream = io.TextIOWrapper(io.BytesIO(b"x" * 32 + b"\n{}\n"), encoding="utf-8")
+    monkeypatch.setattr("sys.stdin", stream)
+
+    assert list(server._input_lines()) == [None, "{}\n"]
+
+
+def test_mcp_tool_output_limit_returns_stable_error(monkeypatch):
+    class Process:
+        returncode = 0
+        pid = 123
+
+        def communicate(self, timeout=None):
+            return "x" * 17, ""
+
+    monkeypatch.setattr(server, "_MAX_TOOL_OUTPUT_BYTES", 16)
+    monkeypatch.setattr(server.subprocess, "Popen", lambda *args, **kwargs: Process())
+
+    result = server.call_tool("tools", {"args": []})
+
+    assert result["isError"] is True
+    assert "tool_output_too_large:tools" in result["content"][0]["text"]
+
+
+def test_mcp_serve_bounds_outstanding_tool_calls(monkeypatch, capsys):
+    import io
+
+    def slow_handle(message):
+        time.sleep(0.1)
+        return {"jsonrpc": "2.0", "id": message["id"], "result": {}}
+
+    messages = [
+        {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": "tools/call",
+            "params": {"name": "tools", "arguments": {"args": []}},
+        }
+        for request_id in range(1, 9)
+    ]
+    server._OUTSTANDING_REQUESTS.clear()
+    monkeypatch.setattr(server, "handle_request", slow_handle)
+    monkeypatch.setattr("sys.stdin", io.StringIO("\n".join(map(json.dumps, messages)) + "\n"))
+
+    server.serve()
+
+    responses = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    busy = [
+        response
+        for response in responses
+        if response.get("error", {}).get("message") == "server busy"
+    ]
+    assert len(busy) == len(messages) - server._MAX_IN_FLIGHT_TOOLS
+    assert not server._OUTSTANDING_REQUESTS
