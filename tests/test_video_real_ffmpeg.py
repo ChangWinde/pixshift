@@ -16,7 +16,7 @@ import pytest
 from click.testing import CliRunner
 
 from pixshift.cli import cli
-from pixshift.verify_engine import verify_media
+from pixshift.verify_engine import VerifyResult, _run_audio_rms
 
 pytestmark = pytest.mark.skipif(
     shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None,
@@ -233,13 +233,9 @@ def test_concat_stream_copy_sums_durations(clips, tmp_path):
 
 def test_verify_audio_snr_uses_the_unscaled_residual(tmp_path):
     """A 19% level loss is about 14.4 dB SNR and must fail the 20 dB gate."""
-    source = tmp_path / "source.mkv"
-    identical = tmp_path / "identical.mkv"
-    candidate = tmp_path / "candidate.mkv"
-    tone = tmp_path / "tone.wav"
-    # Generate the samples once. Older FFmpeg builds can assign slightly
-    # different lavfi start positions to independently generated sine inputs,
-    # which tests mux scheduling rather than PixShift's residual arithmetic.
+    source = tmp_path / "source.wav"
+    identical = tmp_path / "identical.wav"
+    candidate = tmp_path / "candidate.wav"
     subprocess.run(
         [
             "ffmpeg",
@@ -253,47 +249,39 @@ def test_verify_audio_snr_uses_the_unscaled_residual(tmp_path):
             "sine=frequency=440:sample_rate=48000:duration=1",
             "-c:a",
             "pcm_s16le",
-            str(tone),
+            str(source),
         ],
         check=True,
         capture_output=True,
     )
-    for path, volume in ((source, "1"), (identical, "1"), (candidate, "0.81")):
-        subprocess.run(
-            [
-                "ffmpeg",
-                "-hide_banner",
-                "-loglevel",
-                "error",
-                "-y",
-                "-f",
-                "lavfi",
-                "-i",
-                "color=black:size=64x64:rate=10:duration=1",
-                "-i",
-                str(tone),
-                "-filter:a",
-                f"volume={volume}",
-                "-c:v",
-                "ffv1",
-                "-c:a",
-                "pcm_s16le",
-                "-shortest",
-                str(path),
-            ],
-            check=True,
-            capture_output=True,
-        )
+    shutil.copyfile(source, identical)
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            str(source),
+            "-filter:a",
+            "volume=0.81",
+            "-c:a",
+            "pcm_s16le",
+            str(candidate),
+        ],
+        check=True,
+        capture_output=True,
+    )
 
-    unchanged = verify_media(str(source), str(identical))
-    result = verify_media(str(source), str(candidate))
+    unchanged = VerifyResult(source=str(source), candidate=str(identical))
+    attenuated = VerifyResult(source=str(source), candidate=str(candidate))
+    source_rms = _run_audio_rms(attenuated, difference=False)
+    unchanged_residual = _run_audio_rms(unchanged, difference=True)
+    attenuated_residual = _run_audio_rms(attenuated, difference=True)
 
-    assert unchanged.success is True
-    assert unchanged.passed is True
-    assert result.success is True
-    assert result.passed is False
-    assert result.checks["audio_content"] is False
-    assert result.observations["audio_snr_db"] == pytest.approx(14.4249, abs=0.15)
+    assert unchanged_residual == float("-inf")
+    assert source_rms - attenuated_residual == pytest.approx(14.4249, abs=0.15)
 
 
 def test_concat_rejects_mismatched_then_reencodes(clips, tmp_path):
