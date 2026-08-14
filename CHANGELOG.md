@@ -13,9 +13,10 @@ All notable changes to this project are documented in this file.
   unlike the automatic generated-file exclusion, these are an explicit
   instruction and therefore also apply to named files.
 - A pixel budget that refuses decompression bombs before decoding: an image
-  declaring more than 300 megapixels fails with the stable `image_too_large`
-  error instead of exhausting memory. `PIXSHIFT_MAX_PIXELS` raises or
-  disables the limit.
+  declaring more than 120 megapixels fails with the stable `image_too_large`
+  error instead of exhausting memory. `PIXSHIFT_MAX_PIXELS` adjusts or
+  disables PixShift's additional limit; Pillow's independent process policy
+  remains in force.
 - `dedup --backup-dir DIR` moves duplicates into a directory instead of
   deleting them, making the only destructive operation reversible; colliding
   names get a numeric suffix rather than overwriting each other.
@@ -26,6 +27,23 @@ All notable changes to this project are documented in this file.
   own copy of the directory-walking collector; they now delegate to the
   shared one in `core/files.py`, which is what gives every command the new
   filters at once.
+
+### Fixed
+
+- Image opens now enforce the pixel budget at one boundary without replacing
+  Pillow globals or warning filters in host applications. Animated conversion
+  checks every frame and the aggregate frame budget before decoding copies.
+- PDF merge/concat and video concat reject an aggregate output that aliases an
+  input, including files discovered through directory scans. PDF compression
+  preserves both soft masks and colour-key masks, and the JPEG splice path no
+  longer carries comments or trailing bytes placed after scan data.
+- Video batches validate every destination before the first encode, ignore
+  prior cross-container `_compressed` derivatives, reap ffmpeg after caller
+  interruption, and refuse missing or zero-byte encoder outputs without
+  replacing an existing destination.
+- The MCP stdio adapter validates JSON-RPC envelopes and tool schemas, accepts
+  only strict JSON, starts isolated CLI process groups, and terminates the
+  whole group on timeout instead of leaving workers or ffmpeg running.
 
 ## [1.3.0] - 2026-08-13
 

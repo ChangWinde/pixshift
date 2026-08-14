@@ -67,14 +67,17 @@ Linux、macOS、Windows 均有持续集成覆盖，每次提交都会在三个�
 
 ## 报错 `image_too_large` 是怎么回事
 
-为防范「解压炸弹」——一个几百 KB 的文件声明了几十亿像素的画布，解码时会耗尽内存——单张图片有 3 亿像素的上限（远高于任何真实照片：一亿像素中画幅也才 1 亿）。超限的文件在**解码之前**就被拒绝，不会先把内存吃满。
+为防范「解压炸弹」——一个几百 KB 的文件声明了几十亿像素的画布，解码时会耗尽内存——PixShift 默认限制单张图片为 1.2 亿像素。超限的文件在**解码之前**就被拒绝，不会先把内存吃满。
 
 确实需要处理超大画布时，用环境变量放宽或关闭：
 
 ```bash
-PIXSHIFT_MAX_PIXELS=1000000000 pixshift convert huge.png -t webp   # 提高到 10 亿
-PIXSHIFT_MAX_PIXELS=0 pixshift convert huge.png -t webp            # 完全关闭
+PIXSHIFT_MAX_PIXELS=1000000000 pixshift convert huge.png -t webp   # 提高 PixShift 限制
+PIXSHIFT_MAX_PIXELS=0 pixshift convert huge.png -t webp            # 仅关闭 PixShift 附加限制
 ```
+
+Pillow 自身的解压炸弹策略独立生效，因此提高或关闭 PixShift 限制不会降低
+宿主进程配置的 Pillow 安全阈值。
 
 ## 会不会上传我的文件
 
