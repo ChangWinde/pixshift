@@ -522,7 +522,19 @@ def concat_list_content(paths: list[str]) -> str:
 
 def build_concat_args(list_path: str, dst: str, *, reencode: bool = False) -> list[str]:
     """Argv to concatenate the clips listed in ``list_path`` into ``dst``."""
-    args = ["-f", "concat", "-safe", "0", "-i", _safe_path(list_path)]
+    # "-safe 0" is required because the list holds absolute paths, but it also
+    # lets the demuxer honour protocol prefixes in list entries. Restricting the
+    # whitelist to "file" keeps a crafted entry from reaching the network.
+    args = [
+        "-f",
+        "concat",
+        "-safe",
+        "0",
+        "-protocol_whitelist",
+        "file",
+        "-i",
+        _safe_path(list_path),
+    ]
     if reencode:
         args += ["-c:v", "libx264", "-crf", "23", "-preset", "medium", "-c:a", "aac"]
         args += ["-b:a", "128k"]
