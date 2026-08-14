@@ -1,11 +1,14 @@
 """Operation wrappers for montage workflows."""
 
+from ..core.files import SelectionFilters
 from ..montage_engine import MontageResult, collect_montage_files, create_montage
 
 
-def collect_files(input_paths: list[str], recursive: bool) -> list[str]:
+def collect_files(
+    input_paths: list[str], recursive: bool, selection: SelectionFilters | None = None
+) -> list[str]:
     """Collect candidate files for montage input."""
-    return collect_montage_files(input_paths, recursive)
+    return collect_montage_files(input_paths, recursive, selection)
 
 
 def create(

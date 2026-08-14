@@ -11,6 +11,7 @@ PixShift Dedup Engine — 图片哈希去重
 
 import hashlib
 import os
+import shutil
 import stat
 import time
 from collections import defaultdict
@@ -381,9 +382,26 @@ def _sha256_file(path: str) -> str:
     return digest.hexdigest()
 
 
+def _backup_destination(source: str, backup_dir: str) -> Path:
+    """A collision-free path for ``source`` inside ``backup_dir``.
+
+    Duplicates come from different directories and often share a basename, so
+    the first collision gets a numeric suffix rather than overwriting the file
+    that was just moved to safety.
+    """
+    origin = Path(source)
+    target = Path(backup_dir) / origin.name
+    index = 1
+    while target.exists():
+        target = Path(backup_dir) / f"{origin.stem}_{index}{origin.suffix}"
+        index += 1
+    return target
+
+
 def delete_duplicates(
     candidates: list[DeleteCandidate],
     dry_run: bool = True,
+    backup_dir: str | None = None,
 ) -> dict[str, list[str]]:
     """
     删除重复文件
@@ -391,6 +409,7 @@ def delete_duplicates(
     Args:
         candidates: 分析阶段生成的字节级相同候选
         dry_run: 仅预览不删除
+        backup_dir: 给定时把重复文件移入该目录，而不是永久删除
 
     Returns:
         {"deleted": [...], "kept": [...], "skipped": [...], "errors": [...]}
@@ -403,6 +422,9 @@ def delete_duplicates(
     }
     kept = set()
 
+    if backup_dir and not dry_run:
+        Path(backup_dir).mkdir(parents=True, exist_ok=True)
+
     for candidate in candidates:
         kept.add(candidate.keep)
         if dry_run:
@@ -414,8 +436,15 @@ def delete_duplicates(
                     f"{candidate.duplicate}: file changed or is no longer byte-identical"
                 )
                 continue
-            os.remove(candidate.duplicate)
-            result["deleted"].append(candidate.duplicate)
+            if backup_dir:
+                destination = _backup_destination(candidate.duplicate, backup_dir)
+                # move, not copy+unlink: the duplicate must never exist twice
+                # nor vanish if the write fails halfway.
+                shutil.move(candidate.duplicate, str(destination))
+                result["deleted"].append(f"{candidate.duplicate} -> {destination}")
+            else:
+                os.remove(candidate.duplicate)
+                result["deleted"].append(candidate.duplicate)
         except Exception as e:
             result["errors"].append(f"{candidate.duplicate}: {e}")
 

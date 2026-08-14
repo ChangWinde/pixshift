@@ -36,6 +36,8 @@ from .common import (
     failure_entry,
     failure_lines,
     run_batch_tasks,
+    selection_filters_or_exit,
+    selection_options,
     usage_error_or_exit,
     validate_tasks_or_exit,
 )
@@ -88,6 +90,7 @@ def register_workflow_commands(
     @click.option(
         "--json", "as_json", is_flag=True, default=False, help="以 JSON 输出结果（适合脚本调用）"
     )
+    @selection_options
     def compress_cmd(
         inputs: tuple,
         output_dir: str | None,
@@ -100,6 +103,9 @@ def register_workflow_commands(
         overwrite: bool,
         flatten: bool,
         dry_run: bool,
+        include_globs: tuple[str, ...],
+        exclude_globs: tuple[str, ...],
+        min_file_size: str | None,
         as_json: bool,
     ) -> None:
         """批量压缩图片，保持原格式。"""
@@ -116,10 +122,32 @@ def register_workflow_commands(
             console.print(f"\n{mini_logo} [bold]图片压缩[/bold]\n")
 
         if as_json:
-            files = compress_ops.collect_files(list(inputs), input_format, recursive)
+            files = compress_ops.collect_files(
+                list(inputs),
+                input_format,
+                recursive,
+                selection_filters_or_exit(
+                    command="compress",
+                    as_json=as_json,
+                    include_globs=include_globs,
+                    exclude_globs=exclude_globs,
+                    min_file_size=min_file_size,
+                ),
+            )
         else:
             with console.status("[bold cyan]正在扫描文件...[/bold cyan]"):
-                files = compress_ops.collect_files(list(inputs), input_format, recursive)
+                files = compress_ops.collect_files(
+                    list(inputs),
+                    input_format,
+                    recursive,
+                    selection_filters_or_exit(
+                        command="compress",
+                        as_json=as_json,
+                        include_globs=include_globs,
+                        exclude_globs=exclude_globs,
+                        min_file_size=min_file_size,
+                    ),
+                )
 
         files, ignored_generated = filter_generated_inputs(
             files,
@@ -307,6 +335,7 @@ def register_workflow_commands(
     @click.option(
         "--json", "as_json", is_flag=True, default=False, help="以 JSON 输出结果（适合脚本调用）"
     )
+    @selection_options
     def strip_cmd(
         inputs: tuple,
         output_dir: str | None,
@@ -317,6 +346,9 @@ def register_workflow_commands(
         overwrite: bool,
         flatten: bool,
         dry_run: bool,
+        include_globs: tuple[str, ...],
+        exclude_globs: tuple[str, ...],
+        min_file_size: str | None,
         as_json: bool,
     ) -> None:
         """清理图片元数据，默认优先保护隐私。"""
@@ -324,10 +356,30 @@ def register_workflow_commands(
             console.print(f"\n{mini_logo} [bold]元数据清理[/bold]\n")
 
         if as_json:
-            files = strip_ops.collect_files(list(inputs), recursive)
+            files = strip_ops.collect_files(
+                list(inputs),
+                recursive,
+                selection_filters_or_exit(
+                    command="strip",
+                    as_json=as_json,
+                    include_globs=include_globs,
+                    exclude_globs=exclude_globs,
+                    min_file_size=min_file_size,
+                ),
+            )
         else:
             with console.status("[bold cyan]正在扫描文件...[/bold cyan]"):
-                files = strip_ops.collect_files(list(inputs), recursive)
+                files = strip_ops.collect_files(
+                    list(inputs),
+                    recursive,
+                    selection_filters_or_exit(
+                        command="strip",
+                        as_json=as_json,
+                        include_globs=include_globs,
+                        exclude_globs=exclude_globs,
+                        min_file_size=min_file_size,
+                    ),
+                )
 
         files, ignored_generated = filter_generated_inputs(
             files,
@@ -510,6 +562,13 @@ def register_workflow_commands(
     )
     @click.option("--yes", is_flag=True, default=False, help="跳过删除确认(与 --delete 一起使用)")
     @click.option(
+        "--backup-dir",
+        "backup_dir",
+        default=None,
+        type=click.Path(file_okay=False),
+        help="把重复文件移入该目录而不是删除（可回退）",
+    )
+    @click.option(
         "--json", "as_json", is_flag=True, default=False, help="以 JSON 输出结果（适合脚本调用）"
     )
     def dedup_cmd(
@@ -520,6 +579,7 @@ def register_workflow_commands(
         apply_delete: bool,
         dry_run: bool,
         yes: bool,
+        backup_dir: str | None,
         as_json: bool,
     ) -> None:
         """检测相似图片，安全清理字节级重复文件。"""
@@ -714,7 +774,9 @@ def register_workflow_commands(
                     console.print("  [yellow]已取消删除[/yellow]\n")
                 return
 
-        delete_result = dedup_ops.delete(result.delete_candidates, dry_run=False)
+        delete_result = dedup_ops.delete(
+            result.delete_candidates, dry_run=False, backup_dir=backup_dir
+        )
         if as_json:
             payload = {
                 "command": "dedup",

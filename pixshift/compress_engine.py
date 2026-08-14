@@ -17,7 +17,12 @@ from typing import Any
 from PIL import Image
 
 from .core.defaults import DEFAULT_COMPRESS_PRESET
-from .core.files import atomic_copy_file, atomic_write_bytes
+from .core.files import (
+    SelectionFilters,
+    atomic_copy_file,
+    atomic_write_bytes,
+    collect_supported_files,
+)
 from .core.metadata import (
     ensure_static_image,
     flatten_transparency,
@@ -474,29 +479,13 @@ def collect_compressible_files(
     input_paths: list[str],
     input_format: str | None = None,
     recursive: bool = False,
+    selection: SelectionFilters | None = None,
 ) -> list[str]:
     """收集所有可压缩的图片文件"""
-    files = []
-    compressible_exts = set(COMPRESSIBLE_FORMATS.keys())
-
-    for path_str in input_paths:
-        path = Path(path_str)
-        if path.is_file():
-            ext = path.suffix.lower()
-            if input_format:
-                if ext == f".{input_format.lower().lstrip('.')}":
-                    files.append(str(path.resolve()))
-            elif ext in compressible_exts:
-                files.append(str(path.resolve()))
-        elif path.is_dir():
-            pattern = "**/*" if recursive else "*"
-            for item in sorted(path.glob(pattern)):
-                if item.is_file():
-                    ext = item.suffix.lower()
-                    if input_format:
-                        if ext == f".{input_format.lower().lstrip('.')}":
-                            files.append(str(item.resolve()))
-                    elif ext in compressible_exts:
-                        files.append(str(item.resolve()))
-
-    return sorted(set(files))
+    return collect_supported_files(
+        input_paths,
+        set(COMPRESSIBLE_FORMATS),
+        input_format=input_format,
+        recursive=recursive,
+        selection=selection,
+    )

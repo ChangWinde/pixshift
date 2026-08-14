@@ -33,7 +33,13 @@ from ..core.files import filter_generated_inputs, partition_existing_outputs
 from ..ops import convert as convert_ops
 from ..presenters.cli_presenters import print_failures, show_dry_run_table
 from ..presenters.json_presenters import emit_json, emit_json_and_exit
-from .common import usage_error_or_exit, validate_affixes_or_exit, validate_tasks_or_exit
+from .common import (
+    selection_filters_or_exit,
+    selection_options,
+    usage_error_or_exit,
+    validate_affixes_or_exit,
+    validate_tasks_or_exit,
+)
 
 
 def _convert_worker(args: tuple[str, str, dict[str, Any]]) -> ConvertResult:
@@ -151,6 +157,7 @@ def register_convert_command(
     @click.option(
         "--json", "as_json", is_flag=True, default=False, help="以 JSON 输出结果（适合脚本调用）"
     )
+    @selection_options
     def convert(
         inputs: tuple,
         output_format: str,
@@ -171,6 +178,9 @@ def register_convert_command(
         flatten: bool,
         dry_run: bool,
         bg_color: str,
+        include_globs: tuple[str, ...],
+        exclude_globs: tuple[str, ...],
+        min_file_size: str | None,
         as_json: bool,
     ) -> None:
         """转换图片格式，支持单文件、目录和批量并行处理。"""
@@ -216,10 +226,32 @@ def register_convert_command(
             )
 
         if as_json:
-            files = convert_ops.collect_convert_files(list(inputs), input_format, recursive)
+            files = convert_ops.collect_convert_files(
+                list(inputs),
+                input_format,
+                recursive,
+                selection_filters_or_exit(
+                    command="convert",
+                    as_json=as_json,
+                    include_globs=include_globs,
+                    exclude_globs=exclude_globs,
+                    min_file_size=min_file_size,
+                ),
+            )
         else:
             with console.status("[bold cyan]正在扫描文件...[/bold cyan]"):
-                files = convert_ops.collect_convert_files(list(inputs), input_format, recursive)
+                files = convert_ops.collect_convert_files(
+                    list(inputs),
+                    input_format,
+                    recursive,
+                    selection_filters_or_exit(
+                        command="convert",
+                        as_json=as_json,
+                        include_globs=include_globs,
+                        exclude_globs=exclude_globs,
+                        min_file_size=min_file_size,
+                    ),
+                )
 
         files, ignored_generated = filter_generated_inputs(
             files,

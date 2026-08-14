@@ -16,7 +16,7 @@ from typing import Any
 
 from PIL import ExifTags, Image
 
-from .core.files import atomic_output_path
+from .core.files import SelectionFilters, atomic_output_path, collect_supported_files
 from .core.metadata import ensure_static_image, normalize_orientation
 
 # ============================================================
@@ -456,23 +456,26 @@ def analyze_metadata(filepath: str) -> dict[str, Any]:
     return info
 
 
+# Formats that can carry EXIF/XMP metadata worth stripping.
+EXIF_CAPABLE_FORMATS = {
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".webp",
+    ".tiff",
+    ".tif",
+    ".heic",
+    ".heif",
+    ".avif",
+}
+
+
 def collect_strippable_files(
     input_paths: list[str],
     recursive: bool = False,
+    selection: SelectionFilters | None = None,
 ) -> list[str]:
-    """收集所有可清除元数据的图片文件"""
-    files = []
-    # 支持 EXIF 的格式
-    exif_formats = {".jpg", ".jpeg", ".png", ".webp", ".tiff", ".tif", ".heic", ".heif", ".avif"}
-
-    for path_str in input_paths:
-        path = Path(path_str)
-        if path.is_file():
-            if path.suffix.lower() in exif_formats:
-                files.append(str(path.resolve()))
-        elif path.is_dir():
-            pattern = "**/*" if recursive else "*"
-            for item in sorted(path.glob(pattern)):
-                if item.is_file() and item.suffix.lower() in exif_formats:
-                    files.append(str(item.resolve()))
-    return sorted(set(files))
+    """收集所有可清除元数据的图片文件（仅限能承载 EXIF 的格式）"""
+    return collect_supported_files(
+        input_paths, EXIF_CAPABLE_FORMATS, recursive=recursive, selection=selection
+    )

@@ -1,11 +1,14 @@
 """Operation wrappers for crop workflows."""
 
+from ..core.files import SelectionFilters
 from ..crop_engine import CropResult, collect_croppable_files, crop_single
 
 
-def collect_files(input_paths: list[str], recursive: bool) -> list[str]:
+def collect_files(
+    input_paths: list[str], recursive: bool, selection: SelectionFilters | None = None
+) -> list[str]:
     """Collect candidate files for crop operations."""
-    return collect_croppable_files(input_paths, recursive)
+    return collect_croppable_files(input_paths, recursive, selection)
 
 
 def crop_one(

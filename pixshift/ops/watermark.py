@@ -1,5 +1,6 @@
 """Operation wrappers for watermark workflows."""
 
+from ..core.files import SelectionFilters
 from ..watermark_engine import (
     WatermarkResult,
     add_image_watermark,
@@ -8,9 +9,11 @@ from ..watermark_engine import (
 )
 
 
-def collect_files(input_paths: list[str], recursive: bool) -> list[str]:
+def collect_files(
+    input_paths: list[str], recursive: bool, selection: SelectionFilters | None = None
+) -> list[str]:
     """Collect candidate files for watermark operations."""
-    return collect_watermark_files(input_paths, recursive)
+    return collect_watermark_files(input_paths, recursive, selection)
 
 
 def text_one(

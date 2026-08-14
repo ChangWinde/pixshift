@@ -8,13 +8,14 @@ plan validation).
 """
 
 import os
-from collections.abc import Mapping, Sequence
-from typing import NoReturn
+from collections.abc import Callable, Mapping, Sequence
+from typing import Any, NoReturn
 
 import click
 
+from ..compress_engine import parse_target_size
 from ..core.errors import OperationPolicyError
-from ..core.files import validate_filename_affix, validate_unique_output_paths
+from ..core.files import SelectionFilters, validate_filename_affix, validate_unique_output_paths
 from ..core.parallel import run_batch_tasks
 from ..presenters.json_presenters import emit_json_and_exit
 
@@ -22,10 +23,81 @@ __all__ = [
     "failure_entry",
     "failure_lines",
     "run_batch_tasks",
+    "selection_filters_or_exit",
+    "selection_options",
     "usage_error_or_exit",
     "validate_affixes_or_exit",
     "validate_tasks_or_exit",
 ]
+
+
+def selection_options(function: Callable[..., Any]) -> Callable[..., Any]:
+    """Attach the shared batch-narrowing options to a command.
+
+    Every batch command accepts the same three, so they are declared once:
+    a user who learns them on ``compress`` can use them on ``convert``.
+    """
+    for option in reversed(
+        (
+            click.option(
+                "--include",
+                "include_globs",
+                multiple=True,
+                help="仅处理匹配该通配符的文件，可重复，如 --include '*.jpg'",
+            ),
+            click.option(
+                "--exclude",
+                "exclude_globs",
+                multiple=True,
+                help="跳过匹配该通配符的文件，可重复，如 --exclude '*/thumbs/*'",
+            ),
+            click.option(
+                "--min-file-size",
+                "min_file_size",
+                default=None,
+                type=str,
+                help="仅处理不小于该体积的文件，如 1MB",
+            ),
+        )
+    ):
+        function = option(function)
+    return function
+
+
+def selection_filters_or_exit(
+    *,
+    command: str,
+    as_json: bool,
+    include_globs: Sequence[str] = (),
+    exclude_globs: Sequence[str] = (),
+    min_file_size: str | None = None,
+) -> SelectionFilters:
+    """Build the selection filters, rejecting a malformed size before any work."""
+    min_bytes = 0
+    if min_file_size is not None:
+        try:
+            min_bytes = parse_target_size(min_file_size)
+        except ValueError:
+            usage_error_or_exit(
+                command=command,
+                as_json=as_json,
+                error="invalid_min_file_size",
+                detail="--min-file-size expects a size like 500KB or 2MB",
+                human_message="--min-file-size 需要 500KB / 2MB 这样的大小格式",
+            )
+        if min_bytes < 0:
+            usage_error_or_exit(
+                command=command,
+                as_json=as_json,
+                error="invalid_min_file_size",
+                detail="--min-file-size must not be negative",
+                human_message="--min-file-size 不能为负数",
+            )
+    return SelectionFilters(
+        include=tuple(include_globs),
+        exclude=tuple(exclude_globs),
+        min_bytes=min_bytes,
+    )
 
 
 def usage_error_or_exit(

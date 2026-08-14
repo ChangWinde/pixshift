@@ -2,6 +2,31 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- Batch selection filters shared by every batch command: `--include GLOB`,
+  `--exclude GLOB` and `--min-file-size SIZE` narrow a run without shell
+  gymnastics. Globs match both the full path and the bare name, so
+  `--exclude '*/thumbs/*'` and `--exclude '*_draft.jpg'` both read naturally;
+  unlike the automatic generated-file exclusion, these are an explicit
+  instruction and therefore also apply to named files.
+- A pixel budget that refuses decompression bombs before decoding: an image
+  declaring more than 300 megapixels fails with the stable `image_too_large`
+  error instead of exhausting memory. `PIXSHIFT_MAX_PIXELS` raises or
+  disables the limit.
+- `dedup --backup-dir DIR` moves duplicates into a directory instead of
+  deleting them, making the only destructive operation reversible; colliding
+  names get a numeric suffix rather than overwriting each other.
+
+### Changed
+
+- Five engines (compress, strip, crop, watermark, montage) each carried their
+  own copy of the directory-walking collector; they now delegate to the
+  shared one in `core/files.py`, which is what gives every command the new
+  filters at once.
+
 ## [1.3.0] - 2026-08-13
 
 ### Fixed

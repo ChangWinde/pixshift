@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from ..converter import SUPPORTED_INPUT_FORMATS, PixShiftConverter
-from ..core.files import collect_supported_files
+from ..core.files import SelectionFilters, collect_supported_files
 
 
 @dataclass
@@ -54,9 +54,16 @@ _SENSITIVE_HINTS = (
 )
 
 
-def build_inventory(input_paths: list[str], *, recursive: bool = False) -> InventoryResult:
+def build_inventory(
+    input_paths: list[str],
+    *,
+    recursive: bool = False,
+    selection: SelectionFilters | None = None,
+) -> InventoryResult:
     """Collect image properties and content hashes."""
-    files = collect_supported_files(input_paths, SUPPORTED_INPUT_FORMATS, recursive=recursive)
+    files = collect_supported_files(
+        input_paths, SUPPORTED_INPUT_FORMATS, recursive=recursive, selection=selection
+    )
     result = InventoryResult()
     for path in files:
         item = InventoryItem(path=path)

@@ -17,6 +17,7 @@ from ..converter import (
     SUPPORTED_INPUT_FORMATS,
 )
 from ..core.files import (
+    SelectionFilters,
     collect_supported_files,
     derivative_output_name,
     filter_generated_inputs,
@@ -32,7 +33,14 @@ from ..ops import watermark as watermark_ops
 from ..presenters.cli_presenters import batch_progress, print_failures
 from ..presenters.json_presenters import emit_json, emit_json_and_exit
 from ..video_engine import VideoOptimizeResult, collect_video_files
-from .common import failure_entry, failure_lines, run_batch_tasks, validate_tasks_or_exit
+from .common import (
+    failure_entry,
+    failure_lines,
+    run_batch_tasks,
+    selection_filters_or_exit,
+    selection_options,
+    validate_tasks_or_exit,
+)
 
 _WATERMARK_POSITIONS = [
     "top-left",
@@ -136,6 +144,7 @@ def register_advanced_commands(
     @click.option("--flatten", is_flag=True, default=False, help="扁平输出目录")
     @click.option("--dry-run", is_flag=True, default=False, help="仅预览")
     @click.option("--json", "as_json", is_flag=True, default=False, help="以 JSON 输出结果")
+    @selection_options
     def crop_cmd(
         inputs: tuple[str, ...],
         output_dir: str | None,
@@ -148,6 +157,9 @@ def register_advanced_commands(
         overwrite: bool,
         flatten: bool,
         dry_run: bool,
+        include_globs: tuple[str, ...],
+        exclude_globs: tuple[str, ...],
+        min_file_size: str | None,
         as_json: bool,
     ) -> None:
         """按区域、比例或内容边界批量裁剪图片。"""
@@ -159,7 +171,17 @@ def register_advanced_commands(
             console.print("[red]请仅选择一种模式: --crop、--aspect 或 --trim。[/red]")
             raise click.exceptions.Exit(2)
 
-        files = crop_ops.collect_files(list(inputs), recursive)
+        files = crop_ops.collect_files(
+            list(inputs),
+            recursive,
+            selection_filters_or_exit(
+                command="crop",
+                as_json=as_json,
+                include_globs=include_globs,
+                exclude_globs=exclude_globs,
+                min_file_size=min_file_size,
+            ),
+        )
         files, ignored_generated = filter_generated_inputs(
             files,
             list(inputs),
@@ -321,6 +343,7 @@ def register_advanced_commands(
     @click.option("--flatten", is_flag=True, default=False, help="扁平输出目录")
     @click.option("--dry-run", is_flag=True, default=False, help="仅预览")
     @click.option("--json", "as_json", is_flag=True, default=False, help="以 JSON 输出结果")
+    @selection_options
     def watermark_text_cmd(
         inputs: tuple[str, ...],
         text: str,
@@ -338,10 +361,20 @@ def register_advanced_commands(
         overwrite: bool,
         flatten: bool,
         dry_run: bool,
+        include_globs: tuple[str, ...],
+        exclude_globs: tuple[str, ...],
+        min_file_size: str | None,
         as_json: bool,
     ) -> None:
         """添加文字水印。"""
         _run_watermark(
+            selection_filters_or_exit(
+                command="watermark.text",
+                as_json=as_json,
+                include_globs=include_globs,
+                exclude_globs=exclude_globs,
+                min_file_size=min_file_size,
+            ),
             mode="text",
             inputs=inputs,
             recursive=recursive,
@@ -395,6 +428,7 @@ def register_advanced_commands(
     @click.option("--flatten", is_flag=True, default=False, help="扁平输出目录")
     @click.option("--dry-run", is_flag=True, default=False, help="仅预览")
     @click.option("--json", "as_json", is_flag=True, default=False, help="以 JSON 输出结果")
+    @selection_options
     def watermark_image_cmd(
         inputs: tuple[str, ...],
         watermark_path: str,
@@ -409,10 +443,20 @@ def register_advanced_commands(
         overwrite: bool,
         flatten: bool,
         dry_run: bool,
+        include_globs: tuple[str, ...],
+        exclude_globs: tuple[str, ...],
+        min_file_size: str | None,
         as_json: bool,
     ) -> None:
         """添加图片水印。"""
         _run_watermark(
+            selection_filters_or_exit(
+                command="watermark.image",
+                as_json=as_json,
+                include_globs=include_globs,
+                exclude_globs=exclude_globs,
+                min_file_size=min_file_size,
+            ),
             mode="image",
             inputs=inputs,
             recursive=recursive,
@@ -454,6 +498,7 @@ def register_advanced_commands(
     @click.option("-r", "--recursive", is_flag=True, default=False, help="递归目录")
     @click.option("--overwrite", is_flag=True, default=False, help="覆盖输出")
     @click.option("--json", "as_json", is_flag=True, default=False, help="以 JSON 输出结果")
+    @selection_options
     def montage_cmd(
         inputs: tuple[str, ...],
         output_path: str,
@@ -469,10 +514,23 @@ def register_advanced_commands(
         no_auto_size: bool,
         recursive: bool,
         overwrite: bool,
+        include_globs: tuple[str, ...],
+        exclude_globs: tuple[str, ...],
+        min_file_size: str | None,
         as_json: bool,
     ) -> None:
         """将多张图片组合为网格拼图。"""
-        files = montage_ops.collect_files(list(inputs), recursive)
+        files = montage_ops.collect_files(
+            list(inputs),
+            recursive,
+            selection_filters_or_exit(
+                command="montage",
+                as_json=as_json,
+                include_globs=include_globs,
+                exclude_globs=exclude_globs,
+                min_file_size=min_file_size,
+            ),
+        )
         files, ignored_generated = filter_generated_inputs(
             files,
             list(inputs),
@@ -542,10 +600,31 @@ def register_advanced_commands(
     @click.argument("inputs", nargs=-1, required=True, type=click.Path(exists=True))
     @click.option("-r", "--recursive", is_flag=True, default=False, help="递归处理目录")
     @click.option("--json", "as_json", is_flag=True, default=False, help="以 JSON 输出结果")
-    def optimize_cmd(inputs: tuple[str, ...], recursive: bool, as_json: bool) -> None:
+    @selection_options
+    def optimize_cmd(
+        inputs: tuple[str, ...],
+        recursive: bool,
+        include_globs: tuple[str, ...],
+        exclude_globs: tuple[str, ...],
+        min_file_size: str | None,
+        as_json: bool,
+    ) -> None:
         """分析图片/视频并推荐输出格式。"""
-        files = collect_supported_files(list(inputs), SUPPORTED_INPUT_FORMATS, recursive=recursive)
-        video_files = collect_video_files(list(inputs), recursive)
+        selection = selection_filters_or_exit(
+            command="optimize",
+            as_json=as_json,
+            include_globs=include_globs,
+            exclude_globs=exclude_globs,
+            min_file_size=min_file_size,
+        )
+        files = collect_supported_files(
+            list(inputs), SUPPORTED_INPUT_FORMATS, recursive=recursive, selection=selection
+        )
+        video_files = [
+            path
+            for path in collect_video_files(list(inputs), recursive)
+            if selection.accepts(Path(path))
+        ]
         if not files and not video_files:
             if as_json:
                 emit_json({"command": "optimize", "ok": True, "total": 0, "message": "no_files"})
@@ -701,6 +780,7 @@ def _format_optimization_plan(plan: dict[str, Any]) -> str:
 
 
 def _run_watermark(
+    selection: SelectionFilters,
     mode: str,
     inputs: tuple[str, ...],
     recursive: bool,
@@ -715,7 +795,7 @@ def _run_watermark(
     console: Console,
     human_size: Callable[[int], str],
 ) -> None:
-    files = watermark_ops.collect_files(list(inputs), recursive)
+    files = watermark_ops.collect_files(list(inputs), recursive, selection)
     files, ignored_generated = filter_generated_inputs(
         files,
         list(inputs),

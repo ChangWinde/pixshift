@@ -12,6 +12,7 @@ from typing import Any
 from ..converter import SUPPORTED_INPUT_FORMATS
 from ..core.defaults import DEFAULT_CONVERT_QUALITY
 from ..core.files import (
+    SelectionFilters,
     atomic_copy_file,
     collect_supported_files,
     conversion_output_name,
@@ -65,6 +66,7 @@ def prep_files(
     overwrite: bool = False,
     dry_run: bool = False,
     strip_privacy: bool = True,
+    selection: SelectionFilters | None = None,
 ) -> PrepResult:
     """Prepare delivery-ready assets under ``output_dir``.
 
@@ -72,7 +74,9 @@ def prep_files(
     privacy-stripped, and atomically published. Existing outputs are
     idempotent skips unless ``overwrite`` is set.
     """
-    collected = collect_supported_files(input_paths, SUPPORTED_INPUT_FORMATS, recursive=recursive)
+    collected = collect_supported_files(
+        input_paths, SUPPORTED_INPUT_FORMATS, recursive=recursive, selection=selection
+    )
     files, ignored = filter_generated_inputs(
         collected,
         input_paths,

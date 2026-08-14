@@ -1,11 +1,13 @@
 """Shared file collection and safe output planning helpers."""
 
+import fnmatch
 import os
 import shutil
 import sys
 import uuid
 from collections.abc import Iterable, Iterator, Sequence
 from contextlib import contextmanager, suppress
+from dataclasses import dataclass
 from pathlib import Path
 
 from .errors import (
@@ -15,20 +17,68 @@ from .errors import (
 )
 
 
+@dataclass(frozen=True)
+class SelectionFilters:
+    """User-requested narrowing of a batch, applied during collection.
+
+    Unlike the automatic generated-artifact exclusion, these filters are an
+    explicit instruction, so they apply to named files as well as to files
+    discovered by scanning a directory.
+    """
+
+    include: tuple[str, ...] = ()
+    exclude: tuple[str, ...] = ()
+    min_bytes: int = 0
+    max_bytes: int | None = None
+
+    @property
+    def active(self) -> bool:
+        return bool(self.include or self.exclude or self.min_bytes or self.max_bytes)
+
+    def accepts(self, path: Path) -> bool:
+        """Whether ``path`` survives the filters."""
+        if not self.active:
+            return True
+        # Match a glob against the full path and the bare name, so both
+        # `--exclude '*/thumbs/*'` and `--exclude '*_draft.jpg'` read naturally.
+        text = path.as_posix()
+        name = path.name
+        if self.include and not any(
+            fnmatch.fnmatch(text, rule) or fnmatch.fnmatch(name, rule) for rule in self.include
+        ):
+            return False
+        if any(fnmatch.fnmatch(text, rule) or fnmatch.fnmatch(name, rule) for rule in self.exclude):
+            return False
+        if self.min_bytes or self.max_bytes is not None:
+            try:
+                size = path.stat().st_size
+            except OSError:
+                return False
+            if size < self.min_bytes:
+                return False
+            if self.max_bytes is not None and size > self.max_bytes:
+                return False
+        return True
+
+
 def collect_supported_files(
     input_paths: Sequence[str],
     supported_exts: set[str],
     input_format: str | None = None,
     recursive: bool = False,
+    selection: SelectionFilters | None = None,
 ) -> list[str]:
     """Collect unique files that match a supported extension."""
     files: list[str] = []
     normalized_filter = _normalize_ext(input_format) if input_format else None
+    filters = selection or SelectionFilters()
 
     for path_str in input_paths:
         source = Path(path_str)
         if source.is_file():
             ext = source.suffix.lower()
+            if not filters.accepts(source):
+                continue
             if normalized_filter:
                 if ext == normalized_filter:
                     files.append(str(source.resolve()))
@@ -44,6 +94,8 @@ def collect_supported_files(
             if not item.is_file():
                 continue
             ext = item.suffix.lower()
+            if not filters.accepts(item):
+                continue
             if normalized_filter:
                 if ext == normalized_filter:
                     files.append(str(item.resolve()))
