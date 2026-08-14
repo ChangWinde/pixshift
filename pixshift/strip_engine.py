@@ -16,8 +16,8 @@ from typing import Any
 
 from PIL import ExifTags, Image
 
-from .core.files import atomic_output_path
-from .core.metadata import ensure_static_image, normalize_orientation
+from .core.files import SelectionFilters, atomic_output_path, collect_supported_files
+from .core.metadata import ensure_static_image, normalize_orientation, open_image
 
 # ============================================================
 #  数据结构
@@ -191,7 +191,7 @@ def strip_metadata(
 
         os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
 
-        with Image.open(input_path) as opened:
+        with open_image(input_path) as opened:
             ensure_static_image(opened)
             img = opened.copy()
             img.info.update(opened.info)
@@ -383,8 +383,16 @@ def _iter_exif_entries(exif: Any) -> list[tuple[int, Any]]:
 
 
 def _remove_named_tags(exif_fields: Any, tags_to_remove: set[str]) -> int:
-    """Remove matching EXIF fields from one mutable IFD mapping."""
-    keys = [key for key in exif_fields if ExifTags.TAGS.get(key, "") in tags_to_remove]
+    """Remove matching EXIF fields from one mutable IFD mapping.
+
+    Matching is case-insensitive because Pillow's table and the EXIF
+    specification disagree on capitalisation for some tags: the spec writes
+    ``SubSecTimeOriginal`` while Pillow stores ``SubsecTimeOriginal``. Exact
+    string comparison silently matched nothing for those tags, so a sub-second
+    timestamp survived a strip that reported success.
+    """
+    wanted = {name.casefold() for name in tags_to_remove}
+    keys = [key for key in exif_fields if ExifTags.TAGS.get(key, "").casefold() in wanted]
     for key in keys:
         del exif_fields[key]
     return len(keys)
@@ -413,7 +421,7 @@ def analyze_metadata(filepath: str) -> dict[str, Any]:
     }
 
     try:
-        with Image.open(filepath) as img:
+        with open_image(filepath) as img:
             if img.info.get("icc_profile"):
                 info["has_icc"] = True
 
@@ -456,23 +464,26 @@ def analyze_metadata(filepath: str) -> dict[str, Any]:
     return info
 
 
+# Formats that can carry EXIF/XMP metadata worth stripping.
+EXIF_CAPABLE_FORMATS = {
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".webp",
+    ".tiff",
+    ".tif",
+    ".heic",
+    ".heif",
+    ".avif",
+}
+
+
 def collect_strippable_files(
     input_paths: list[str],
     recursive: bool = False,
+    selection: SelectionFilters | None = None,
 ) -> list[str]:
-    """收集所有可清除元数据的图片文件"""
-    files = []
-    # 支持 EXIF 的格式
-    exif_formats = {".jpg", ".jpeg", ".png", ".webp", ".tiff", ".tif", ".heic", ".heif", ".avif"}
-
-    for path_str in input_paths:
-        path = Path(path_str)
-        if path.is_file():
-            if path.suffix.lower() in exif_formats:
-                files.append(str(path.resolve()))
-        elif path.is_dir():
-            pattern = "**/*" if recursive else "*"
-            for item in sorted(path.glob(pattern)):
-                if item.is_file() and item.suffix.lower() in exif_formats:
-                    files.append(str(item.resolve()))
-    return sorted(set(files))
+    """收集所有可清除元数据的图片文件（仅限能承载 EXIF 的格式）"""
+    return collect_supported_files(
+        input_paths, EXIF_CAPABLE_FORMATS, recursive=recursive, selection=selection
+    )

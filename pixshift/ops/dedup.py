@@ -15,6 +15,10 @@ def analyze(
     )
 
 
-def delete(groups: list[DeleteCandidate], dry_run: bool = False) -> dict[str, list[str]]:
-    """Delete duplicate files for selected groups."""
-    return delete_duplicates(groups, dry_run=dry_run)
+def delete(
+    groups: list[DeleteCandidate],
+    dry_run: bool = False,
+    backup_dir: str | None = None,
+) -> dict[str, list[str]]:
+    """Delete duplicate files, or move them to ``backup_dir`` when given."""
+    return delete_duplicates(groups, dry_run=dry_run, backup_dir=backup_dir)

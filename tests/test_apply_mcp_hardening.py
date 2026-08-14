@@ -2,6 +2,7 @@
 
 import io
 import json
+import os
 
 import pytest
 from PIL import Image
@@ -68,18 +69,24 @@ def test_mcp_call_tool_isolates_stdin_and_bounds_time(monkeypatch):
 
     class _Done:
         returncode = 0
-        stdout = '{"ok": true}'
-        stderr = ""
+        pid = 123
 
-    def fake_run(cmd, **kwargs):
+        def communicate(self, timeout=None):
+            captured["timeout"] = timeout
+            return '{"ok": true}', ""
+
+    def fake_popen(cmd, **kwargs):
+        captured["command"] = cmd
         captured.update(kwargs)
         return _Done()
 
-    monkeypatch.setattr(server.subprocess, "run", fake_run)
+    monkeypatch.setattr(server.subprocess, "Popen", fake_popen)
     server.call_tool("tools", {"args": []})
 
     assert captured["stdin"] is server.subprocess.DEVNULL
     assert captured["timeout"] == server._TOOL_TIMEOUT
+    assert captured["command"][1:4] == ["-I", "-m", "pixshift"]
+    assert captured["start_new_session"] is (server.os.name != "nt")
 
 
 def test_mcp_call_tool_reports_timeout(monkeypatch):
@@ -87,13 +94,43 @@ def test_mcp_call_tool_reports_timeout(monkeypatch):
 
     import pixshift.mcp.server as server
 
-    def fake_run(cmd, **kwargs):
-        raise subprocess.TimeoutExpired(cmd, kwargs.get("timeout", 1))
+    terminated = []
 
-    monkeypatch.setattr(server.subprocess, "run", fake_run)
+    class _TimedOut:
+        returncode = -15
+        pid = 123
+
+        def communicate(self, timeout=None):
+            if timeout is not None:
+                raise subprocess.TimeoutExpired(["pixshift"], timeout)
+            return "", ""
+
+    monkeypatch.setattr(server.subprocess, "Popen", lambda *args, **kwargs: _TimedOut())
+    monkeypatch.setattr(server, "_terminate_process_tree", terminated.append)
+
     out = server.call_tool("tools", {"args": []})
     assert out["isError"] is True
     assert "tool_timeout" in out["content"][0]["text"]
+    assert len(terminated) == 1
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process-group signals")
+def test_mcp_timeout_cleanup_signals_the_whole_posix_group(monkeypatch):
+    import pixshift.mcp.server as server
+
+    signals = []
+
+    class _Process:
+        pid = 123
+
+        def wait(self, timeout=None):
+            return 0
+
+    monkeypatch.setattr(server.os, "killpg", lambda pid, sig: signals.append((pid, sig)))
+
+    server._terminate_process_tree(_Process())
+
+    assert signals == [(123, server.signal.SIGTERM), (123, server.signal.SIGKILL)]
 
 
 def test_mcp_serve_rejects_non_object_message(monkeypatch, capsys):

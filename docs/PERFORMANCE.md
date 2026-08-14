@@ -30,11 +30,12 @@ Other bounded-performance decisions:
 - montage performs a lightweight dimension pass and then decodes one image at a
   time. A 24-image 2000×1500 benchmark reduced peak RSS from about 450 MB to
   191 MB (58%) with comparable runtime.
-- `pdf merge` splices original JPEG bytes (metadata segments dropped, entropy
-  data untouched) instead of decoding and re-encoding when no transform is
-  needed. A 12-image 3000×2000 q88 benchmark: 0.87s → 0.20s (4.3×) with a 21%
-  smaller PDF and zero generation loss; oriented, CMYK, alpha, or explicitly
-  recompressed (`--quality < 95`) inputs keep the re-encode path.
+- `pdf merge` splices eligible single-scan JPEG bytes (metadata segments
+  dropped, entropy data untouched) instead of decoding and re-encoding when no
+  transform is needed. A 12-image 3000×2000 q88 benchmark: 0.87s → 0.20s
+  (4.3×) with a 21% smaller PDF and zero generation loss; oriented, CMYK,
+  progressive/multi-scan, tailed, alpha, or explicitly recompressed
+  (`--quality < 95`) inputs keep the safe re-encode path.
 - `pdf compress` resolves image placement rects once per page via
   `get_image_info` instead of one `get_image_rects` content-stream parse per
   image (quadratic on dense pages). Measured on 4 pages × 40 placements:

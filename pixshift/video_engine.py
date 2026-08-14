@@ -20,6 +20,7 @@ import os
 import shutil
 import subprocess
 import threading
+from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -522,7 +523,19 @@ def concat_list_content(paths: list[str]) -> str:
 
 def build_concat_args(list_path: str, dst: str, *, reencode: bool = False) -> list[str]:
     """Argv to concatenate the clips listed in ``list_path`` into ``dst``."""
-    args = ["-f", "concat", "-safe", "0", "-i", _safe_path(list_path)]
+    # "-safe 0" is required because the list holds absolute paths, but it also
+    # lets the demuxer honour protocol prefixes in list entries. Restricting the
+    # whitelist to "file" keeps a crafted entry from reaching the network.
+    args = [
+        "-f",
+        "concat",
+        "-safe",
+        "0",
+        "-protocol_whitelist",
+        "file",
+        "-i",
+        _safe_path(list_path),
+    ]
     if reencode:
         args += ["-c:v", "libx264", "-crf", "23", "-preset", "medium", "-c:a", "aac"]
         args += ["-b:a", "128k"]
@@ -839,6 +852,15 @@ def run_ffmpeg(args: list[str], *, timeout: float = DEFAULT_RUN_TIMEOUT_S) -> tu
         process.wait()
         thread.join(timeout=1.0)
         return 124, "ffmpeg_timeout"
+    except BaseException:
+        # KeyboardInterrupt/SystemExit must not leave ffmpeg encoding after the
+        # PixShift caller has stopped or while an atomic temp path is removed.
+        with suppress(OSError):
+            process.kill()
+        with suppress(OSError, subprocess.TimeoutExpired):
+            process.wait(timeout=1.0)
+        thread.join(timeout=1.0)
+        raise
     thread.join(timeout=1.0)
     tail = "".join(captured[-5:]).strip()
     return process.returncode, tail

@@ -68,6 +68,8 @@ pixshift pdf concat a.pdf b.pdf -o joined.pdf [--json]
 ```
 
 按命令行给定的顺序首尾拼接。`-r` 可递归扫描目录中的 PDF。
+输出文件不能同时是任一输入；目录扫描时也一样。若需重复生成，请把输出放在
+扫描目录外，避免把真实源文档误当成旧产物覆盖。
 
 !!! note "merge 与 concat 的区别"
     `merge` 的输入是**图片**，产出一个新 PDF；`concat` 的输入是**已有 PDF**，把它们连成一个文档。
@@ -81,3 +83,8 @@ pixshift pdf info input.pdf [--pages] [--json]
 输出页数、PDF 版本、是否加密、体积等。`--pages` 额外列出每页的尺寸与图片数量。
 
 加密文档会在处理前给出稳定的错误提示，而不是中途失败留下半成品。
+
+!!! warning "压缩与拼接不是安全净化"
+    `pdf compress` 和 `pdf concat` 以保留文档语义为目标，可能继续保留链接、
+    附件、JavaScript 或启动动作。它们不会执行这些动作，但下游阅读器可能会；
+    不要把产物当作已 sanitize 的安全分享副本，只在可信阅读器中打开未知 PDF。

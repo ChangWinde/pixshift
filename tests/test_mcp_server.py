@@ -2,12 +2,29 @@
 
 import json
 import re
+import subprocess
+import sys
+
+import pytest
 
 from pixshift.mcp import server
 
 
+def _initialize_request(request_id=1):
+    return {
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": server.PROTOCOL_VERSION,
+            "capabilities": {},
+            "clientInfo": {"name": "test-client", "version": "1"},
+        },
+    }
+
+
 def test_initialize_reports_capabilities():
-    response = server.handle_request({"jsonrpc": "2.0", "id": 1, "method": "initialize"})
+    response = server.handle_request(_initialize_request())
     assert response is not None
     result = response["result"]
     assert result["protocolVersion"] == server.PROTOCOL_VERSION
@@ -66,21 +83,73 @@ def test_tools_call_unknown_tool_is_error():
         }
     )
     assert response is not None
-    assert response["result"]["isError"] is True
+    assert response["error"]["code"] == -32602
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        {"id": 1, "method": "ping"},
+        {"jsonrpc": "1.0", "id": 1, "method": "ping"},
+        {"jsonrpc": "2.0", "id": None, "method": "ping"},
+        {"jsonrpc": "2.0", "id": True, "method": "ping"},
+        {"jsonrpc": "2.0", "id": 1, "method": 7},
+    ],
+)
+def test_invalid_jsonrpc_envelopes_are_rejected(message):
+    response = server.handle_request(message)
+    assert response is not None
+    assert response["error"]["code"] == -32600
+
+
+def test_initialize_requires_protocol_parameters():
+    response = server.handle_request(
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}
+    )
+    assert response is not None
+    assert response["error"]["code"] == -32602
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        [1],
+        {"name": "tools", "arguments": {"args": ["\x00"]}},
+        {"name": "tools", "arguments": {"args": "not-an-array"}},
+    ],
+)
+def test_tools_call_rejects_protocol_invalid_params(params):
+    response = server.handle_request(
+        {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": params}
+    )
+    assert response is not None
+    assert response["error"]["code"] == -32602
+
+
+def test_tool_child_cannot_import_a_workspace_shadow_module(tmp_path, monkeypatch):
+    marker = tmp_path / "imported"
+    (tmp_path / "pixshift.py").write_text(
+        f"from pathlib import Path\nPath({str(marker)!r}).write_text('owned')\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    result = server.call_tool("tools", {"args": []})
+
+    assert result["isError"] is False
+    assert not marker.exists()
+    assert json.loads(result["content"][0]["text"])["command"] == "tools"
 
 
 def test_stdio_round_trip_through_a_real_subprocess(tmp_path):
     """Drive the adapter over its actual transport, not just handle_request."""
-    import subprocess
-    import sys
-
     from PIL import Image
 
     photo = tmp_path / "photo.png"
     Image.new("RGB", (32, 32), "teal").save(str(photo))
     requests = "\n".join(
         [
-            json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}),
+            json.dumps(_initialize_request()),
             json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}),
             json.dumps(
                 {

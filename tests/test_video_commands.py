@@ -142,6 +142,55 @@ def test_convert_batch_json_success(runner, ffmpeg_ready, tmp_path):
     assert (tmp_path / "a.webm").read_bytes() == b"encoded-output"
 
 
+def test_convert_rejects_batch_output_collisions_before_encoding(runner, ffmpeg_ready, tmp_path):
+    left = tmp_path / "left" / "same.mp4"
+    right = tmp_path / "right" / "same.mp4"
+    left.parent.mkdir()
+    right.parent.mkdir()
+    left.write_bytes(b"left")
+    right.write_bytes(b"right")
+    output = tmp_path / "out"
+
+    result = runner.invoke(
+        cli,
+        [
+            "video",
+            "convert",
+            str(left),
+            str(right),
+            "--to",
+            "webm",
+            "--output",
+            str(output),
+            "--overwrite",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 2, result.output
+    assert json.loads(result.output)["error"] == "output_collision"
+    assert ffmpeg_ready == []
+    assert not output.exists()
+
+
+def test_recursive_compress_does_not_recompress_cross_container_outputs(
+    runner, ffmpeg_ready, tmp_path
+):
+    source = tmp_path / "clip.mov"
+    source.write_bytes(b"source")
+
+    first = runner.invoke(cli, ["video", "compress", str(tmp_path), "-r", "--json"])
+    second = runner.invoke(cli, ["video", "compress", str(tmp_path), "-r", "--json"])
+
+    assert first.exit_code == 0, first.output
+    assert second.exit_code == 0, second.output
+    assert (tmp_path / "clip_compressed.mp4").is_file()
+    assert not (tmp_path / "clip_compressed_compressed.mp4").exists()
+    second_payload = json.loads(second.output)
+    assert second_payload["total"] == 1
+    assert second_payload["skipped_existing"] == 1
+
+
 def test_convert_uses_requested_codec(runner, ffmpeg_ready, clip):
     result = runner.invoke(
         cli, ["video", "convert", str(clip), "-t", "mkv", "--codec", "h265", "--json"]

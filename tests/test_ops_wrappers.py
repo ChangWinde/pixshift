@@ -1,5 +1,6 @@
 """Tests for operation-layer wrapper modules."""
 
+from pixshift.core.files import SelectionFilters
 from pixshift.ops import compress as compress_ops
 from pixshift.ops import convert as convert_ops
 from pixshift.ops import dedup as dedup_ops
@@ -25,11 +26,19 @@ def test_convert_build_tasks_uses_expected_output_format(tmp_path):
 
 
 def test_compress_collect_files_delegates(monkeypatch):
-    monkeypatch.setattr(
-        "pixshift.ops.compress.collect_compressible_files",
-        lambda paths, fmt, recursive: ["ok.jpg"],
-    )
+    seen = {}
+
+    def fake_collect(paths, fmt, recursive, selection=None):
+        seen["selection"] = selection
+        return ["ok.jpg"]
+
+    monkeypatch.setattr("pixshift.ops.compress.collect_compressible_files", fake_collect)
     assert compress_ops.collect_files(["/tmp"], "jpg", True) == ["ok.jpg"]
+    assert seen["selection"] is None
+
+    filters = SelectionFilters(exclude=("*.tmp",))
+    assert compress_ops.collect_files(["/tmp"], "jpg", True, filters) == ["ok.jpg"]
+    assert seen["selection"] is filters
 
 
 def test_strip_analyze_and_strip_delegate(monkeypatch):
@@ -51,10 +60,12 @@ def test_strip_analyze_and_strip_delegate(monkeypatch):
 def test_dedup_wrappers_delegate(monkeypatch):
     monkeypatch.setattr("pixshift.ops.dedup.find_duplicates", lambda **_: "analysis")
     monkeypatch.setattr(
-        "pixshift.ops.dedup.delete_duplicates", lambda groups, dry_run: {"deleted": groups}
+        "pixshift.ops.dedup.delete_duplicates",
+        lambda groups, dry_run, backup_dir=None: {"deleted": groups, "backup_dir": backup_dir},
     )
     assert dedup_ops.analyze(["a"], False, "phash", 5) == "analysis"
-    assert dedup_ops.delete(["g"]) == {"deleted": ["g"]}
+    assert dedup_ops.delete(["g"]) == {"deleted": ["g"], "backup_dir": None}
+    assert dedup_ops.delete(["g"], backup_dir="/tmp/keep")["backup_dir"] == "/tmp/keep"
 
 
 def test_pdf_wrappers_delegate(monkeypatch):

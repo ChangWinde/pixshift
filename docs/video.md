@@ -53,6 +53,9 @@ pixshift video concat a.mp4 b.mp4 -o joined.mp4 [--json]
 
 默认使用**流拷贝**：不重新编码，无画质损失且几乎瞬时完成，但要求各段的编码与分辨率一致。参数不一致时返回 `concat_requires_matching_streams`，此时加 `--reencode` 会把所有片段统一重编码为 h264 后再拼接。
 
+输出文件不能与任何输入片段同路径；即使使用 `--overwrite` 也会在编码前以
+`output_collision` 拒绝，防止聚合操作静默替换源素材。
+
 ## trim — 截取片段
 
 ```bash

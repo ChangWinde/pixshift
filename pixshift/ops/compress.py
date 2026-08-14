@@ -1,11 +1,17 @@
 """Operation wrappers for image compression workflows."""
 
 from ..compress_engine import CompressResult, collect_compressible_files, compress_single
+from ..core.files import SelectionFilters
 
 
-def collect_files(input_paths: list[str], input_format: str | None, recursive: bool) -> list[str]:
+def collect_files(
+    input_paths: list[str],
+    input_format: str | None,
+    recursive: bool,
+    selection: SelectionFilters | None = None,
+) -> list[str]:
     """Collect candidate files for compression."""
-    return collect_compressible_files(input_paths, input_format, recursive)
+    return collect_compressible_files(input_paths, input_format, recursive, selection)
 
 
 def compress_one(

@@ -12,6 +12,7 @@ from typing import Any
 from ..converter import SUPPORTED_INPUT_FORMATS
 from ..core.defaults import DEFAULT_CONVERT_QUALITY
 from ..core.files import (
+    SelectionFilters,
     atomic_copy_file,
     collect_supported_files,
     conversion_output_name,
@@ -20,6 +21,7 @@ from ..core.files import (
     plan_output_path,
     validate_unique_output_paths,
 )
+from ..core.metadata import open_image
 from ..core.parallel import run_batch_tasks
 from . import convert as convert_ops
 from . import strip as strip_ops
@@ -65,6 +67,7 @@ def prep_files(
     overwrite: bool = False,
     dry_run: bool = False,
     strip_privacy: bool = True,
+    selection: SelectionFilters | None = None,
 ) -> PrepResult:
     """Prepare delivery-ready assets under ``output_dir``.
 
@@ -72,7 +75,9 @@ def prep_files(
     privacy-stripped, and atomically published. Existing outputs are
     idempotent skips unless ``overwrite`` is set.
     """
-    collected = collect_supported_files(input_paths, SUPPORTED_INPUT_FORMATS, recursive=recursive)
+    collected = collect_supported_files(
+        input_paths, SUPPORTED_INPUT_FORMATS, recursive=recursive, selection=selection
+    )
     files, ignored = filter_generated_inputs(
         collected,
         input_paths,
@@ -192,9 +197,7 @@ def _sha256(path: str) -> str:
 
 def _dims(path: str) -> tuple[int | None, int | None]:
     try:
-        from PIL import Image
-
-        with Image.open(path) as image:
+        with open_image(path) as image:
             return int(image.width), int(image.height)
     except Exception:
         return None, None

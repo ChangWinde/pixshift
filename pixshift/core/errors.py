@@ -7,6 +7,15 @@ class OperationPolicyError(ValueError):
     code = "operation_policy_error"
 
 
+class ImageTooLargeError(OperationPolicyError):
+    """The image exceeds the pixel budget that guards against decompression bombs."""
+
+    code = "image_too_large"
+
+    def __init__(self, pixels: int, limit: int) -> None:
+        super().__init__(f"{self.code}:{pixels}>{limit}")
+
+
 class InvalidFilenameComponentError(OperationPolicyError):
     """A filename fragment contains path syntax or unsafe bytes."""
 

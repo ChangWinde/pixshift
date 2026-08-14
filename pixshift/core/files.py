@@ -1,11 +1,13 @@
 """Shared file collection and safe output planning helpers."""
 
+import fnmatch
 import os
 import shutil
 import sys
 import uuid
 from collections.abc import Iterable, Iterator, Sequence
 from contextlib import contextmanager, suppress
+from dataclasses import dataclass
 from pathlib import Path
 
 from .errors import (
@@ -15,20 +17,68 @@ from .errors import (
 )
 
 
+@dataclass(frozen=True)
+class SelectionFilters:
+    """User-requested narrowing of a batch, applied during collection.
+
+    Unlike the automatic generated-artifact exclusion, these filters are an
+    explicit instruction, so they apply to named files as well as to files
+    discovered by scanning a directory.
+    """
+
+    include: tuple[str, ...] = ()
+    exclude: tuple[str, ...] = ()
+    min_bytes: int = 0
+    max_bytes: int | None = None
+
+    @property
+    def active(self) -> bool:
+        return bool(self.include or self.exclude or self.min_bytes or self.max_bytes)
+
+    def accepts(self, path: Path) -> bool:
+        """Whether ``path`` survives the filters."""
+        if not self.active:
+            return True
+        # Match a glob against the full path and the bare name, so both
+        # `--exclude '*/thumbs/*'` and `--exclude '*_draft.jpg'` read naturally.
+        text = path.as_posix()
+        name = path.name
+        if self.include and not any(
+            fnmatch.fnmatch(text, rule) or fnmatch.fnmatch(name, rule) for rule in self.include
+        ):
+            return False
+        if any(fnmatch.fnmatch(text, rule) or fnmatch.fnmatch(name, rule) for rule in self.exclude):
+            return False
+        if self.min_bytes or self.max_bytes is not None:
+            try:
+                size = path.stat().st_size
+            except OSError:
+                return False
+            if size < self.min_bytes:
+                return False
+            if self.max_bytes is not None and size > self.max_bytes:
+                return False
+        return True
+
+
 def collect_supported_files(
     input_paths: Sequence[str],
     supported_exts: set[str],
     input_format: str | None = None,
     recursive: bool = False,
+    selection: SelectionFilters | None = None,
 ) -> list[str]:
     """Collect unique files that match a supported extension."""
     files: list[str] = []
     normalized_filter = _normalize_ext(input_format) if input_format else None
+    filters = selection or SelectionFilters()
 
     for path_str in input_paths:
         source = Path(path_str)
         if source.is_file():
             ext = source.suffix.lower()
+            if not filters.accepts(source):
+                continue
             if normalized_filter:
                 if ext == normalized_filter:
                     files.append(str(source.resolve()))
@@ -44,6 +94,8 @@ def collect_supported_files(
             if not item.is_file():
                 continue
             ext = item.suffix.lower()
+            if not filters.accepts(item):
+                continue
             if normalized_filter:
                 if ext == normalized_filter:
                     files.append(str(item.resolve()))
@@ -109,8 +161,10 @@ def filter_generated_inputs(
             continue
         if generated_suffix and resolved.stem.endswith(generated_suffix):
             original_stem = resolved.stem[: -len(generated_suffix)]
-            original = resolved.with_name(f"{original_stem}{resolved.suffix}")
-            if original in candidates:
+            if any(
+                candidate.parent == resolved.parent and candidate.stem == original_stem
+                for candidate in candidates
+            ):
                 ignored += 1
                 continue
         if normalized_extension and resolved.suffix.lower() == normalized_extension:
@@ -260,8 +314,16 @@ def _output_collision_key(output: str) -> str:
 
 
 def validate_unique_output_paths(tasks: Sequence[tuple[str, str]]) -> None:
-    """Fail a batch when two sources resolve to the same destination."""
+    """Fail a batch when two sources resolve to the same destination.
+
+    Also rejects a destination that is a *different* task's source. Writing
+    ``a.jpg`` on top of ``b.jpg`` while ``b.jpg`` is still queued for reading
+    destroys b's original bytes and makes the batch's result depend on task
+    ordering. Rewriting a file in place (source == its own destination) stays
+    allowed; that is the documented overwrite behaviour.
+    """
     destinations: dict[str, str] = {}
+    sources = {_output_collision_key(source): source for source, _ in tasks}
     for source, output in tasks:
         key = _output_collision_key(output)
         previous = destinations.get(key)
@@ -269,7 +331,27 @@ def validate_unique_output_paths(tasks: Sequence[tuple[str, str]]) -> None:
             raise OutputCollisionError(
                 f"multiple inputs map to the same output: {previous}, {source} -> {output}"
             )
+        clashing_source = sources.get(key)
+        if clashing_source is not None and key != _output_collision_key(source):
+            raise OutputCollisionError(
+                f"output would overwrite another input in the same batch: "
+                f"{source} -> {output} (also an input)"
+            )
         destinations[key] = source
+
+
+def validate_aggregate_output_path(inputs: Sequence[str], output: str) -> None:
+    """Reject an aggregate output that aliases any of its source paths.
+
+    Aggregate commands intentionally map several inputs to one destination, so
+    ``validate_unique_output_paths`` does not apply. Replacing one of those
+    inputs after consuming it is still destructive and surprising, even with
+    ``--overwrite``.
+    """
+    output_key = _output_collision_key(output)
+    for input_path in inputs:
+        if _output_collision_key(input_path) == output_key:
+            raise OutputCollisionError(f"aggregate output is also an input: {output}")
 
 
 @contextmanager
@@ -282,6 +364,8 @@ def atomic_output_path(output_path: str) -> Iterator[str]:
         yield str(temporary)
         if not temporary.is_file():
             raise OSError("encoder did not create its planned output")
+        if temporary.stat().st_size == 0:
+            raise OSError("encoder created an empty output")
         # "rb+" rather than "rb": Windows' os.fsync (_commit) requires a
         # write-capable handle and fails with EBADF on a read-only one —
         # which made every single output write fail on Windows.

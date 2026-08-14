@@ -17,11 +17,12 @@ from PIL import Image, ImageDraw, ImageFont
 
 from .converter import SUPPORTED_INPUT_FORMATS
 from .core.errors import AnimatedInputNotSupportedError
-from .core.files import atomic_output_path
+from .core.files import SelectionFilters, atomic_output_path, collect_supported_files
 from .core.metadata import (
     ensure_static_image,
     image_has_transparency,
     normalize_orientation,
+    open_image,
 )
 
 # ============================================================
@@ -112,7 +113,7 @@ def create_montage(
         image_specs: list[tuple[str, int, int]] = []
         for p in input_paths:
             try:
-                with Image.open(p) as source:
+                with open_image(p) as source:
                     ensure_static_image(source)
                     normalized = normalize_orientation(source)
                     image_specs.append((p, normalized.width, normalized.height))
@@ -180,7 +181,7 @@ def create_montage(
             y = gap + row * (cell_height + label_height + gap)
 
             # 缩放图片以适应单元格
-            with Image.open(image_path) as source:
+            with open_image(image_path) as source:
                 ensure_static_image(source)
                 img = normalize_orientation(source)
                 resized = _fit_image(img, cell_width, cell_height)
@@ -304,17 +305,9 @@ def _get_simple_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
 def collect_montage_files(
     input_paths: list[str],
     recursive: bool = False,
+    selection: SelectionFilters | None = None,
 ) -> list[str]:
     """收集所有可拼接的图片文件"""
-    files = []
-    for path_str in input_paths:
-        path = Path(path_str)
-        if path.is_file():
-            if path.suffix.lower() in SUPPORTED_INPUT_FORMATS:
-                files.append(str(path.resolve()))
-        elif path.is_dir():
-            pattern = "**/*" if recursive else "*"
-            for item in sorted(path.glob(pattern)):
-                if item.is_file() and item.suffix.lower() in SUPPORTED_INPUT_FORMATS:
-                    files.append(str(item.resolve()))
-    return sorted(set(files))
+    return collect_supported_files(
+        input_paths, SUPPORTED_INPUT_FORMATS, recursive=recursive, selection=selection
+    )

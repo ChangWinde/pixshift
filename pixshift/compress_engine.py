@@ -8,6 +8,7 @@ PixShift Compress Engine — 智能图片压缩（不改格式，只优化体积
 """
 
 import io
+import math
 import os
 import time
 from dataclasses import dataclass, field
@@ -17,13 +18,19 @@ from typing import Any
 from PIL import Image
 
 from .core.defaults import DEFAULT_COMPRESS_PRESET
-from .core.files import atomic_copy_file, atomic_write_bytes
+from .core.files import (
+    SelectionFilters,
+    atomic_copy_file,
+    atomic_write_bytes,
+    collect_supported_files,
+)
 from .core.metadata import (
     ensure_static_image,
     flatten_transparency,
     image_has_transparency,
     normalize_orientation,
     normalized_exif_bytes,
+    open_image,
 )
 
 # ============================================================
@@ -122,12 +129,20 @@ COMPRESS_PRESETS: dict[str, dict[str, Any]] = {
 # ============================================================
 
 
+# 1 EiB：远超任何真实文件，但能挡住 "9e99GB" 这类会溢出后续算术的输入。
+_MAX_TARGET_BYTES = 1 << 60
+
+
 def parse_target_size(target_str: str) -> int:
     """
     解析目标文件大小字符串
 
     支持: "500KB", "1MB", "2.5MB", "1024B", "500kb"
     返回: 字节数
+
+    只接受有限的正数。``float()`` 会接受 "inf"/"nan"，若不拦截，
+    ``int(float("inf"))`` 抛出的是 OverflowError 而非 ValueError，
+    调用方的参数校验就会漏过去变成崩溃。
     """
     target_str = target_str.strip().upper()
     multipliers = {
@@ -137,13 +152,21 @@ def parse_target_size(target_str: str) -> int:
         "GB": 1024 * 1024 * 1024,
     }
 
+    number_text = target_str
+    multiplier = 1
     for suffix, mult in sorted(multipliers.items(), key=lambda x: -len(x[0])):
         if target_str.endswith(suffix):
-            num_str = target_str[: -len(suffix)].strip()
-            return int(float(num_str) * mult)
+            number_text = target_str[: -len(suffix)].strip()
+            multiplier = mult
+            break
 
-    # 纯数字，默认字节
-    return int(float(target_str))
+    value = float(number_text)  # 非数字文本在此抛出 ValueError
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError("invalid_target_size")
+    scaled = value * multiplier
+    if not math.isfinite(scaled) or scaled > _MAX_TARGET_BYTES:
+        raise ValueError("invalid_target_size")
+    return int(scaled)
 
 
 def compress_single(
@@ -211,7 +234,7 @@ def compress_single(
             result.quality_used = 100
             result.iterations = 1
         else:
-            with Image.open(input_path) as source:
+            with open_image(input_path) as source:
                 ensure_static_image(source)
                 img = normalize_orientation(source)
 
@@ -474,29 +497,13 @@ def collect_compressible_files(
     input_paths: list[str],
     input_format: str | None = None,
     recursive: bool = False,
+    selection: SelectionFilters | None = None,
 ) -> list[str]:
     """收集所有可压缩的图片文件"""
-    files = []
-    compressible_exts = set(COMPRESSIBLE_FORMATS.keys())
-
-    for path_str in input_paths:
-        path = Path(path_str)
-        if path.is_file():
-            ext = path.suffix.lower()
-            if input_format:
-                if ext == f".{input_format.lower().lstrip('.')}":
-                    files.append(str(path.resolve()))
-            elif ext in compressible_exts:
-                files.append(str(path.resolve()))
-        elif path.is_dir():
-            pattern = "**/*" if recursive else "*"
-            for item in sorted(path.glob(pattern)):
-                if item.is_file():
-                    ext = item.suffix.lower()
-                    if input_format:
-                        if ext == f".{input_format.lower().lstrip('.')}":
-                            files.append(str(item.resolve()))
-                    elif ext in compressible_exts:
-                        files.append(str(item.resolve()))
-
-    return sorted(set(files))
+    return collect_supported_files(
+        input_paths,
+        set(COMPRESSIBLE_FORMATS),
+        input_format=input_format,
+        recursive=recursive,
+        selection=selection,
+    )

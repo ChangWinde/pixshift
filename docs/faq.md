@@ -65,6 +65,20 @@ ICC 色彩配置默认保留（删掉可能导致颜色偏移），需要时用 
 
 Linux、macOS、Windows 均有持续集成覆盖，每次提交都会在三个平台上运行完整测试。
 
+## 报错 `image_too_large` 是怎么回事
+
+为防范「解压炸弹」——一个几百 KB 的文件声明了几十亿像素的画布，解码时会耗尽内存——PixShift 默认限制单张图片为 1.2 亿像素。超限的文件在**解码之前**就被拒绝，不会先把内存吃满。
+
+确实需要处理超大画布时，用环境变量放宽或关闭：
+
+```bash
+PIXSHIFT_MAX_PIXELS=1000000000 pixshift convert huge.png -t webp   # 提高 PixShift 限制
+PIXSHIFT_MAX_PIXELS=0 pixshift convert huge.png -t webp            # 仅关闭 PixShift 附加限制
+```
+
+Pillow 自身的解压炸弹策略独立生效，因此提高或关闭 PixShift 限制不会降低
+宿主进程配置的 Pillow 安全阈值。
+
 ## 会不会上传我的文件
 
 不会。媒体处理路径上没有任何网络调用，全部处理在本地完成。

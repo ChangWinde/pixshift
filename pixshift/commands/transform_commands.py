@@ -26,7 +26,14 @@ from ..core.files import (
 from ..ops import transform as transform_ops
 from ..presenters.cli_presenters import batch_progress
 from ..presenters.json_presenters import emit_json, emit_json_and_exit
-from .common import failure_entry, run_batch_tasks, usage_error_or_exit, validate_tasks_or_exit
+from .common import (
+    failure_entry,
+    run_batch_tasks,
+    selection_filters_or_exit,
+    selection_options,
+    usage_error_or_exit,
+    validate_tasks_or_exit,
+)
 
 _RESIZE_SUFFIX = "_resized"
 _ROTATE_SUFFIX = "_rotated"
@@ -102,6 +109,7 @@ def register_transform_commands(
     @click.option(
         "--json", "as_json", is_flag=True, default=False, help="以 JSON 输出结果（适合脚本调用）"
     )
+    @selection_options
     def resize_cmd(
         inputs: tuple[str, ...],
         size: str | None,
@@ -112,6 +120,9 @@ def register_transform_commands(
         recursive: bool,
         overwrite: bool,
         dry_run: bool,
+        include_globs: tuple[str, ...],
+        exclude_globs: tuple[str, ...],
+        min_file_size: str | None,
         as_json: bool,
     ) -> None:
         """批量缩放图片，保持原格式（生成 _resized 派生文件）。"""
@@ -138,7 +149,18 @@ def register_transform_commands(
                     human_message="--size 需要 WxH 格式，如 1280x720",
                 )
 
-        files = collect_supported_files(list(inputs), SUPPORTED_INPUT_FORMATS, recursive=recursive)
+        files = collect_supported_files(
+            list(inputs),
+            SUPPORTED_INPUT_FORMATS,
+            recursive=recursive,
+            selection=selection_filters_or_exit(
+                command="resize",
+                as_json=as_json,
+                include_globs=include_globs,
+                exclude_globs=exclude_globs,
+                min_file_size=min_file_size,
+            ),
+        )
         files, ignored_generated = filter_generated_inputs(
             files,
             list(inputs),
@@ -279,6 +301,7 @@ def register_transform_commands(
     @click.option(
         "--json", "as_json", is_flag=True, default=False, help="以 JSON 输出结果（适合脚本调用）"
     )
+    @selection_options
     def rotate_cmd(
         inputs: tuple[str, ...],
         degrees: int,
@@ -286,6 +309,9 @@ def register_transform_commands(
         output_dir: str | None,
         recursive: bool,
         overwrite: bool,
+        include_globs: tuple[str, ...],
+        exclude_globs: tuple[str, ...],
+        min_file_size: str | None,
         as_json: bool,
     ) -> None:
         """批量旋转/翻转图片（生成 _rotated 派生文件；EXIF 方向先归一）。"""
@@ -298,7 +324,18 @@ def register_transform_commands(
                 human_message="需要指定 --degrees 或 --flip",
             )
 
-        files = collect_supported_files(list(inputs), SUPPORTED_INPUT_FORMATS, recursive=recursive)
+        files = collect_supported_files(
+            list(inputs),
+            SUPPORTED_INPUT_FORMATS,
+            recursive=recursive,
+            selection=selection_filters_or_exit(
+                command="rotate",
+                as_json=as_json,
+                include_globs=include_globs,
+                exclude_globs=exclude_globs,
+                min_file_size=min_file_size,
+            ),
+        )
         files, ignored_generated = filter_generated_inputs(
             files,
             list(inputs),

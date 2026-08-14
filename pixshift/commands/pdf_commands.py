@@ -12,14 +12,17 @@ from rich.table import Table
 
 from ..compress_engine import parse_target_size
 from ..core.defaults import DEFAULT_PDF_EXTRACT_DPI, DEFAULT_PDF_MERGE_MARGIN
-from ..core.files import filter_generated_inputs
 from ..ops import pdf as pdf_ops
 from ..pdf_engine import (
     PAGE_SIZES,
     PDF_COMPRESS_PRESETS,
 )
 from ..presenters.json_presenters import emit_json, emit_json_and_exit
-from .common import usage_error_or_exit, validate_affixes_or_exit
+from .common import (
+    usage_error_or_exit,
+    validate_affixes_or_exit,
+    validate_aggregate_output_or_exit,
+)
 
 
 def _require_pdf(command: str, as_json: bool) -> None:
@@ -102,6 +105,9 @@ def register_pdf_commands(
         _require_pdf("pdf.merge", as_json)
 
         image_files = pdf_ops.collect_images(list(inputs), recursive)
+        validate_aggregate_output_or_exit(
+            command="pdf.merge", as_json=as_json, inputs=image_files, output=output_path
+        )
         if not image_files:
             if as_json:
                 emit_json({"command": "pdf.merge", "ok": True, "total": 0, "message": "no_images"})
@@ -493,12 +499,14 @@ def register_pdf_commands(
         """将多个 PDF 拼接为一个文件。"""
         _require_pdf("pdf.concat", as_json)
 
-        pdf_files = pdf_ops.collect_pdfs(list(inputs), recursive)
-        pdf_files, ignored_generated = filter_generated_inputs(
-            pdf_files,
-            list(inputs),
-            excluded_files=(output_path,),
+        validate_aggregate_output_or_exit(
+            command="pdf.concat", as_json=as_json, inputs=list(inputs), output=output_path
         )
+        pdf_files = pdf_ops.collect_pdfs(list(inputs), recursive)
+        validate_aggregate_output_or_exit(
+            command="pdf.concat", as_json=as_json, inputs=pdf_files, output=output_path
+        )
+        ignored_generated = 0
         if not pdf_files:
             if as_json:
                 emit_json(

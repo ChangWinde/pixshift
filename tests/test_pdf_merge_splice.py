@@ -82,6 +82,34 @@ def test_strip_is_pixel_lossless():
 
 
 @pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda raw: raw[:-2] + b"\xff\xfe\x00\x12secret-after-sos" + raw[-2:],
+        lambda raw: raw + b"secret-after-eoi",
+    ],
+)
+def test_splice_rejects_metadata_or_trailing_bytes_after_scan(tmp_path, mutate):
+    source = tmp_path / "tainted.jpg"
+    _make_jpeg(source, quality=95)
+    source.write_bytes(mutate(source.read_bytes()))
+    assert _strip_jpeg_metadata(source.read_bytes()) is None
+
+    result = pdf_merge_images([str(source)], str(tmp_path / "out.pdf"))
+    assert result.success is True
+    embedded, _ = _embedded_image(tmp_path / "out.pdf")
+    assert b"secret-after" not in embedded
+
+
+def test_progressive_jpeg_uses_safe_reencode_fallback(tmp_path):
+    source = tmp_path / "progressive.jpg"
+    Image.new("RGB", (120, 80), "purple").save(source, format="JPEG", progressive=True)
+    assert _strip_jpeg_metadata(source.read_bytes()) is None
+
+    result = pdf_merge_images([str(source)], str(tmp_path / "out.pdf"))
+    assert result.success is True
+
+
+@pytest.mark.parametrize(
     "data",
     [b"", b"\xff\xd8", b"not a jpeg at all", b"\xff\xd8\xff\xe1\x00\x05ab"],
 )

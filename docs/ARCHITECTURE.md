@@ -104,8 +104,9 @@ The contract layer (ADR-0003) makes this surface discoverable and verifiable:
   payload, avoiding a second unverified encode.
 - Format analysis bounds large images to a 1600 px sample before trial encodes;
   video and animation analysis is probe-driven and never encodes at plan time.
-- `pdf merge` splices untransformed JPEG bytes (metadata-stripped) instead of
-  re-encoding; `pdf compress` resolves image placement rects once per page.
+- `pdf merge` splices eligible single-scan JPEG bytes (metadata-stripped and
+  verified through the exact EOI) instead of re-encoding; `pdf compress`
+  resolves image placement rects once per page.
 - Startup defers PyMuPDF and encoder probing so non-PDF commands stay light.
 
 ## Quality Gates

@@ -41,12 +41,14 @@ def test_delete_duplicates_dry_run_and_real_delete(tmp_path):
 def test_dedup_wrapper_delete_supports_dry_run(monkeypatch):
     from pixshift.ops import dedup as dedup_ops
 
-    called = {"dry_run": None}
+    called = {"dry_run": None, "backup_dir": "unset"}
 
-    def fake_delete_duplicates(groups, dry_run):
+    def fake_delete_duplicates(groups, dry_run, backup_dir=None):
         called["dry_run"] = dry_run
+        called["backup_dir"] = backup_dir
         return {"deleted": groups, "kept": [], "errors": []}
 
     monkeypatch.setattr("pixshift.ops.dedup.delete_duplicates", fake_delete_duplicates)
     dedup_ops.delete(["g"], dry_run=True)
+    assert called["backup_dir"] is None
     assert called["dry_run"] is True

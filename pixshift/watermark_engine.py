@@ -18,8 +18,13 @@ from typing import Any
 from PIL import Image, ImageDraw, ImageFont
 
 from .converter import SUPPORTED_INPUT_FORMATS
-from .core.files import atomic_output_path
-from .core.metadata import ensure_static_image, normalize_orientation, normalized_exif_bytes
+from .core.files import SelectionFilters, atomic_output_path, collect_supported_files
+from .core.metadata import (
+    ensure_static_image,
+    normalize_orientation,
+    normalized_exif_bytes,
+    open_image,
+)
 
 # ============================================================
 #  数据结构
@@ -236,7 +241,7 @@ def add_text_watermark(
         if tile_spacing < 0 or margin < 0:
             raise ValueError("间距和边距不能为负数")
 
-        with Image.open(input_path) as source:
+        with open_image(input_path) as source:
             ensure_static_image(source)
             original_format = source.format
             original = normalize_orientation(source)
@@ -382,7 +387,7 @@ def add_image_watermark(
         if tile_spacing < 0 or margin < 0:
             raise ValueError("间距和边距不能为负数")
 
-        with Image.open(input_path) as source, Image.open(watermark_path) as wm_source:
+        with open_image(input_path) as source, open_image(watermark_path) as wm_source:
             ensure_static_image(source)
             ensure_static_image(wm_source)
             original_format = source.format
@@ -502,17 +507,9 @@ def _save_watermarked(
 def collect_watermark_files(
     input_paths: list[str],
     recursive: bool = False,
+    selection: SelectionFilters | None = None,
 ) -> list[str]:
     """收集所有可添加水印的图片文件"""
-    files = []
-    for path_str in input_paths:
-        path = Path(path_str)
-        if path.is_file():
-            if path.suffix.lower() in SUPPORTED_INPUT_FORMATS:
-                files.append(str(path.resolve()))
-        elif path.is_dir():
-            pattern = "**/*" if recursive else "*"
-            for item in sorted(path.glob(pattern)):
-                if item.is_file() and item.suffix.lower() in SUPPORTED_INPUT_FORMATS:
-                    files.append(str(item.resolve()))
-    return sorted(set(files))
+    return collect_supported_files(
+        input_paths, SUPPORTED_INPUT_FORMATS, recursive=recursive, selection=selection
+    )

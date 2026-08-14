@@ -2,12 +2,20 @@
 
 from typing import Any
 
-from ..strip_engine import StripResult, analyze_metadata, collect_strippable_files, strip_metadata
+from ..core.files import SelectionFilters
+from ..strip_engine import (
+    StripResult,
+    analyze_metadata,
+    collect_strippable_files,
+    strip_metadata,
+)
 
 
-def collect_files(input_paths: list[str], recursive: bool) -> list[str]:
+def collect_files(
+    input_paths: list[str], recursive: bool, selection: SelectionFilters | None = None
+) -> list[str]:
     """Collect candidate files for metadata stripping."""
-    return collect_strippable_files(input_paths, recursive)
+    return collect_strippable_files(input_paths, recursive, selection)
 
 
 def analyze_one(file_path: str) -> dict[str, Any]:

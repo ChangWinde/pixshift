@@ -22,8 +22,14 @@ from typing import Any
 from PIL import Image
 
 from .core.defaults import DEFAULT_PDF_EXTRACT_DPI, DEFAULT_PDF_MERGE_MARGIN
-from .core.files import atomic_output_path, safe_output_path
-from .core.metadata import ensure_static_image, image_has_transparency, normalize_orientation
+from .core.errors import OperationPolicyError
+from .core.files import atomic_output_path, safe_output_path, validate_aggregate_output_path
+from .core.metadata import (
+    ensure_static_image,
+    image_has_transparency,
+    normalize_orientation,
+    open_image,
+)
 
 # PyMuPDF is heavy (~34ms import, ~36MB RSS) and only the pdf.* commands need
 # it. Detect availability cheaply with find_spec and defer the real import to
@@ -252,9 +258,43 @@ def _strip_jpeg_metadata(data: bytes) -> bytes | None:
         if marker is None:
             return None
         if marker == 0xDA:
-            # Start-of-scan: entropy-coded data follows; copy the rest as-is.
-            kept.append(data[offset:])
-            return b"".join(kept)
+            # Baseline JPEGs have one entropy-coded scan. Walk it to the exact
+            # EOI instead of copying the tail blindly: comments, APP metadata,
+            # or arbitrary bytes are legal after SOS/EOI and would otherwise
+            # defeat the privacy guarantee of this fast path. Streams with
+            # multiple scans or uncommon in-scan markers take the safe
+            # decode/re-encode fallback.
+            if offset + 4 > total:
+                return None
+            length = int.from_bytes(data[offset + 2 : offset + 4], "big")
+            scan_start = offset + 2 + length
+            if length < 2 or scan_start > total:
+                return None
+            cursor = scan_start
+            while cursor < total:
+                if data[cursor] != 0xFF:
+                    cursor += 1
+                    continue
+                if cursor + 1 >= total:
+                    return None
+                scan_marker = data[cursor + 1]
+                if scan_marker == 0x00:  # stuffed entropy byte
+                    cursor += 2
+                    continue
+                if scan_marker == 0xFF:  # marker fill byte
+                    cursor += 1
+                    continue
+                if 0xD0 <= scan_marker <= 0xD7:  # restart marker
+                    cursor += 2
+                    continue
+                if scan_marker == 0xD9:  # end of image
+                    end = cursor + 2
+                    if end != total:
+                        return None
+                    kept.append(data[offset:end])
+                    return b"".join(kept)
+                return None
+            return None
         if marker in (0xD8, 0x01) or 0xD0 <= marker <= 0xD7:
             kept.append(data[offset : offset + 2])
             offset += 2
@@ -283,7 +323,7 @@ def _spliceable_jpeg(image_path: str, quality: int) -> tuple[bytes, tuple[int, i
     if quality < 95:
         return None
     try:
-        with Image.open(image_path) as probe:
+        with open_image(image_path) as probe:
             if probe.format != "JPEG" or probe.mode not in ("RGB", "L"):
                 return None
             if probe.getexif().get(0x0112, 1) != 1:  # orientation must be neutral
@@ -304,7 +344,7 @@ def _image_to_bytes(image_path: str, quality: int = 95) -> tuple[bytes, tuple[in
     if spliced is not None:
         return spliced
 
-    with Image.open(image_path) as source:
+    with open_image(image_path) as source:
         ensure_static_image(source)
         img = normalize_orientation(source).copy()
 
@@ -351,6 +391,7 @@ def pdf_merge_images(
     start_time = time.time()
 
     try:
+        validate_aggregate_output_path(image_paths, output_path)
         normalized_page_size = page_size.lower()
         if not image_paths:
             raise ValueError("no_input_images")
@@ -415,6 +456,8 @@ def pdf_merge_images(
         result.page_count = len(image_paths)
         result.success = True
 
+    except OperationPolicyError as error:
+        result.error = error.code
     except Exception as e:
         result.error = str(e)
 
@@ -941,10 +984,12 @@ def _compress_rebuild(
                     images_skipped += 1
                     continue
 
-                # 透明度存于独立的 SMask xref，extract_image 不含它；若在此重编码
-                # 并 replace_image，透明通道会被静默丢弃导致视觉损坏。带 SMask 的
-                # 图像一律跳过（保留原样），不做压缩。
-                if base_image.get("smask", 0):
+                # Transparency may be an SMask xref or a colour-key /Mask
+                # array. ``extract_image`` exposes only SMask, while
+                # ``replace_image`` discards either form. Preserve all masked
+                # XObjects byte-for-byte rather than silently flattening them.
+                mask_type, _ = doc.xref_get_key(xref, "Mask")
+                if base_image.get("smask", 0) or mask_type != "null":
                     images_skipped += 1
                     continue
 
@@ -952,7 +997,7 @@ def _compress_rebuild(
                 img_width = base_image.get("width", 0)
                 img_height = base_image.get("height", 0)
 
-                pil_img: Image.Image = Image.open(io.BytesIO(img_bytes))
+                pil_img: Image.Image = open_image(io.BytesIO(img_bytes))
 
                 # 降低分辨率
                 if max_dpi and img_width > 0 and img_height > 0:
@@ -1038,6 +1083,7 @@ def pdf_concat(
     start_time = time.time()
 
     try:
+        validate_aggregate_output_path(pdf_paths, output_path)
         if len(pdf_paths) < 2:
             raise ValueError("need_at_least_two")
         if os.path.exists(output_path) and not overwrite:
@@ -1065,6 +1111,8 @@ def pdf_concat(
         result.success = True
         result.details["file_count"] = len(pdf_paths)
 
+    except OperationPolicyError as error:
+        result.error = error.code
     except Exception as e:
         result.error = str(e)
 

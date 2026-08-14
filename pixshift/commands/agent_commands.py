@@ -18,6 +18,7 @@ from ..ops import hashing as hashing_ops
 from ..ops import inventory as inventory_ops
 from ..ops import prep as prep_ops
 from ..presenters.json_presenters import emit_json, emit_json_and_exit
+from .common import selection_filters_or_exit, selection_options
 
 _HASH_ALGORITHMS = ["sha256", "sha1", "sha512", "blake2b", "md5"]
 
@@ -189,6 +190,7 @@ def register_agent_commands(
     @click.option(
         "--json", "as_json", is_flag=True, default=False, help="以 JSON 输出结果（适合脚本调用）"
     )
+    @selection_options
     def prep_cmd(
         inputs: tuple[str, ...],
         output_dir: str,
@@ -199,6 +201,9 @@ def register_agent_commands(
         recursive: bool,
         overwrite: bool,
         dry_run: bool,
+        include_globs: tuple[str, ...],
+        exclude_globs: tuple[str, ...],
+        min_file_size: str | None,
         as_json: bool,
     ) -> None:
         """一键生成可交付资产：限宽转换 + 隐私清理 + 清单。"""
@@ -212,6 +217,13 @@ def register_agent_commands(
             overwrite=overwrite,
             dry_run=dry_run,
             strip_privacy=not keep_metadata,
+            selection=selection_filters_or_exit(
+                command="prep",
+                as_json=as_json,
+                include_globs=include_globs,
+                exclude_globs=exclude_globs,
+                min_file_size=min_file_size,
+            ),
         )
         success = sum(1 for item in result.items if item.success and not item.skipped)
         skipped = sum(1 for item in result.items if item.skipped)
@@ -265,9 +277,27 @@ def register_agent_commands(
     @click.option(
         "--json", "as_json", is_flag=True, default=False, help="以 JSON 输出结果（适合脚本调用）"
     )
-    def manifest_cmd(inputs: tuple[str, ...], recursive: bool, as_json: bool) -> None:
+    @selection_options
+    def manifest_cmd(
+        inputs: tuple[str, ...],
+        recursive: bool,
+        include_globs: tuple[str, ...],
+        exclude_globs: tuple[str, ...],
+        min_file_size: str | None,
+        as_json: bool,
+    ) -> None:
         """生成媒体目录清单：属性、内容哈希与敏感 EXIF 概览。"""
-        result = inventory_ops.build_inventory(list(inputs), recursive=recursive)
+        result = inventory_ops.build_inventory(
+            list(inputs),
+            recursive=recursive,
+            selection=selection_filters_or_exit(
+                command="manifest",
+                as_json=as_json,
+                include_globs=include_globs,
+                exclude_globs=exclude_globs,
+                min_file_size=min_file_size,
+            ),
+        )
         payload = {
             "command": "manifest",
             "ok": result.ok,
@@ -315,11 +345,15 @@ def register_agent_commands(
     @click.option(
         "--json", "as_json", is_flag=True, default=False, help="以 JSON 输出结果（适合脚本调用）"
     )
+    @selection_options
     def hash_cmd(
         inputs: tuple[str, ...],
         recursive: bool,
         algorithm: str,
         all_files: bool,
+        include_globs: tuple[str, ...],
+        exclude_globs: tuple[str, ...],
+        min_file_size: str | None,
         as_json: bool,
     ) -> None:
         """计算内容哈希，用于转换前后审计。"""
@@ -328,6 +362,13 @@ def register_agent_commands(
             recursive=recursive,
             algorithm=algorithm,
             media_only=not all_files,
+            selection=selection_filters_or_exit(
+                command="hash",
+                as_json=as_json,
+                include_globs=include_globs,
+                exclude_globs=exclude_globs,
+                min_file_size=min_file_size,
+            ),
         )
         payload = {
             "command": "hash",

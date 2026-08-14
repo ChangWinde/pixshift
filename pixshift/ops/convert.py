@@ -3,13 +3,17 @@
 from typing import Any
 
 from ..converter import ConvertResult, PixShiftConverter, collect_files, generate_output_path
+from ..core.files import SelectionFilters
 
 
 def collect_convert_files(
-    input_paths: list[str], input_format: str | None, recursive: bool
+    input_paths: list[str],
+    input_format: str | None,
+    recursive: bool,
+    selection: SelectionFilters | None = None,
 ) -> list[str]:
     """Collect candidate files for convert command."""
-    return collect_files(input_paths, input_format, recursive)
+    return collect_files(input_paths, input_format, recursive, selection)
 
 
 def build_convert_tasks(

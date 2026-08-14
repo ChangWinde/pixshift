@@ -15,17 +15,21 @@ from typing import Any
 from .core.defaults import DEFAULT_CONVERT_QUALITY
 from .core.errors import AnimatedInputNotSupportedError
 from .core.files import (
+    SelectionFilters,
     atomic_output_path,
     collect_supported_files,
     conversion_output_name,
     plan_output_path,
 )
 from .core.metadata import (
+    ensure_pixel_count_within_limit,
+    ensure_within_pixel_limit,
     flatten_transparency,
     image_frame_count,
     image_has_transparency,
     normalize_orientation,
     normalized_exif_bytes,
+    open_image,
 )
 
 try:
@@ -420,7 +424,11 @@ class PixShiftConverter:
 
             # 打开图片并复制到内存，避免覆盖源文件时依赖惰性文件句柄。
             animation: tuple[list[Image.Image], list[int], int] | None = None
-            with Image.open(input_path) as opened:
+            with open_image(input_path) as opened:
+                # Checked before any pixel is decoded: convert is the one path
+                # that also accepts animations, so it cannot rely on
+                # ensure_static_image for the pixel budget.
+                ensure_within_pixel_limit(opened)
                 result.width, result.height = opened.size
                 source_mode = opened.mode
                 if image_frame_count(opened) > 1:
@@ -507,7 +515,7 @@ class PixShiftConverter:
         info["format_ext"] = Path(filepath).suffix.lower()
 
         try:
-            with Image.open(filepath) as img:
+            with open_image(filepath) as img:
                 info["width"] = img.size[0]
                 info["height"] = img.size[1]
                 info["mode"] = img.mode
@@ -551,7 +559,11 @@ def _extract_animation(opened: Image.Image) -> tuple[list[Image.Image], list[int
         default_duration = _DEFAULT_FRAME_DURATION_MS
     frames: list[Image.Image] = []
     durations: list[int] = []
+    total_pixels = 0
     for frame in ImageSequence.Iterator(opened):
+        ensure_within_pixel_limit(frame)
+        total_pixels += int(frame.width) * int(frame.height)
+        ensure_pixel_count_within_limit(total_pixels)
         # copy() forces load(), and some decoders (WebP) only publish the
         # frame duration after load — so read timing from the copy.
         copied = frame.copy()
@@ -576,6 +588,7 @@ def collect_files(
     input_paths: list[str],
     input_format: str | None = None,
     recursive: bool = False,
+    selection: SelectionFilters | None = None,
 ) -> list[str]:
     """收集所有待转换的文件"""
     return collect_supported_files(
@@ -583,6 +596,7 @@ def collect_files(
         supported_exts=SUPPORTED_INPUT_FORMATS,
         input_format=input_format,
         recursive=recursive,
+        selection=selection,
     )
 
 

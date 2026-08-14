@@ -19,10 +19,12 @@ from PIL import Image, ImageStat
 
 from .converter import _human_size
 from .core.metadata import (
+    ensure_within_pixel_limit,
     flatten_transparency,
     image_frame_count,
     image_has_transparency,
     normalize_orientation,
+    open_image,
 )
 
 ANALYSIS_MAX_SIDE = 1600
@@ -185,7 +187,11 @@ def analyze_image(input_path: str) -> OptimizeResult:
         result.input_size_human = _human_size(result.input_size)
         result.input_format = Path(input_path).suffix.lower().lstrip(".")
 
-        with Image.open(input_path) as source:
+        with open_image(input_path) as source:
+            # Analysis copies and thumbnails the image, so the pixel budget
+            # must be enforced here too — the still-image guard that carries
+            # it elsewhere is deliberately skipped for animations.
+            ensure_within_pixel_limit(source)
             frame_total = image_frame_count(source)
             if frame_total > 1:
                 _analyze_animation(result, source, frame_total)

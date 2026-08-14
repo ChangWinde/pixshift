@@ -9,7 +9,7 @@ import click
 from rich.console import Console
 
 from ..compress_engine import parse_target_size
-from ..core.files import plan_output_path
+from ..core.files import filter_generated_inputs, plan_output_path
 from ..ops import video as video_ops
 from ..presenters.json_presenters import emit_json, emit_json_and_exit
 from ..video_engine import (
@@ -29,6 +29,7 @@ from ..video_engine import (
     parse_timecode,
     resolve_thumbnail_time,
 )
+from .common import validate_aggregate_output_or_exit, validate_tasks_or_exit
 
 
 def _ffmpeg_missing(command: str, as_json: bool, console: Console) -> None:
@@ -179,20 +180,31 @@ def register_video_commands(
         if not video_ops.available():
             _ffmpeg_missing("video.convert", as_json, console)
         files = collect_video_files(list(inputs), recursive)
-        results = []
-        for path in files:
-            name = f"{Path(path).stem}.{container}"
-            dst = _video_output(path, name, output_dir, list(inputs))
-            results.append(
-                video_ops.convert_one(
-                    path,
-                    dst,
-                    container=container,
-                    codec=codec,
-                    hwaccel=hwaccel,
-                    overwrite=overwrite,
-                )
+        files, _ = filter_generated_inputs(
+            files,
+            list(inputs),
+            output_root=output_dir,
+            excluded_extension=container,
+        )
+        tasks = [
+            (
+                path,
+                _video_output(path, f"{Path(path).stem}.{container}", output_dir, list(inputs)),
             )
+            for path in files
+        ]
+        validate_tasks_or_exit(command="video.convert", as_json=as_json, tasks=tasks)
+        results = [
+            video_ops.convert_one(
+                path,
+                dst,
+                container=container,
+                codec=codec,
+                hwaccel=hwaccel,
+                overwrite=overwrite,
+            )
+            for path, dst in tasks
+        ]
         _emit_batch("video.convert", results, as_json, console)
 
     @video.command("compress")
@@ -258,10 +270,27 @@ def register_video_commands(
                 _fail("video.compress", "invalid_target_size", as_json, console)
         container = VIDEO_CODECS[codec][1]
         files = collect_video_files(list(inputs), recursive)
+        files, _ = filter_generated_inputs(
+            files,
+            list(inputs),
+            output_root=output_dir,
+            generated_suffix="_compressed",
+        )
+        tasks = [
+            (
+                path,
+                _video_output(
+                    path,
+                    f"{Path(path).stem}_compressed.{container}",
+                    output_dir,
+                    list(inputs),
+                ),
+            )
+            for path in files
+        ]
+        validate_tasks_or_exit(command="video.compress", as_json=as_json, tasks=tasks)
         results = []
-        for path in files:
-            name = f"{Path(path).stem}_compressed.{container}"
-            dst = _video_output(path, name, output_dir, list(inputs))
+        for path, dst in tasks:
             if target_bytes is not None:
                 results.append(
                     video_ops.compress_to_target_one(
@@ -312,6 +341,12 @@ def register_video_commands(
             _ffmpeg_missing("video.concat", as_json, console)
         if len(inputs) < 2:
             _fail("video.concat", "concat_requires_two_inputs", as_json, console)
+        validate_aggregate_output_or_exit(
+            command="video.concat",
+            as_json=as_json,
+            inputs=[str(path) for path in inputs],
+            output=output_path,
+        )
         result = video_ops.concat_videos(
             [str(path) for path in inputs],
             output_path,
@@ -412,12 +447,23 @@ def register_video_commands(
         except ValueError as error:
             _fail("video.thumbnail", str(error), as_json, console)
         files = collect_video_files(list(inputs), recursive)
+        tasks = [
+            (
+                path,
+                _video_output(
+                    path,
+                    f"{Path(path).stem}_thumb.{image_format}",
+                    output_dir,
+                    list(inputs),
+                ),
+            )
+            for path in files
+        ]
+        validate_tasks_or_exit(command="video.thumbnail", as_json=as_json, tasks=tasks)
         results = []
-        for path in files:
+        for path, dst in tasks:
             probed = video_ops.info(path)
             at_seconds = resolve_thumbnail_time(at_spec, probed.duration_sec)
-            name = f"{Path(path).stem}_thumb.{image_format}"
-            dst = _video_output(path, name, output_dir, list(inputs))
             results.append(
                 video_ops.thumbnail_one(path, dst, at_seconds=at_seconds, overwrite=overwrite)
             )
@@ -449,13 +495,18 @@ def register_video_commands(
         if not video_ops.available():
             _ffmpeg_missing("video.extract-audio", as_json, console)
         files = collect_video_files(list(inputs), recursive)
-        results = []
-        for path in files:
-            name = f"{Path(path).stem}.{audio_format}"
-            dst = _video_output(path, name, output_dir, list(inputs))
-            results.append(
-                video_ops.extract_audio_one(path, dst, audio_ext=audio_format, overwrite=overwrite)
+        tasks = [
+            (
+                path,
+                _video_output(path, f"{Path(path).stem}.{audio_format}", output_dir, list(inputs)),
             )
+            for path in files
+        ]
+        validate_tasks_or_exit(command="video.extract-audio", as_json=as_json, tasks=tasks)
+        results = [
+            video_ops.extract_audio_one(path, dst, audio_ext=audio_format, overwrite=overwrite)
+            for path, dst in tasks
+        ]
         _emit_batch("video.extract-audio", results, as_json, console)
 
     @video.command("gif")
