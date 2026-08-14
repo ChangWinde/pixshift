@@ -134,6 +134,8 @@ def test_build_gif_args_uses_palette_and_validates():
     graph = args[args.index("-filter_complex") + 1]
     assert "palettegen" in graph and "paletteuse" in graph
     assert "fps=15" in graph and "scale=320" in graph
+    assert graph.startswith("[0:v:0]") and graph.endswith("[gif]")
+    assert args[args.index("-map") + 1] == "[gif]"
     with pytest.raises(ValueError):
         build_gif_args("/a/in.mp4", "/a/o.gif", fps=0)
     with pytest.raises(ValueError):

@@ -488,8 +488,6 @@ def build_gif_args(
         f"{start:.3f}",
         "-i",
         _safe_path(src),
-        "-map",
-        "0:V:0",
         "-an",
         "-sn",
         "-dn",
@@ -500,9 +498,10 @@ def build_gif_args(
         args += ["-t", f"{duration:.3f}"]
     # Numbers are validated ints/floats above, never raw user strings.
     filtergraph = (
-        f"fps={fps},scale={width}:-1:flags=lanczos,split[a][b];[a]palettegen[p];[b][p]paletteuse"
+        f"[0:v:0]fps={fps},scale={width}:-1:flags=lanczos,split[a][b];"
+        "[a]palettegen[p];[b][p]paletteuse[gif]"
     )
-    args += ["-filter_complex", filtergraph, "-loop", "0", _safe_path(dst)]
+    args += ["-filter_complex", filtergraph, "-map", "[gif]", "-loop", "0", _safe_path(dst)]
     return args
 
 
@@ -1045,7 +1044,11 @@ def run_ffmpeg(args: list[str], *, timeout: float = DEFAULT_RUN_TIMEOUT_S) -> tu
     def _kill_process_group() -> None:
         if os.name == "posix" and getattr(process, "pid", None) is not None:
             try:
-                os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+                # These members do not exist in Windows' typeshed surface,
+                # although this branch is guarded to POSIX at runtime.
+                os_module: Any = os
+                signal_module: Any = signal
+                os_module.killpg(os_module.getpgid(process.pid), signal_module.SIGKILL)
                 return
             except OSError:
                 pass

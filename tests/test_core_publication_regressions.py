@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -19,6 +20,7 @@ from pixshift.core.files import (
     collect_supported_files,
     safe_output_path,
 )
+from pixshift.ops import prep as prep_ops
 from pixshift.ops.hashing import _collect_all_files
 from pixshift.pdf_engine import _collect_images, _collect_pdfs
 from pixshift.video_engine import collect_video_files
@@ -174,6 +176,52 @@ def test_publication_rejects_parent_symlink_swap_after_planning(tmp_path: Path) 
         atomic_write_bytes(planned, b"escaped", overwrite=False)
 
     assert not (outside / "result.bin").exists()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX system temporary alias semantics")
+def test_prep_canonicalises_its_trusted_internal_temporary_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Internal `/var`-style aliases must not trip the user-path no-follow gate."""
+    source = tmp_path / "source.png"
+    source.write_bytes(b"source")
+    real_temporary = tmp_path / "real-temporary"
+    real_temporary.mkdir()
+    temporary_alias = tmp_path / "temporary-alias"
+    temporary_alias.symlink_to(real_temporary, target_is_directory=True)
+
+    class TrustedTemporaryDirectory:
+        def __init__(self, *, prefix: str) -> None:
+            assert prefix == "pixshift-prep-"
+
+        def __enter__(self) -> str:
+            return str(temporary_alias)
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+    def fake_convert(_source: str, output: str, _arguments: dict[str, object]):
+        assert Path(output).parent == real_temporary.resolve()
+        Path(output).write_bytes(b"converted")
+        return SimpleNamespace(success=True, error="")
+
+    monkeypatch.setattr(prep_ops.tempfile, "TemporaryDirectory", TrustedTemporaryDirectory)
+    monkeypatch.setattr(prep_ops.convert_ops, "convert_one", fake_convert)
+
+    result = prep_ops._prep_one(
+        str(source),
+        str(tmp_path / "output.png"),
+        output_format="png",
+        max_size=None,
+        quality="balanced",
+        overwrite=False,
+        dry_run=False,
+        strip_privacy=False,
+        color_space="srgb",
+    )
+
+    assert result.success is True
+    assert (tmp_path / "output.png").read_bytes() == b"converted"
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX symlink semantics")

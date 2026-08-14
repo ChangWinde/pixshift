@@ -234,59 +234,42 @@ def test_concat_stream_copy_sums_durations(clips, tmp_path):
 def test_verify_audio_snr_uses_the_unscaled_residual(tmp_path):
     """A 19% level loss is about 14.4 dB SNR and must fail the 20 dB gate."""
     source = tmp_path / "source.mkv"
+    identical = tmp_path / "identical.mkv"
     candidate = tmp_path / "candidate.mkv"
-    subprocess.run(
-        [
-            "ffmpeg",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-y",
-            "-f",
-            "lavfi",
-            "-i",
-            "color=black:size=64x64:rate=10:duration=1",
-            "-f",
-            "lavfi",
-            "-i",
-            "sine=frequency=440:sample_rate=48000:duration=1",
-            "-c:v",
-            "ffv1",
-            "-c:a",
-            "pcm_s16le",
-            "-shortest",
-            str(source),
-        ],
-        check=True,
-        capture_output=True,
-    )
-    subprocess.run(
-        [
-            "ffmpeg",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-y",
-            "-i",
-            str(source),
-            "-map",
-            "0:v:0",
-            "-map",
-            "0:a:0",
-            "-c:v",
-            "copy",
-            "-af",
-            "volume=0.81",
-            "-c:a",
-            "pcm_s16le",
-            str(candidate),
-        ],
-        check=True,
-        capture_output=True,
-    )
+    for path, volume in ((source, "1"), (identical, "1"), (candidate, "0.81")):
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=black:size=64x64:rate=10:duration=1",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:sample_rate=48000:duration=1",
+                "-filter:a",
+                f"volume={volume}",
+                "-c:v",
+                "ffv1",
+                "-c:a",
+                "pcm_s16le",
+                "-shortest",
+                str(path),
+            ],
+            check=True,
+            capture_output=True,
+        )
 
+    unchanged = verify_media(str(source), str(identical))
     result = verify_media(str(source), str(candidate))
 
+    assert unchanged.success is True
+    assert unchanged.passed is True
     assert result.success is True
     assert result.passed is False
     assert result.checks["audio_content"] is False

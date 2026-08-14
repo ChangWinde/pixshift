@@ -155,7 +155,13 @@ def _prep_one(
     try:
         Path(dest).parent.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix="pixshift-prep-") as tmp:
-            tmp_convert = str(Path(tmp) / Path(dest).name)
+            # macOS commonly exposes its trusted system temporary directory
+            # through ``/var`` -> ``/private/var``. Canonicalise this internal
+            # path before it reaches the no-follow publication boundary; user
+            # destinations remain intentionally non-canonical so a post-plan
+            # symlink swap is still rejected rather than followed.
+            tmp_root = Path(tmp).resolve()
+            tmp_convert = str(tmp_root / Path(dest).name)
             convert_result = convert_ops.convert_one(
                 source,
                 tmp_convert,
@@ -171,7 +177,7 @@ def _prep_one(
                 return item
             final_source = tmp_convert
             if strip_privacy:
-                tmp_strip = str(Path(tmp) / f"stripped-{Path(dest).name}")
+                tmp_strip = str(tmp_root / f"stripped-{Path(dest).name}")
                 strip_exif, strip_gps, strip_device, strip_personal, strip_time = (
                     resolve_strip_mode("privacy")
                 )

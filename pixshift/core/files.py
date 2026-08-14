@@ -12,6 +12,7 @@ from collections.abc import Iterable, Iterator, Sequence
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from .errors import (
     InvalidFilenameComponentError,
@@ -439,7 +440,11 @@ def atomic_output_path(output_path: str, *, overwrite: bool = True) -> Iterator[
                 shutil.copyfileobj(incoming, outgoing, 1024 * 1024)
                 outgoing.flush()
                 os.fsync(outgoing.fileno())
-            os.fchmod(stage_fd, output_mode)
+            # ``fchmod`` is absent from the Windows type surface even though
+            # this branch is POSIX-only; the dynamic lookup keeps mypy's
+            # cross-platform analysis honest without weakening runtime use.
+            os_module: Any = os
+            os_module.fchmod(stage_fd, output_mode)
         finally:
             os.close(stage_fd)
 
