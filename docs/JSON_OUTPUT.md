@@ -114,7 +114,9 @@
 
 ### `doctor`
 
-`all_ready` 与 `checks` 数组（每项含 `name`、`status`、`ok`、`required`）。可选依赖缺失会出现在 `checks` 中，但不会让命令失败。
+`all_ready` 与 `checks` 数组（每项含 `name`、`status`、`ok`、`required`）。
+标准媒体依赖（含 AVIF 与 ffmpeg/ffprobe）缺失会令 `ok`、`all_ready` 为
+`false`；ffmpeg 状态还会披露当前使用 `系统` 或 `随包安装` 的运行时。
 
 ## PDF 命令
 
@@ -130,7 +132,8 @@
 
 `video info` 返回 `files` 数组，每项含 `duration_sec`、`width`、`height`、`video_codec`、`audio_codec`、`fps`、`bit_rate`、`container`、`stream_count`、`size_bytes`、`error`。
 
-未安装 ffmpeg 时，所有视频命令返回 `error: "ffmpeg_missing"`。
+源码安装没有系统运行时、平台不受支持或 wheel 运行时文件损坏时，所有视频命令
+返回 `error: "ffmpeg_missing"`。
 
 ## Agent 命令
 

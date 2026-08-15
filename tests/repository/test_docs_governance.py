@@ -17,6 +17,11 @@ from pathlib import Path
 import pytest
 import yaml
 
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - Python 3.10 CI
+    import tomli as tomllib
+
 from pixshift.core.tool_catalog import TOOL_CATALOG
 
 REPO = Path(__file__).resolve().parents[2]
@@ -41,6 +46,7 @@ ROOT_FILES = {
     "AGENTS.md",
     "CHANGELOG.md",
     "LICENSE",
+    "MANIFEST.in",
     "README.md",
     "mkdocs.yml",
     "pyproject.toml",
@@ -226,6 +232,18 @@ def test_documented_exit_codes_match_the_implementation():
     for doc in ("docs/JSON_OUTPUT.md", "docs/automation.md"):
         text = _read(doc)
         assert "`2`" in text and "`1`" in text and "`0`" in text, f"{doc} omits an exit code"
+
+
+def test_standard_install_declares_and_packages_every_media_runtime() -> None:
+    project_file = tomllib.loads(_read("pyproject.toml"))
+    project = project_file["project"]
+    requirements = {item.split(";", 1)[0].strip().lower() for item in project["dependencies"]}
+
+    assert any(item.startswith("pillow-avif-plugin") for item in requirements)
+    assert not any(item.startswith("ffmpeg-binaries") for item in requirements)
+    package_data = project_file["tool"]["setuptools"]["package-data"]["pixshift"]
+    assert "_runtime/bin/*" in package_data
+    assert (REPO / "scripts" / "media_runtime_manifest.json").is_file()
 
 
 # ------------------------------------------------------------------

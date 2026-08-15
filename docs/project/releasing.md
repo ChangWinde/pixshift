@@ -13,20 +13,41 @@ PixShift follows semantic versioning (`MAJOR.MINOR.PATCH`).
    uv run ruff format --check .
    uv run mypy . --ignore-missing-imports
    uv run pytest -q --cov=pixshift --cov-report=term-missing --cov-fail-under=78
-   uv build
+   uv build --sdist
    uv run twine check dist/*
    ```
 2. Update `CHANGELOG.md`, set the same version in `pyproject.toml`, and run
    `uv lock`. Confirm that neither the tag nor package version already exists.
-   The release workflow rejects a tag that differs from `project.version` and
-   verifies both wheel and sdist filenames before upload.
+   The release workflow rejects a tag that differs from `project.version`.
 3. Merge the reviewed release commit, then create and push a version tag:
    ```bash
    git tag vX.Y.Z
    git push origin vX.Y.Z
    ```
-4. The tag-only `release.yml` workflow tests, builds, validates, and uploads package artifacts.
+4. The tag-only `release.yml` workflow runs the repository gate, builds the source
+   distribution, then builds and executes authenticated runtime wheels on every target.
 5. Download and verify artifacts from GitHub Actions.
+
+## Bundled Media Runtime
+
+Normal local builds intentionally produce only a source distribution or a wheel without
+native executables. The release workflow is the sole path that publishes runtime wheels:
+
+1. `scripts/media_runtime_manifest.json` pins the FFmpeg version, upstream build commit,
+   versioned artifact URLs, byte lengths, SHA-256 values, and wheel tags.
+2. `scripts/stage_media_runtime.py` downloads into private temporary directories and
+   publishes each file only after its length and digest match.
+3. `scripts/verify_media_runtime.py` executes the pair on the target runner, verifies the
+   codec/filter floor, and completes a real H.264/AAC encode plus ffprobe journey.
+4. The wheel is retagged for exactly that OS/CPU, installed into a clean environment, and
+   required to resolve its packaged provider before upload.
+
+Updating the manifest is a security-sensitive change. Use the latest supported FFmpeg
+security release, verify the upstream release and build commit, update every artifact
+digest/size together, review the bundled license and codec configuration, then run the
+local target smoke test. Never weaken a digest, use a floating URL, or make runtime media
+commands download a missing artifact. The platform matrix currently covers
+manylinux_2_28 x86-64/ARM64, macOS 15+ x86-64/ARM64, and Windows x86-64.
 
 ## Publish to PyPI (trusted publishing)
 
@@ -40,8 +61,8 @@ validated artifacts to PyPI through [trusted publishing](https://docs.pypi.org/t
    the existing project's Publishing settings (not as a pending publisher).
 2. In the GitHub repository settings, create the `pypi` environment.
    Recommended: require a reviewer so publishing stays an explicit decision.
-3. Push a `vX.Y.Z` tag. The `build` job runs the full gate and builds artifacts;
-   the `publish` job uploads them only after the environment gate passes.
+3. Push a `vX.Y.Z` tag. The verification, source-build, and five platform-wheel matrix
+   entries must all pass; the `publish` job uploads them only after the environment gate.
 
 Never assume a green artifact build means PyPI was updated; verify the release
 page on PyPI after the `publish` job succeeds.

@@ -19,8 +19,10 @@ Always pass `--json` for machine use. Failures set `ok: false` and exit
 non-zero: `1` means work was attempted and something failed (see the
 `errors` objects: `input`/`output`/`error`), `2` means the invocation was
 rejected before any output was written (bad arguments or plan validation).
-Video commands need ffmpeg (optional, reported by `doctor`); without it they
-fail with a stable `ffmpeg_missing` error.
+Supported release wheels include a local ffmpeg/ffprobe runtime and prefer a
+complete system pair when present; `doctor` reports which provider is active.
+Source installs without a system pair and unsupported platforms fail video commands
+with the stable `ffmpeg_missing` error.
 
 The size-budget idiom — "stay under X bytes at the best quality" — works on
 all three pillars with the same flag:

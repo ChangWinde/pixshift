@@ -178,7 +178,12 @@ def test_formats_json_output():
     }
 
 
-def test_doctor_json_output():
+def test_doctor_json_output(monkeypatch):
+    from pixshift.core.media_runtime import FFmpegRuntime
+
+    runtime = FFmpegRuntime("/bundle/ffmpeg", "/bundle/ffprobe", "bundled")
+    monkeypatch.setattr("pixshift.commands.system_commands.resolve_ffmpeg_runtime", lambda: runtime)
+    monkeypatch.setattr("pixshift.commands.system_commands._ffmpeg_version", lambda _path: "8.1.2")
     runner = CliRunner()
     result = runner.invoke(cli, ["doctor", "--json"])
     assert result.exit_code == 0
@@ -187,3 +192,33 @@ def test_doctor_json_output():
     assert payload["ok"] is True
     assert isinstance(payload["all_ready"], bool)
     assert isinstance(payload["checks"], list)
+
+
+def test_doctor_json_rejects_an_incomplete_install(monkeypatch):
+    monkeypatch.setattr("pixshift.commands.system_commands.resolve_ffmpeg_runtime", lambda: None)
+
+    result = CliRunner().invoke(cli, ["doctor", "--json"])
+
+    assert result.exit_code == 1
+    payload = json.loads(result.output.strip())
+    assert payload["ok"] is False
+    runtime = next(item for item in payload["checks"] if item["name"].startswith("ffmpeg"))
+    assert runtime["required"] is True
+    assert runtime["ok"] is False
+
+
+def test_doctor_json_rejects_a_broken_runtime_pair(monkeypatch):
+    from pixshift.core.media_runtime import FFmpegRuntime
+
+    runtime = FFmpegRuntime("/bundle/ffmpeg", "/bundle/ffprobe", "bundled")
+    monkeypatch.setattr("pixshift.commands.system_commands.resolve_ffmpeg_runtime", lambda: runtime)
+    versions = {"/bundle/ffmpeg": "8.1.2", "/bundle/ffprobe": ""}
+    monkeypatch.setattr("pixshift.commands.system_commands._ffmpeg_version", versions.get)
+
+    result = CliRunner().invoke(cli, ["doctor", "--json"])
+
+    assert result.exit_code == 1
+    payload = json.loads(result.output.strip())
+    check = next(item for item in payload["checks"] if item["name"].startswith("ffmpeg"))
+    assert check["ok"] is False
+    assert "损坏或版本不匹配" in check["status"]

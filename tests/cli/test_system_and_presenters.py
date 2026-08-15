@@ -70,7 +70,12 @@ def test_formats_command_displays_tables():
     assert "质量预设" in result.output
 
 
-def test_doctor_command_displays_runtime_checks():
+def test_doctor_command_displays_runtime_checks(monkeypatch):
+    from pixshift.core.media_runtime import FFmpegRuntime
+
+    runtime = FFmpegRuntime("/bundle/ffmpeg", "/bundle/ffprobe", "bundled")
+    monkeypatch.setattr("pixshift.commands.system_commands.resolve_ffmpeg_runtime", lambda: runtime)
+    monkeypatch.setattr("pixshift.commands.system_commands._ffmpeg_version", lambda _path: "8.1.2")
     runner = CliRunner()
     result = runner.invoke(cli, ["doctor"])
     assert result.exit_code == 0
@@ -78,6 +83,17 @@ def test_doctor_command_displays_runtime_checks():
     assert "Python" in result.output
     assert "结果" in result.output
     assert "通过" in result.output
+
+
+def test_ffmpeg_version_rejects_undecodable_output(monkeypatch):
+    from pixshift.commands import system_commands
+
+    def raise_decode_error(*_args, **_kwargs):
+        raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+
+    monkeypatch.setattr(system_commands.subprocess, "run", raise_decode_error)
+
+    assert system_commands._ffmpeg_version("/runtime/ffmpeg") == ""
 
 
 def test_check_heif_handles_import_error(monkeypatch):

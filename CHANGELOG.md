@@ -6,6 +6,12 @@ All notable changes to this project are documented in this file.
 
 ### Added
 
+- Supported release wheels now include AVIF support plus an authenticated FFmpeg 8.1.2
+  ffmpeg/ffprobe fallback. The release gate verifies pinned lengths, SHA-256 values,
+  codecs, filters, and a real encode/probe journey on manylinux_2_28 x86-64/ARM64,
+  macOS 15+ x86-64/ARM64, and Windows x86-64. Runtime resolution prefers a system pair,
+  never mixes providers, mutates `PATH`, or downloads during media work; `doctor`
+  reports whether the active pair is system-managed or wheel-packaged.
 - Batch selection filters shared by image and workflow batch commands: `--include GLOB`,
   `--exclude GLOB` and `--min-file-size SIZE` narrow a run without shell
   gymnastics. Globs match both the full path and the bare name, so
@@ -190,7 +196,7 @@ All notable changes to this project are documented in this file.
 
 #### Added
 
-- Video pillar (ADR-0005): optional ffmpeg-backed `video info / convert /
+- Video pillar (ADR-0005): ffmpeg-backed `video info / convert /
   compress / trim / thumbnail / extract-audio / gif` commands with pure,
   unit-testable argv builders, atomic outputs, stable `ffmpeg_missing`
   errors, and `doctor` reporting.

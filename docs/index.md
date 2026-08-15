@@ -15,7 +15,9 @@ PixShift 是一个本地优先的命令行工具，覆盖日常的**图片、PDF
 pip install pixshift
 ```
 
-需要 Python 3.10 或更高版本。PDF 能力开箱即用，视频能力需要额外安装 ffmpeg，详见[安装与环境](install.md)。
+需要 Python 3.10 或更高版本。支持平台上的发布 wheel 会同时提供图片（含
+HEIC/AVIF）、PDF 和视频运行时；无需再单独安装 ffmpeg。源码安装例外、平台
+范围与系统运行时优先级见[安装与环境](install.md)。
 
 ## 五分钟上手
 
@@ -35,7 +37,7 @@ pixshift strip IMG_0421.jpg
 # 扫描件合成一个 PDF
 pixshift pdf merge ./scans -o 合同.pdf
 
-# 视频压到 25MB 以内（需要 ffmpeg）
+# 视频压到 25MB 以内
 pixshift video compress talk.mp4 --target-size 25MB
 
 # 交付前验证结构、体积与感知质量

@@ -90,12 +90,16 @@ def test_verify_payload_matches_schema(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "args",
+    ("args", "valid_exit_codes"),
     [
-        ["formats", "--json"],
-        ["doctor", "--json"],
+        (["formats", "--json"], {0}),
+        # Source installs intentionally have no bundled binary, while release
+        # wheels do. Both readiness outcomes must retain the JSON envelope.
+        (["doctor", "--json"], {0, 1}),
     ],
 )
-def test_system_payloads_match_envelope(args):
-    payload = _run(args)
+def test_system_payloads_match_envelope(args, valid_exit_codes):
+    result = CliRunner().invoke(cli, args)
+    assert result.exit_code in valid_exit_codes, result.output
+    payload = json.loads(result.output.strip())
     _validate(payload, "envelope.json")
