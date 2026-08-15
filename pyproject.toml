@@ -61,7 +61,8 @@ pixshift = "pixshift.cli:main"
 Homepage = "https://github.com/ChangWinde/pixshift"
 Repository = "https://github.com/ChangWinde/pixshift"
 Issues = "https://github.com/ChangWinde/pixshift/issues"
-Documentation = "https://github.com/ChangWinde/pixshift#readme"
+Documentation = "https://changwinde.github.io/pixshift/"
+Changelog = "https://github.com/ChangWinde/pixshift/blob/main/CHANGELOG.md"
 
 [tool.setuptools.packages.find]
 include = ["pixshift*"]

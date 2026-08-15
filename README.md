@@ -1,234 +1,204 @@
 # PixShift
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/ChangWinde/pixshift/main/assets/PixShift.png" alt="PixShift logo" width="280" />
+  <img src="https://raw.githubusercontent.com/ChangWinde/pixshift/main/.github/assets/PixShift.png" alt="PixShift logo" width="280" />
+</p>
+
+<p align="center">
+  Local-first media operations for people, scripts, and agents.
 </p>
 
 [![CI](https://img.shields.io/github/actions/workflow/status/ChangWinde/pixshift/ci.yml?branch=main&label=CI)](https://github.com/ChangWinde/pixshift/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/actions/workflow/status/ChangWinde/pixshift/release.yml?label=Release)](https://github.com/ChangWinde/pixshift/actions/workflows/release.yml)
-[![Docs](https://img.shields.io/github/actions/workflow/status/ChangWinde/pixshift/docs.yml?label=Docs)](https://changwinde.github.io/pixshift/)
+[![Docs](https://img.shields.io/github/actions/workflow/status/ChangWinde/pixshift/docs.yml?branch=main&label=Docs)](https://changwinde.github.io/pixshift/)
+[![PyPI](https://img.shields.io/pypi/v/pixshift)](https://pypi.org/project/pixshift/)
+[![Python](https://img.shields.io/pypi/pyversions/pixshift)](https://pypi.org/project/pixshift/)
+[![License](https://img.shields.io/github/license/ChangWinde/pixshift)](https://github.com/ChangWinde/pixshift/blob/main/LICENSE)
 
-PixShift is an AI-native, local-first CLI toolkit for daily media work across three
-pillars — images, PDFs, and video. Humans get fast commands with rich output; agents and
-scripts get a discoverable tool catalog, schema-validated JSON contracts, and executable
-plans over the same deterministic engines.
+PixShift is a deterministic CLI toolkit for everyday image, PDF, and video work.
+Humans get concise terminal output; scripts and agents get the same operations through
+schema-validated JSON, executable plans, explicit side-effect metadata, and stable exit
+codes. Media processing stays on the local machine.
 
-Full documentation: **<https://changwinde.github.io/pixshift/>**
+[中文使用手册](https://changwinde.github.io/pixshift/) ·
+[安装](https://changwinde.github.io/pixshift/install/) ·
+[自动化](https://changwinde.github.io/pixshift/automation/) ·
+[贡献指南](https://github.com/ChangWinde/pixshift/blob/main/.github/CONTRIBUTING.md) ·
+[更新记录](https://github.com/ChangWinde/pixshift/blob/main/CHANGELOG.md)
 
 ## Why PixShift
 
-- AI-native surface: `tools` catalog with side-effect annotations, `optimize`
-  plans, `apply` execution, and schema contracts under `docs/schemas/v1/`
-- The size-budget idiom on every pillar: `--target-size 25MB` keeps the best
-  quality that fits (complete bounded quality search for lossy images/PDF,
-  full-resolution lossless PNG/TIFF, and two-pass or ABR video encoding)
-- Fast image batches use a memory-bounded worker pool; PDF and video commands
-  favour predictable resource use over implicit parallelism
-- Idempotent derivative workflows ignore their own generated files and skip
-  existing outputs; aggregate commands reject source/output collisions
-- Safe destructive behavior: similarity is advisory; only revalidated,
-  byte-identical duplicates can be deleted
-- Human-readable output and script-friendly JSON mode with stable failure exit codes
-- Local media hot path: no model or network call sits between you and your files
-- Modular architecture for long-term maintainability
+| Need | What PixShift guarantees |
+| --- | --- |
+| One media toolbox | Focused commands across images, PDFs, and video instead of a hidden mega-pipeline |
+| Best quality under a byte limit | `--target-size` searches the complete bounded quality domain for images and PDFs; video uses bounded bitrate strategies |
+| Safe automation | Full-batch planning, collision rejection, root-contained atomic publication, stable JSON errors, and dry runs |
+| Faithful delivery | ICC-aware image comparison, animation timing checks, PDF semantic inventories, and video audio/video verification |
+| Local operation | No network or model call in the media-processing hot path; ffmpeg is an optional local dependency |
 
-## Installation
+PixShift deliberately does not provide generative editing, cloud transcoding, a video
+timeline editor, or an ImageMagick-complete filter language. Its scope is auditable,
+one-shot media work.
 
-The README follows the current development branch. To use exactly this command
-surface, clone the repository and install it locally:
+## Install
+
+Python 3.10 or newer is required. The published release installs with:
 
 ```bash
+pip install pixshift
+```
+
+The documentation and this README follow `main`, so they can be ahead of the latest
+published package. To use exactly the documented surface:
+
+```bash
+git clone https://github.com/ChangWinde/pixshift.git
+cd pixshift
 pip install .
 ```
 
-`pip install pixshift` installs the latest published release, whose features may
-lag the development documentation until the next tagged release.
+PDF support is included. Video commands additionally require `ffmpeg` and `ffprobe` on
+`PATH`; `pixshift doctor --json` reports the exact runtime capabilities. AVIF encoding
+is optional: `pip install "pixshift[avif]"`.
 
-Requires Python `>=3.10`. CI runs on pushes to `main`/`master` and on pull
-requests; Linux covers Python 3.10/3.12/3.13 and macOS/Windows cover Python
-3.13, including real ffmpeg journeys. PDF support is bundled; video commands
-additionally need `ffmpeg` on the `PATH` (see the manual's installation chapter).
+See the [installation guide](https://changwinde.github.io/pixshift/install/) for macOS,
+Linux, Windows, uv, and shell-completion instructions.
 
-## Command Tree
+## Sixty-second tour
+
+```bash
+# Inspect local capabilities
+pixshift doctor --json
+
+# Convert a directory while colour-managing output to sRGB
+pixshift convert ./photos -t webp -q high --color-space srgb -r --json
+
+# Keep the best JPEG quality that fits 500 KB
+pixshift compress poster.jpg --target-size 500KB --json
+
+# Build and split PDFs
+pixshift pdf merge ./scans -o album.pdf --json
+pixshift pdf split report.pdf -o ./pages --json
+
+# Compress video to a delivery budget (requires ffmpeg)
+pixshift video compress talk.mp4 --target-size 25MB --audio-policy compatible --json
+
+# Prove the candidate still satisfies media-specific structure and quality gates
+pixshift verify source.jpg candidate.webp --min-ssim 0.99 --json
+```
+
+Existing derivative outputs are skipped by default. Use `--overwrite` only when
+replacement is intentional, and preview destructive duplicate cleanup with
+`dedup --delete --dry-run` before confirming it.
+
+## Choose the operation
+
+| Job | Images | PDFs | Video |
+| --- | --- | --- | --- |
+| Inspect | `info`, `manifest`, `hash` | `pdf info` | `video info` |
+| Convert | `convert` | `pdf extract` | `video convert` |
+| Compress to a preset or size | `compress` | `pdf compress` | `video compress` |
+| Transform | `crop`, `resize`, `rotate` | `pdf split` | `video trim`, `video thumbnail` |
+| Compose | `montage`, `watermark` | `pdf merge`, `pdf concat` | `video concat`, `video gif` |
+| Clean or analyse | `strip`, `dedup`, `compare`, `optimize` | `verify` | `video extract-audio`, `verify` |
+| Prepare for delivery | `prep` | `verify` | `verify` |
+
+The complete command reference is split by pillar:
+[images](https://changwinde.github.io/pixshift/images/),
+[PDF](https://changwinde.github.io/pixshift/pdf/), and
+[video](https://changwinde.github.io/pixshift/video/).
+
+## Agent and automation contract
+
+The recommended loop is discover, inspect, plan, dry-run, apply, and verify:
+
+```bash
+pixshift tools --json
+pixshift manifest ./media -r --json
+pixshift optimize ./media -r --json > plan.json
+pixshift apply --plan plan.json -o ./out --dry-run --json
+pixshift apply --plan plan.json -o ./out --json
+pixshift verify source.png ./out/source.webp --json
+```
+
+Automation guarantees:
+
+- Every JSON document includes `"schema_version": "1.1"`, `command`, and `ok`.
+- Exit `0` is success, `1` is an attempted operation that failed, and `2` is a
+  pre-write usage or plan rejection.
+- `pixshift tools --json` publishes MCP-aligned read-only, destructive,
+  idempotent, and open-world annotations.
+- `pixshift apply --dry-run` performs the same plan validation as execution without
+  writing media outputs.
+- `python -m pixshift.mcp` exposes a bounded stdio JSON-RPC adapter over the same CLI
+  contract; it is not a second implementation of the engines.
+
+The [automation guide](https://changwinde.github.io/pixshift/automation/) and
+[JSON contract](https://changwinde.github.io/pixshift/JSON_OUTPUT/) document the
+public interface. Versioned schemas live in
+[`docs/schemas/v1/`](https://github.com/ChangWinde/pixshift/tree/main/docs/schemas/v1).
+
+## Safety and quality boundaries
+
+- Output paths are planned as a batch before the first write. Collisions, path escapes,
+  and aggregate source/output aliases are rejected.
+- Encoders publish atomically and preserve no-clobber semantics at commit time on POSIX
+  and Windows.
+- Pixel budgets are checked before large decodes, including aggregate animation frames
+  and generated montage/PDF pages.
+- Animation is preserved with its frame timing and loop semantics, or explicitly refused;
+  it is never silently flattened.
+- Similarity groups are advisory. `dedup --delete` removes only byte-identical files after
+  an immediate identity and SHA-256 recheck.
+- `verify` compares media-specific structure as well as raster similarity: colour and alpha
+  for images, document semantics for PDFs, and audio plus video for containers.
+
+These are implementation contracts, not slogans. Their rationale is recorded in the
+[architecture overview](https://github.com/ChangWinde/pixshift/blob/main/docs/project/architecture.md)
+and [architecture decisions](https://github.com/ChangWinde/pixshift/tree/main/docs/adr/),
+and their observable behavior is covered by the cross-platform test suite.
+
+## Repository map
 
 ```text
-pixshift
-├─ convert      Convert image formats
-├─ compress     Compress images in the same format
-├─ strip        Remove metadata (privacy cleanup)
-├─ dedup        Find and remove similar/duplicate images
-├─ compare      Compare image quality (SSIM/PSNR/MSE)
-├─ verify       Gate image/PDF/video candidates on structure and quality
-├─ crop         Crop images by box/aspect/auto-trim
-├─ resize       Resize images keeping their format
-├─ rotate       Rotate or mirror images
-├─ watermark    Add text/image watermark
-├─ montage      Build image grid montage
-├─ optimize     Recommend best output format
-├─ info         Inspect image metadata and properties
-├─ formats      Show supported formats and quality presets
-├─ doctor       Validate runtime dependencies
-├─ tools        List the agent-facing tool catalog
-├─ apply        Execute machine plans from optimize
-├─ prep         Prepare delivery-ready assets (resize + convert + privacy strip)
-├─ manifest     Inventory media with hashes and properties
-├─ hash         Compute content hashes for audits
-├─ pdf
-│  ├─ merge     Merge images into PDF
-│  ├─ extract   Extract PDF pages as images
-│  ├─ split     Split PDF into separate PDFs
-│  ├─ compress  Compress PDF
-│  ├─ concat    Concatenate multiple PDFs
-│  └─ info      Show PDF details
-└─ video        (needs ffmpeg)
-   ├─ info          Inspect container/codecs/duration
-   ├─ convert       Transcode to mp4/webm/mkv/mov
-   ├─ compress      Shrink with CRF presets or fit a size budget
-   ├─ concat        Join clips end to end (lossless stream copy)
-   ├─ trim          Cut a time range (stream-copy by default)
-   ├─ thumbnail     Extract a still frame
-   ├─ extract-audio Export the audio track
-   └─ gif           Convert a clip to animated GIF
+pixshift/              Python package: commands, ops, engines, and shared policy
+tests/                 Tests grouped by automation, CLI, core, media pillar, and integration
+docs/                  Published manual plus schemas
+docs/project/          Maintainer architecture, governance, goals, and release notes
+docs/adr/              Immutable architecture decision records
+examples/              Runnable human and automation workflows
+scripts/               Repository verification and benchmark utilities
+.github/               Community policy, templates, workflows, and brand assets
 ```
 
-## Quick Start
+The test grouping and placement rules are described in
+[`tests/README.md`](https://github.com/ChangWinde/pixshift/blob/main/tests/README.md).
 
-```bash
-pixshift convert ./photos/ -t webp -q high --color-space srgb -r
-pixshift compress ./photos/ -p medium -r
-pixshift strip ./photos/ --mode privacy -r
-pixshift dedup ./photos/ -r --delete --dry-run
-pixshift dedup ./photos/ -r --delete --yes
-pixshift compare a.jpg b.jpg
-pixshift crop ./photos/ --aspect 1:1 -r
-pixshift resize ./photos/ --max-size 1600 -r
-pixshift rotate ./scans/ --degrees 90
-pixshift watermark text ./photos/ --text "© PixShift" -r
-pixshift montage ./photos/ -o board.png --cols 4
-pixshift optimize ./photos/ -r
-pixshift pdf merge ./photos/ -o album.pdf
-pixshift pdf split ./report.pdf -o ./pages/
-pixshift video compress ./clips/ -p web --audio-policy compatible -r  # needs ffmpeg
-pixshift video thumbnail demo.mp4 --at 25%
-pixshift video gif demo.mp4 -o demo.gif --fps 15 --width 480
-```
-
-Video commands require a system `ffmpeg`/`ffprobe` (`brew install ffmpeg` or
-`apt install ffmpeg`); `pixshift doctor` reports availability. They are never required
-for the image and PDF pillars.
-
-Common defaults favor everyday speed without hiding control: conversion uses `high`
-quality, PDF extraction uses 150 DPI, text-watermark size adapts to the image, and
-existing batch outputs are skipped. Use `-q max`, `--dpi 300`, `--font-size 36`, or
-`--overwrite` when those explicit behaviors are required.
-
-## AI-Native Interface
-
-Agents discover, plan, apply, and verify with four moves:
-
-```bash
-pixshift tools --json                          # discover: catalog + annotations
-pixshift optimize ./photos -r --json > plan.json   # plan: executable recommendations
-pixshift apply --plan plan.json -o ./out --json    # apply: run the plan (supports --dry-run)
-pixshift verify source.png ./out/source.webp --min-ssim 0.99 --json  # quality gate
-```
-
-- Every tool entry carries MCP-aligned annotations (`readOnlyHint`,
-  `destructiveHint`, `idempotentHint`, `openWorldHint: false`).
-- The shared JSON envelope plus dedicated schemas for automation and `verify`
-  live in `docs/schemas/v1/` and are validated in CI.
-- One-shot asset preparation: `pixshift prep ./raw -r -o ./dist --max-size 2048 -t webp --json`
-  converts, bounds dimensions, strips privacy metadata, and returns a hashed manifest.
-- Directory inventory: `pixshift manifest ./photos -r --json` reports formats,
-  dimensions, alpha, frame counts, sensitive EXIF keys, and SHA-256 digests.
-- Optional MCP hosting: `python -m pixshift.mcp` serves the same catalog over
-  stdio JSON-RPC; the CLI JSON document remains the authoritative contract
-  (see `docs/adr/0003-ai-native-tool-surface.md`).
-- Agent guide: `AGENTS.md`.
-
-## Shell Completion
-
-Click provides completion for bash, zsh, and fish:
-
-```bash
-# bash (~/.bashrc)
-eval "$(_PIXSHIFT_COMPLETE=bash_source pixshift)"
-# zsh (~/.zshrc)
-eval "$(_PIXSHIFT_COMPLETE=zsh_source pixshift)"
-# fish (~/.config/fish/completions/pixshift.fish)
-_PIXSHIFT_COMPLETE=fish_source pixshift | source
-```
-
-## Automation Mode (`--json`)
-
-JSON mode is intended for CI and scripts.
-In JSON mode, failures return non-zero exit codes.
-Every document includes `"schema_version": "1.1"`, `command`, and `ok`.
-
-```bash
-pixshift convert ./photos/ -t webp --json
-pixshift compress ./photos/ -p medium --json
-pixshift strip ./photos/ --mode privacy --json
-pixshift dedup ./photos/ -r --json
-pixshift compare a.jpg b.jpg --json
-pixshift verify a.jpg b.webp --min-ssim 0.99 --json
-pixshift crop ./photos/ --aspect 16:9 --dry-run --json
-pixshift resize ./photos/ --percent 50 --json
-pixshift rotate ./scans/ --degrees 90 --json
-pixshift watermark text ./photos/ --text "© PixShift" --dry-run --json
-pixshift montage ./photos/ -o board.png --json
-pixshift optimize ./photos/ --json
-pixshift info ./photo.jpg --json
-pixshift formats --json
-pixshift doctor --json
-pixshift pdf info ./report.pdf --json
-pixshift pdf split ./report.pdf -o ./pages/ --json
-```
-
-Script templates:
-
-- `examples/automation/dedup_ci.sh`
-- `examples/automation/compress_report.sh`
-- `examples/automation/pdf_info_export.sh`
-- `examples/advanced/README.md`
-
-## Documentation
-
-The user manual lives at **<https://changwinde.github.io/pixshift/>** (written in
-Chinese, matching the CLI's own output language):
-
-- Images, PDF, and video command guides
-- Automation and agent integration (`docs/automation.md`)
-- JSON output contract (`docs/JSON_OUTPUT.md`)
-- Installation, environment, and FAQ
-
-Engineering references stay in the repository and are deliberately kept out of
-the user-facing site:
-
-- Architecture: `docs/ARCHITECTURE.md`
-- Architecture decision records: `docs/adr/`
-- JSON Schema contracts: `docs/schemas/v1/`
-- Agent guide: `AGENTS.md`
-- Project goal and milestones: `docs/GOAL.md`
-- Performance evidence: `docs/PERFORMANCE.md`
-- Label strategy: `docs/LABEL_STRATEGY.md`
-- Release process: `docs/RELEASING.md`
-- Automation examples: `examples/automation/README.md`
-- Advanced examples: `examples/advanced/README.md`
-- Changelog: `CHANGELOG.md`
+Root files are intentionally limited to tools that rely on conventional discovery:
+package and lock metadata, MkDocs and pre-commit configuration, the agent guide, license,
+changelog, and this README. The placement policy and update matrix are documented in
+[`docs/project/documentation-governance.md`](https://github.com/ChangWinde/pixshift/blob/main/docs/project/documentation-governance.md).
 
 ## Contributing
 
-Please read:
+Start with the
+[contributor guide](https://github.com/ChangWinde/pixshift/blob/main/.github/CONTRIBUTING.md).
+The required local gate is:
 
-- `CONTRIBUTING.md`
-- `.github/CODE_OF_CONDUCT.md`
-- `.github/SECURITY.md`
-- `.github/SUPPORT.md`
-- `.github/ISSUE_TEMPLATE/*`
-- `.github/PULL_REQUEST_TEMPLATE.md`
-- `.github/workflows/ci.yml`
+```bash
+uv sync --frozen --extra dev
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy . --ignore-missing-imports
+uv run pytest -q --cov=pixshift --cov-fail-under=78
+uv run mkdocs build --strict
+```
+
+Security reports use
+[private GitHub advisories](https://github.com/ChangWinde/pixshift/blob/main/.github/SECURITY.md);
+usage questions follow the
+[support guide](https://github.com/ChangWinde/pixshift/blob/main/.github/SUPPORT.md).
 
 ## License
 
-This project is licensed under the MIT License. See `LICENSE`.
+PixShift is released under the
+[MIT License](https://github.com/ChangWinde/pixshift/blob/main/LICENSE).

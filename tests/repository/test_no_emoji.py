@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 TEXT_SUFFIXES = {
     ".cfg",
     ".html",
@@ -18,6 +18,7 @@ TEXT_SUFFIXES = {
 ROOT_TEXT_FILES = {"LICENSE", "Makefile"}
 IGNORED_PARTS = {
     ".git",
+    ".hypothesis",
     ".mypy_cache",
     ".nox",
     ".pytest_cache",
@@ -30,6 +31,7 @@ IGNORED_PARTS = {
     "htmlcov",
     "node_modules",
     "pixshift.egg-info",
+    "site",
 }
 EMOJI_RANGES = (
     (0x203C, 0x203C),

@@ -2,10 +2,12 @@
 
 ## Usage Help
 
-- Read `README.md` for common workflows.
-- Read the user manual in `docs/images.md`, `docs/pdf.md`, and `docs/video.md`.
+- Read the [README](../README.md) for orientation and common workflows.
+- Read the [user manual](https://changwinde.github.io/pixshift/) for current
+  image, PDF, video, and automation guidance.
 - Use `pixshift --help` and command-specific `--help`.
-- Review `docs/JSON_OUTPUT.md` for automation usage.
+- Review the [JSON output contract](https://changwinde.github.io/pixshift/JSON_OUTPUT/)
+  for automation usage.
 
 ## Bug Reports
 

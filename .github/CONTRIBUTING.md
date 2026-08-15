@@ -31,7 +31,7 @@ Large-scale verification (before releases or contract changes):
 uv run python scripts/e2e_sweep.py --images 400 --seed 1
 
 # Randomized property fuzzing (the default profile is deterministic)
-PIXSHIFT_HYPOTHESIS_PROFILE=stress uv run pytest tests/test_property_contracts.py
+PIXSHIFT_HYPOTHESIS_PROFILE=stress uv run pytest tests/automation/test_property_contracts.py
 ```
 
 ## Project Expectations
@@ -49,10 +49,10 @@ engineering reference (or the reverse) is the fastest way to make both rot.
 
 | Audience | Where | Language |
 | --- | --- | --- |
-| Users of the CLI | `docs/index.md`, `install.md`, `images.md`, `pdf.md`, `video.md`, `automation.md`, `JSON_OUTPUT.md`, `faq.md` — published as the site | Chinese, matching the CLI's own output |
-| Contributors | `README.md`, `CONTRIBUTING.md`, `docs/ARCHITECTURE.md`, `docs/RELEASING.md`, `docs/LABEL_STRATEGY.md` | English |
+| Users of the CLI | `docs/index.md`, `docs/install.md`, `docs/images.md`, `docs/pdf.md`, `docs/video.md`, `docs/automation.md`, `docs/JSON_OUTPUT.md`, `docs/faq.md` — published as the site | Chinese, matching the CLI's own output |
+| Contributors | `README.md`, `.github/CONTRIBUTING.md`, `docs/project/architecture.md`, `docs/project/releasing.md`, `docs/project/labels.md` | English |
 | Agents | `AGENTS.md`, `docs/schemas/v1/` | English |
-| The record | `CHANGELOG.md`, `docs/adr/`, `docs/GOAL.md`, `docs/PERFORMANCE.md` | English |
+| The record | `CHANGELOG.md`, `docs/adr/`, `docs/project/goals.md`, `docs/project/performance.md` | English |
 
 Rules that keep the set coherent:
 
@@ -68,11 +68,22 @@ Rules that keep the set coherent:
   the site nav in `mkdocs.yml`, or to `exclude_docs` if they are engineering
   references.
 
-`tests/test_docs_governance.py` enforces the machine-checkable half of this:
+The full placement, ownership, change-impact, retirement, and publication policy
+lives in `docs/project/documentation-governance.md`.
+
+`tests/repository/test_docs_governance.py` enforces the machine-checkable half of this:
 every catalogued command appears in the manual, the manual invents no command
 that does not exist, coverage gates and `schema_version` agree across code, CI
 and prose, relative links and referenced repository paths resolve, and no page
 is silently orphaned. Prose quality still needs a human reviewer.
+
+Run both documentation gates after changing any Markdown, schema, navigation, or
+repository metadata:
+
+```bash
+uv run pytest -q tests/repository/test_docs_governance.py
+uv run mkdocs build --strict
+```
 
 ## Pull Request Process
 
@@ -108,4 +119,3 @@ What: one-line summary of the change
 Why: motivation or issue reference
 How: brief technical approach (if non-obvious)
 ```
-

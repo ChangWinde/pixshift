@@ -67,4 +67,4 @@ sheets to present results), `formats` vs `doctor` and `pdf merge` vs
 - New commands enter the tool catalog, docs, schemas coverage via the shared
   envelope, and the test suite.
 - Animated-image transforms (GIF/APNG to WebP) stay out of scope for this
-  audit and are tracked as a roadmap item in docs/GOAL.md.
+  audit and are tracked as a roadmap item in `docs/project/goals.md`.

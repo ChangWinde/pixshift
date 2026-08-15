@@ -11,6 +11,7 @@ Prose quality is out of scope here; only verifiable claims are asserted.
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -18,7 +19,7 @@ import yaml
 
 from pixshift.core.tool_catalog import TOOL_CATALOG
 
-REPO = Path(__file__).resolve().parent.parent
+REPO = Path(__file__).resolve().parents[2]
 DOCS = REPO / "docs"
 MKDOCS = REPO / "mkdocs.yml"
 
@@ -33,14 +34,77 @@ MANUAL_PAGES = (
     "JSON_OUTPUT.md",
     "faq.md",
 )
+ROOT_MARKDOWN = {"AGENTS.md", "CHANGELOG.md", "README.md"}
+ROOT_FILES = {
+    ".gitignore",
+    ".pre-commit-config.yaml",
+    "AGENTS.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "README.md",
+    "mkdocs.yml",
+    "pyproject.toml",
+    "uv.lock",
+}
+ROOT_DIRECTORIES = {".github", "docs", "examples", "pixshift", "scripts", "tests"}
+PROJECT_PAGES = {
+    "architecture.md",
+    "documentation-governance.md",
+    "goals.md",
+    "labels.md",
+    "performance.md",
+    "releasing.md",
+}
+HEADING_EXEMPT = {Path(".github/PULL_REQUEST_TEMPLATE.md")}
+TEST_SUITES = {"automation", "cli", "core", "image", "integration", "pdf", "repository", "video"}
 
 
 def _read(relative: str) -> str:
     return (REPO / relative).read_text(encoding="utf-8")
 
 
+def _repository_paths() -> list[str]:
+    if not (REPO / ".git").exists():
+        pytest.skip("repository layout governance requires a Git checkout")
+    result = subprocess.run(
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
+        cwd=REPO,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return [path for path in result.stdout.splitlines() if (REPO / path).exists()]
+
+
 def _manual_text() -> str:
     return "\n".join((DOCS / page).read_text(encoding="utf-8") for page in MANUAL_PAGES)
+
+
+def _markdown_files() -> list[Path]:
+    """Every maintained Markdown surface, excluding generated/installed trees."""
+    files = list(REPO.glob("*.md"))
+    for directory in (REPO / ".github", DOCS, REPO / "examples", REPO / "tests"):
+        files.extend(directory.rglob("*.md"))
+    return sorted(set(files))
+
+
+def _prose_without_fenced_code(text: str) -> str:
+    """Remove fenced examples so shell comments are not mistaken for headings."""
+    prose: list[str] = []
+    fence: str | None = None
+    for line in text.splitlines():
+        stripped = line.lstrip()
+        marker = None
+        if stripped.startswith("```"):
+            marker = "```"
+        elif stripped.startswith("~~~"):
+            marker = "~~~"
+        if marker:
+            fence = None if fence == marker else marker
+            continue
+        if fence is None:
+            prose.append(line)
+    return "\n".join(prose)
 
 
 def _mkdocs_config() -> dict:
@@ -124,10 +188,14 @@ def test_coverage_gate_is_stated_consistently():
     ci_gates = set(re.findall(r"--cov-fail-under=(\d+)", _read(".github/workflows/ci.yml")))
     assert len(ci_gates) == 1, f"CI declares conflicting coverage gates: {ci_gates}"
     gate = ci_gates.pop()
-    for path in ("CONTRIBUTING.md", "docs/RELEASING.md", ".github/workflows/release.yml"):
+    for path in (
+        ".github/CONTRIBUTING.md",
+        "docs/project/releasing.md",
+        ".github/workflows/release.yml",
+    ):
         stated = set(re.findall(r"--cov-fail-under=(\d+)", _read(path)))
         assert stated <= {gate}, f"{path} states coverage gate {stated}, CI enforces {gate}"
-    policy = re.search(r"repository-wide gate is `(\d+)%`", _read("docs/RELEASING.md"))
+    policy = re.search(r"repository-wide gate is `(\d+)%`", _read("docs/project/releasing.md"))
     assert policy and policy.group(1) == gate, "RELEASING coverage policy disagrees with CI"
 
 
@@ -141,7 +209,7 @@ def test_schema_version_is_stated_consistently():
 
     contract = _read("docs/JSON_OUTPUT.md")
     assert f'`"{version}"`' in contract, f"JSON_OUTPUT.md does not state schema {version}"
-    assert f"schema_version {version}" in _read("docs/ARCHITECTURE.md")
+    assert f"schema_version {version}" in _read("docs/project/architecture.md")
     assert f'"schema_version": "{version}"' in _read("README.md")
 
     for schema_file in sorted((DOCS / "schemas" / "v1").glob("*.json")):
@@ -163,6 +231,84 @@ def test_documented_exit_codes_match_the_implementation():
 # ------------------------------------------------------------------
 # Structure: nothing orphaned, nothing dangling
 # ------------------------------------------------------------------
+
+
+def test_documentation_has_one_deliberate_home_per_audience():
+    """The root and public docs root remain curated discovery surfaces."""
+    root_markdown = {path.name for path in REPO.glob("*.md")}
+    assert root_markdown == ROOT_MARKDOWN, (
+        "root Markdown is reserved for README, changelog, and agent discovery; "
+        "put community policy in .github/ or engineering references in docs/project/"
+    )
+
+    public_root = {path.name for path in DOCS.glob("*.md")}
+    assert public_root == set(MANUAL_PAGES), (
+        "docs/*.md is the published manual; put maintainer references in docs/project/"
+    )
+
+    project_pages = {path.name for path in (DOCS / "project").glob("*.md")}
+    assert project_pages == PROJECT_PAGES, (
+        "update PROJECT_PAGES and documentation-governance.md when adding a project reference"
+    )
+
+
+def test_tracked_repository_root_is_a_curated_compatibility_surface():
+    paths = _repository_paths()
+    root_files = {path for path in paths if "/" not in path}
+    root_directories = {path.split("/", 1)[0] for path in paths if "/" in path}
+    assert root_files == ROOT_FILES, "update ADR-0007 before changing the root-file contract"
+    assert root_directories == ROOT_DIRECTORIES, (
+        "group new material under an owned root directory or supersede ADR-0007"
+    )
+
+
+def test_test_modules_are_grouped_by_owned_boundary():
+    suites = {
+        path.name
+        for path in (REPO / "tests").iterdir()
+        if path.is_dir() and not path.name.startswith((".", "__"))
+    }
+    assert suites == TEST_SUITES
+    loose_modules = sorted(path.name for path in (REPO / "tests").glob("test_*.py"))
+    assert not loose_modules, f"place test modules in an owned suite: {loose_modules}"
+
+
+def test_every_document_has_one_top_level_heading():
+    malformed: list[str] = []
+    for markdown in _markdown_files():
+        if markdown.relative_to(REPO) in HEADING_EXEMPT:
+            continue
+        prose = _prose_without_fenced_code(markdown.read_text(encoding="utf-8"))
+        headings = re.findall(r"^# [^#].+$", prose, flags=re.MULTILINE)
+        if len(headings) != 1:
+            malformed.append(f"{markdown.relative_to(REPO)} ({len(headings)} H1 headings)")
+    assert not malformed, f"documents must have exactly one H1: {malformed}"
+
+
+def test_repository_metadata_points_to_the_published_manual():
+    site_url = str(_mkdocs_config()["site_url"])
+    metadata = re.search(
+        r'^Documentation = "([^"]+)"$', _read("pyproject.toml"), flags=re.MULTILINE
+    )
+    assert metadata and metadata.group(1) == site_url
+    assert site_url in _read("README.md")
+
+
+def test_strict_build_and_deployment_sources_are_policy():
+    config = _mkdocs_config()
+    assert config.get("strict") is True, "mkdocs.yml must default to strict validation"
+    workflow = _read(".github/workflows/docs.yml")
+    for source in ("docs/**", "mkdocs.yml", ".github/workflows/docs.yml"):
+        assert source in workflow, f"Docs workflow does not watch {source}"
+    assert "mkdocs build --strict" in workflow
+
+
+def test_documentation_has_an_explicit_review_owner():
+    owners = _read(".github/CODEOWNERS")
+    for path in ("/README.md", "/AGENTS.md", "/mkdocs.yml", "/docs/", "/.github/"):
+        assert re.search(rf"^{re.escape(path)}\s+@\S+", owners, flags=re.MULTILINE), (
+            f"CODEOWNERS does not route review for {path}"
+        )
 
 
 def test_every_docs_page_is_either_published_or_explicitly_excluded():
@@ -196,21 +342,38 @@ def test_manual_pages_match_the_nav():
 
 def test_relative_markdown_links_resolve():
     broken: list[str] = []
-    for markdown in sorted(REPO.glob("*.md")) + sorted(DOCS.rglob("*.md")):
+    pattern = re.compile(r"(?<!!)\[[^]]+\]\(([^)]+)\)")
+    for markdown in _markdown_files():
         text = markdown.read_text(encoding="utf-8")
-        for target in re.findall(r"\]\(([^)]+\.md)(?:#[^)]*)?\)", text):
-            if target.startswith(("http://", "https://")):
+        for raw_target in pattern.findall(text):
+            target = raw_target.split("#", 1)[0]
+            if not target or target.startswith(("http://", "https://", "mailto:")):
                 continue
-            if not (markdown.parent / target).resolve().is_file():
+            if not (markdown.parent / target).resolve().exists():
                 broken.append(f"{markdown.relative_to(REPO)} -> {target}")
     assert not broken, f"broken relative documentation links: {broken}"
+
+
+def test_canonical_github_links_point_to_checked_in_paths():
+    """README links must remain valid when its long description renders on PyPI."""
+    prefix = (
+        r"https://(?:github\.com/ChangWinde/pixshift/(?:blob|tree)/main/|"
+        r"raw\.githubusercontent\.com/ChangWinde/pixshift/main/)"
+    )
+    pattern = re.compile(prefix + r'([^\s)"#]+)')
+    missing: list[str] = []
+    for markdown in _markdown_files():
+        for target in pattern.findall(markdown.read_text(encoding="utf-8")):
+            if not (REPO / target).exists():
+                missing.append(f"{markdown.relative_to(REPO)} -> {target}")
+    assert not missing, f"canonical GitHub links point to missing paths: {missing}"
 
 
 def test_referenced_repository_paths_exist():
     """Backtick-quoted repo paths in the docs must point at real files."""
     pattern = re.compile(r"`((?:docs|scripts|examples|tests|pixshift|\.github)/[\w./-]+)`")
     missing: list[str] = []
-    for markdown in sorted(REPO.glob("*.md")) + sorted(DOCS.rglob("*.md")):
+    for markdown in _markdown_files():
         for target in pattern.findall(markdown.read_text(encoding="utf-8")):
             path = REPO / target
             if not path.exists():

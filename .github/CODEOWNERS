@@ -1,0 +1,9 @@
+# The repository currently has one maintainer. Keep explicit documentation paths
+# visible here so future ownership can be split without changing governance policy.
+* @ChangWinde
+
+/README.md @ChangWinde
+/AGENTS.md @ChangWinde
+/mkdocs.yml @ChangWinde
+/docs/ @ChangWinde
+/.github/ @ChangWinde

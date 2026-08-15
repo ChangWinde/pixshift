@@ -10,7 +10,7 @@ from PIL import Image
 
 from pixshift.cli import cli
 
-SCHEMA_DIR = Path(__file__).resolve().parent.parent / "docs" / "schemas" / "v1"
+SCHEMA_DIR = Path(__file__).resolve().parents[2] / "docs" / "schemas" / "v1"
 
 
 def _schema(name: str) -> dict:

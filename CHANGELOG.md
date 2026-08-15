@@ -31,6 +31,13 @@ All notable changes to this project are documented in this file.
 
 ### Changed
 
+- Repository and documentation governance now preserve conventional root entry
+  points while grouping GitHub community material under `.github/` and mutable
+  maintainer references under `docs/project/`. ADR-0007 records the alternatives
+  and the root-file contract; CI now checks placement, headings, links, navigation,
+  deployment sources, and the package documentation URL. The formerly flat test
+  suite is grouped by owned boundary, and the README was rewritten as a concise
+  product, safety, automation, and repository entry point.
 - Five engines (compress, strip, crop, watermark, montage) each carried their
   own copy of the directory-walking collector; they now delegate to the
   shared one in `core/files.py`, which is what gives every command the new
@@ -226,7 +233,7 @@ All notable changes to this project are documented in this file.
 - Thin MCP stdio adapter (`python -m pixshift.mcp`) mapping the catalog onto
   the CLI JSON contract.
 - `python -m pixshift` module entry point.
-- Positioning and governance docs: `GOAL.md`, `AGENTS.md`, ADR-0003, and a
+- Positioning and governance docs: `docs/project/goals.md`, `AGENTS.md`, ADR-0003, and a
   pre-commit configuration.
 
 #### Changed

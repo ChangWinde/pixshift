@@ -11,7 +11,7 @@ from PIL import Image, ImageSequence
 from pixshift.cli import cli
 from pixshift.converter import PixShiftConverter
 
-SCHEMA_DIR = Path(__file__).resolve().parent.parent / "docs" / "schemas" / "v1"
+SCHEMA_DIR = Path(__file__).resolve().parents[2] / "docs" / "schemas" / "v1"
 
 
 def _validate(payload, schema_name):

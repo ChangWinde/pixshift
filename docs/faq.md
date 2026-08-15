@@ -1,5 +1,19 @@
 # 常见问题
 
+## 网站文档和 `pip install pixshift` 是同一个版本吗
+
+不一定。本站由仓库 `main` 分支自动发布，用于记录当前已经合并并通过文档构建的
+命令面；PyPI 只在版本标签通过完整发布门禁后更新，因此发布准备期间可能落后。
+
+先检查本机实际版本：
+
+```bash
+pixshift --version
+```
+
+需要本站描述的完整开发命令面时，按[安装与环境](install.md)从当前源码安装；需要
+稳定发布版时继续使用 `pip install pixshift`，并以对应版本的 `--help` 为准。
+
 ## 视频命令报 `ffmpeg_missing`
 
 视频功能依赖系统的 ffmpeg 与 ffprobe，它们不随 pip 包安装。按[安装与环境](install.md)装好后，用 `pixshift doctor` 确认识别成功即可。图片与 PDF 功能不受影响。

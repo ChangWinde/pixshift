@@ -72,10 +72,32 @@ intentionally stays compact; detailed options live under each command.
   any output is written.
 
 The accepted designs and alternatives are recorded in
-[ADR-0001](adr/0001-safe-operation-boundaries.md) and
-[ADR-0002](adr/0002-opinionated-defaults-and-ai-plans.md). The extreme-quality
+[ADR-0001](../adr/0001-safe-operation-boundaries.md) and
+[ADR-0002](../adr/0002-opinionated-defaults-and-ai-plans.md). The extreme-quality
 policy and media verification boundary are recorded in
-[ADR-0006](adr/0006-extreme-quality-boundaries.md).
+[ADR-0006](../adr/0006-extreme-quality-boundaries.md).
+
+## Repository Information Architecture
+
+Repository placement follows
+[ADR-0007](../adr/0007-repository-documentation-governance.md):
+
+```text
+repository root        conventional discovery, packaging, license, and release entry points
+.github/               contributor policy, review templates, workflows, and brand assets
+docs/                  published manual and versioned JSON schemas
+docs/project/          mutable maintainer references and operational evidence
+docs/adr/              immutable accepted decisions
+examples/              runnable user and automation journeys
+scripts/               repository verification and benchmark harnesses
+tests/                 suites grouped by product and policy ownership boundary
+```
+
+The root is a compatibility surface rather than a storage bucket. Public manual pages
+remain directly below `docs/` so established URLs stay stable; engineering material is
+grouped by audience and excluded from the site. The ownership, update matrix, retirement
+policy, and validation gates live in
+[documentation-governance.md](documentation-governance.md).
 
 ## Automation and AI Clients
 
