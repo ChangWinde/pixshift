@@ -18,8 +18,8 @@ ops wrappers
           │
           ▼
 image / PDF / video engines
-  (PyMuPDF is a required, lazily imported package; ffmpeg is an optional system
-   dependency reported by doctor; video argv builders are pure functions)
+  (PyMuPDF is a required, lazily imported package; ffmpeg/ffprobe resolve through
+   a system-first, bundled-fallback local provider; video argv builders are pure)
           │
           ▼
 core policy
@@ -28,6 +28,7 @@ core policy
   ├─ metadata.py     frame, transparency, orientation, and EXIF policy
   ├─ errors.py       stable policy error codes
   ├─ parallel.py     bounded, order-preserving batch execution
+  ├─ media_runtime.py side-effect-free system/bundled executable resolution
   ├─ tool_catalog.py the agent-facing catalog with side-effect annotations
   └─ models.py       shared batch summaries
 ```
@@ -76,6 +77,8 @@ The accepted designs and alternatives are recorded in
 [ADR-0002](../adr/0002-opinionated-defaults-and-ai-plans.md). The extreme-quality
 policy and media verification boundary are recorded in
 [ADR-0006](../adr/0006-extreme-quality-boundaries.md).
+The install-complete, offline video-runtime policy is recorded in
+[ADR-0008](../adr/0008-default-local-media-runtime.md).
 
 ## Repository Information Architecture
 
@@ -145,6 +148,8 @@ The contract layer (ADR-0003) makes this surface discoverable and verifiable:
 
 CI runs Ruff lint/format checks, mypy, the full pytest suite (including
 property-based contract tests), and a 78% coverage floor; the tag-driven
-release workflow adds package build/metadata validation, and the docs workflow
-builds the MkDocs site strictly. Dependencies are resolved from `uv.lock`, and
-third-party GitHub Actions are pinned to immutable commit SHAs.
+release workflow adds authenticated FFmpeg staging, native execution and codec smoke
+tests, platform wheel tagging, isolated-install verification, and package metadata
+validation. The docs workflow builds the MkDocs site strictly. Python dependencies are
+resolved from `uv.lock`, native release inputs are pinned by byte length and SHA-256,
+and third-party GitHub Actions are pinned to immutable commit SHAs.

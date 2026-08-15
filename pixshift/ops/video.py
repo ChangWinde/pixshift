@@ -56,8 +56,9 @@ def info(path: str) -> VideoInfo:
 def analyze_one(path: str) -> VideoOptimizeResult:
     """Probe one video and derive an optimize recommendation.
 
-    ffmpeg being optional, its absence and probe failures become stable
-    per-file errors so a mixed optimize batch can keep analysing images.
+    Runtime absence (for an incomplete/unsupported installation) and probe
+    failures become stable per-file errors so a mixed optimize batch can keep
+    analysing images.
     """
     if not os.path.exists(path):
         return VideoOptimizeResult(input_path=path, error="input_not_found")

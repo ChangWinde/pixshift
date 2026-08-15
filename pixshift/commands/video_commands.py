@@ -1,4 +1,4 @@
-"""Registration for the optional video pillar (ffmpeg-backed)."""
+"""Registration for the ffmpeg-backed video pillar."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from rich.console import Console
 
 from ..compress_engine import parse_target_size
 from ..core.files import filter_generated_inputs, plan_output_path
+from ..core.media_runtime import FFMPEG_INSTALL_HINT
 from ..ops import video as video_ops
 from ..presenters.json_presenters import emit_json, emit_json_and_exit
 from ..video_engine import (
@@ -40,9 +41,7 @@ def _ffmpeg_missing(command: str, as_json: bool, console: Console) -> None:
     """Report a stable ffmpeg_missing error in the requested channel."""
     if as_json:
         emit_json_and_exit({"command": command, "ok": False, "error": "ffmpeg_missing"}, 1)
-    raise click.ClickException(
-        "视频功能需要 ffmpeg。请安装: brew install ffmpeg / apt install ffmpeg"
-    )
+    raise click.ClickException(FFMPEG_INSTALL_HINT)
 
 
 def _result_payload(result: VideoResult) -> dict:
@@ -102,7 +101,7 @@ def register_video_commands(
 
     @cli_group.group("video")
     def video() -> None:
-        """视频操作（转码/压缩/截取/缩略图/提取音频/GIF），需要 ffmpeg。"""
+        """视频操作（转码/压缩/截取/缩略图/提取音频/GIF）。"""
 
     @video.command("info")
     @click.argument("files", nargs=-1, required=True, type=click.Path(exists=True))

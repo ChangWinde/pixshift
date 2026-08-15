@@ -33,7 +33,7 @@ codes. Media processing stays on the local machine.
 | Best quality under a byte limit | `--target-size` searches the complete bounded quality domain for images and PDFs; video uses bounded bitrate strategies |
 | Safe automation | Full-batch planning, collision rejection, root-contained atomic publication, stable JSON errors, and dry runs |
 | Faithful delivery | ICC-aware image comparison, animation timing checks, PDF semantic inventories, and video audio/video verification |
-| Local operation | No network or model call in the media-processing hot path; ffmpeg is an optional local dependency |
+| Local operation | No network or model call in the media-processing hot path; standard installs include a local video runtime |
 
 PixShift deliberately does not provide generative editing, cloud transcoding, a video
 timeline editor, or an ImageMagick-complete filter language. Its scope is auditable,
@@ -45,6 +45,7 @@ Python 3.10 or newer is required. The published release installs with:
 
 ```bash
 pip install pixshift
+# or: uv tool install pixshift
 ```
 
 The documentation and this README follow `main`, so they can be ahead of the latest
@@ -56,9 +57,12 @@ cd pixshift
 pip install .
 ```
 
-PDF support is included. Video commands additionally require `ffmpeg` and `ffprobe` on
-`PATH`; `pixshift doctor --json` reports the exact runtime capabilities. AVIF encoding
-is optional: `pip install "pixshift[avif]"`.
+Image codecs (including HEIC/HEIF and AVIF), PDF support, and a local FFmpeg 8.1.2 pair
+ship in supported release wheels. If a complete system ffmpeg/ffprobe pair is already on
+`PATH`, PixShift prefers it; otherwise it uses the wheel-packaged pair without downloading
+anything at command time. Source/editable installs deliberately use a system pair instead
+of fetching native files during a build. `pixshift doctor --json` reports the selected
+runtime and exact capabilities.
 
 See the [installation guide](https://changwinde.github.io/pixshift/install/) for macOS,
 Linux, Windows, uv, and shell-completion instructions.
@@ -79,7 +83,7 @@ pixshift compress poster.jpg --target-size 500KB --json
 pixshift pdf merge ./scans -o album.pdf --json
 pixshift pdf split report.pdf -o ./pages --json
 
-# Compress video to a delivery budget (requires ffmpeg)
+# Compress video to a delivery budget
 pixshift video compress talk.mp4 --target-size 25MB --audio-policy compatible --json
 
 # Prove the candidate still satisfies media-specific structure and quality gates

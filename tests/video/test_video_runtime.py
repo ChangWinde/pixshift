@@ -48,7 +48,7 @@ def clip(tmp_path):
 
 def _patch_ffprobe(monkeypatch, *, returncode=0, stdout="", raises=None):
     def fake_run(command, **kwargs):
-        assert command[0] == "ffprobe"
+        assert Path(command[0]).name == "ffprobe"
         assert kwargs.get("stdin") is subprocess.DEVNULL
         assert kwargs.get("timeout") == video_engine.PROBE_TIMEOUT_S
         if raises is not None:
@@ -169,7 +169,7 @@ def test_run_ffmpeg_returns_code_and_stderr_tail(monkeypatch):
     assert "line7" in tail
     assert "line1" not in tail
     command = commands[0]
-    assert command[0] == "ffmpeg"
+    assert Path(command[0]).name == "ffmpeg"
     for flag in ("-hide_banner", "-nostdin", "-y"):
         assert flag in command
 

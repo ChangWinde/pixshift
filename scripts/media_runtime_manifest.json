@@ -1,0 +1,102 @@
+{
+  "schema_version": 1,
+  "version": "8.1.2",
+  "source": {
+    "repository": "https://github.com/shaka-project/static-ffmpeg-binaries",
+    "release_tag": "n8.1.2-1",
+    "commit": "88caac417541f3bb678fa6670cb73f2d74c7aaf9"
+  },
+  "license": {
+    "command": "license",
+    "url": "https://raw.githubusercontent.com/FFmpeg/FFmpeg/n8.1.2/COPYING.GPLv3",
+    "size": 35147,
+    "sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903"
+  },
+  "targets": {
+    "linux-aarch64": {
+      "wheel_tag": "manylinux_2_28_aarch64",
+      "artifacts": [
+        {
+          "command": "ffmpeg",
+          "url": "https://github.com/shaka-project/static-ffmpeg-binaries/releases/download/n8.1.2-1/ffmpeg-linux-arm64",
+          "size": 36523320,
+          "sha256": "6e7b1d7d1aa8c35e3fedd78a140aa0968717aeb7386ecfb0ee00773d9f0a4503"
+        },
+        {
+          "command": "ffprobe",
+          "url": "https://github.com/shaka-project/static-ffmpeg-binaries/releases/download/n8.1.2-1/ffprobe-linux-arm64",
+          "size": 36326648,
+          "sha256": "fd2aca1456f0261cabef4514b6d97a70fa342003347f51b39c473dd364328089"
+        }
+      ]
+    },
+    "linux-x86_64": {
+      "wheel_tag": "manylinux_2_28_x86_64",
+      "artifacts": [
+        {
+          "command": "ffmpeg",
+          "url": "https://github.com/shaka-project/static-ffmpeg-binaries/releases/download/n8.1.2-1/ffmpeg-linux-x64",
+          "size": 48299480,
+          "sha256": "9eac5b2b5076db5ff853a6fa0dcd6b8de7d0cac8481eadda6c47cd935825f1ee"
+        },
+        {
+          "command": "ffprobe",
+          "url": "https://github.com/shaka-project/static-ffmpeg-binaries/releases/download/n8.1.2-1/ffprobe-linux-x64",
+          "size": 48090488,
+          "sha256": "065d3c56926052a76e884c4e4b51b7d95248da9391ab7effdcca6b94ceab98cf"
+        }
+      ]
+    },
+    "macos-arm64": {
+      "wheel_tag": "macosx_15_0_arm64",
+      "artifacts": [
+        {
+          "command": "ffmpeg",
+          "url": "https://github.com/shaka-project/static-ffmpeg-binaries/releases/download/n8.1.2-1/ffmpeg-osx-arm64",
+          "size": 34074040,
+          "sha256": "e7b9fcd97f95f333512d6e8b8ac24d9dbc08f189f36047695499bd7b57214b22"
+        },
+        {
+          "command": "ffprobe",
+          "url": "https://github.com/shaka-project/static-ffmpeg-binaries/releases/download/n8.1.2-1/ffprobe-osx-arm64",
+          "size": 33882408,
+          "sha256": "ded4c698b8ff38d0bc1fd30fcc5e768dc46f58bc15a8dfd61f98615ba49cde5c"
+        }
+      ]
+    },
+    "macos-x86_64": {
+      "wheel_tag": "macosx_15_0_x86_64",
+      "artifacts": [
+        {
+          "command": "ffmpeg",
+          "url": "https://github.com/shaka-project/static-ffmpeg-binaries/releases/download/n8.1.2-1/ffmpeg-osx-x64",
+          "size": 42745472,
+          "sha256": "62c87854d851f202fc4a29bdda0fe7b6ebcddd37b863482ce1bdc81151b03fe4"
+        },
+        {
+          "command": "ffprobe",
+          "url": "https://github.com/shaka-project/static-ffmpeg-binaries/releases/download/n8.1.2-1/ffprobe-osx-x64",
+          "size": 42555344,
+          "sha256": "d530823f480a3c7eb6334f18a00197d1e9f1070e86172b9aa89c4bf4022bd879"
+        }
+      ]
+    },
+    "windows-x86_64": {
+      "wheel_tag": "win_amd64",
+      "artifacts": [
+        {
+          "command": "ffmpeg",
+          "url": "https://github.com/shaka-project/static-ffmpeg-binaries/releases/download/n8.1.2-1/ffmpeg-win-x64.exe",
+          "size": 53763072,
+          "sha256": "4044b3924c977ad31229d504c5d5b8685f9553124fbaff6e9c99048b42830341"
+        },
+        {
+          "command": "ffprobe",
+          "url": "https://github.com/shaka-project/static-ffmpeg-binaries/releases/download/n8.1.2-1/ffprobe-win-x64.exe",
+          "size": 53558272,
+          "sha256": "fc37ca23d31ee08bb8f7e108edf3822f6ef3efc1a8d306bbe0b779190230710b"
+        }
+      ]
+    }
+  }
+}

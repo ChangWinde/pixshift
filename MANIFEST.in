@@ -1,0 +1,4 @@
+include scripts/__init__.py
+include scripts/media_runtime_manifest.json
+include scripts/stage_media_runtime.py
+include scripts/verify_media_runtime.py

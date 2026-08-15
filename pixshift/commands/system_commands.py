@@ -2,7 +2,6 @@
 
 import multiprocessing
 import os
-import shutil
 import subprocess
 import sys
 from io import BytesIO
@@ -14,6 +13,7 @@ from rich.table import Table
 
 from ..converter import SUPPORTED_INPUT_FORMATS, SUPPORTED_OUTPUT_FORMATS, PixShiftConverter
 from ..core.defaults import automation_defaults
+from ..core.media_runtime import resolve_ffmpeg_runtime
 from ..presenters.json_presenters import emit_json, emit_json_and_exit
 
 
@@ -212,8 +212,7 @@ def register_system_commands(cli_group: click.Group, console: Console, mini_logo
             console.print("\n  [bold green]所有必需依赖均已就绪。[/bold green]\n")
         else:
             console.print("\n  [bold yellow]部分必需依赖缺失，相关功能不可用。[/bold yellow]")
-            console.print("  运行以下命令安装依赖：")
-            console.print("  [bold]pip install pillow pillow-heif click rich PyMuPDF[/bold]\n")
+            console.print("  请重装支持平台的 PixShift wheel；源码安装还需系统 ffmpeg/ffprobe。\n")
             raise click.exceptions.Exit(1)
 
 
@@ -265,7 +264,7 @@ def _collect_doctor_checks() -> list[tuple[str, str, bool, bool]]:
     try:
         import pillow_avif  # noqa: F401
 
-        checks.append(("pillow-avif（AVIF 支持）", "已安装", True, False))
+        checks.append(("pillow-avif（AVIF 支持）", "已安装", True, True))
     except ImportError:
         avif_builtin = _check_avif()
         checks.append(
@@ -273,7 +272,7 @@ def _collect_doctor_checks() -> list[tuple[str, str, bool, bool]]:
                 "AVIF 支持",
                 "内置（Pillow）" if avif_builtin else "未安装（pip install pillow-avif-plugin）",
                 avif_builtin,
-                False,
+                True,
             )
         )
 
@@ -285,18 +284,26 @@ def _collect_doctor_checks() -> list[tuple[str, str, bool, bool]]:
     except ImportError:
         checks.append(("PyMuPDF（PDF 处理）", "未安装（pip install PyMuPDF）", False, True))
 
-    # ffmpeg backs the optional video pillar; report it but never require it.
-    ffmpeg_path = shutil.which("ffmpeg")
-    ffprobe_path = shutil.which("ffprobe")
-    if ffmpeg_path and ffprobe_path:
-        checks.append(("ffmpeg（视频处理）", _ffmpeg_version(ffmpeg_path), True, False))
+    # A complete system pair takes precedence over the local runtime installed
+    # by default. Missing video support indicates an incomplete installation.
+    ffmpeg_runtime = resolve_ffmpeg_runtime()
+    if ffmpeg_runtime is not None:
+        provenance = "系统" if ffmpeg_runtime.source == "system" else "随包安装"
+        ffmpeg_version = _ffmpeg_version(ffmpeg_runtime.ffmpeg)
+        ffprobe_version = _ffmpeg_version(ffmpeg_runtime.ffprobe)
+        runtime_ok = bool(ffmpeg_version and ffmpeg_version == ffprobe_version)
+        if runtime_ok:
+            status = f"{ffmpeg_version}（{provenance}）"
+        else:
+            status = f"运行时损坏或版本不匹配（{provenance}）"
+        checks.append(("ffmpeg（视频处理）", status, runtime_ok, True))
     else:
         checks.append(
             (
                 "ffmpeg（视频处理）",
-                "未安装（brew install ffmpeg / apt install ffmpeg）",
+                "不可用（请重装支持平台 wheel，或安装 ffmpeg / ffprobe）",
                 False,
-                False,
+                True,
             )
         )
 
@@ -318,22 +325,24 @@ def _collect_doctor_checks() -> list[tuple[str, str, bool, bool]]:
     return checks
 
 
-def _ffmpeg_version(ffmpeg_path: str) -> str:
-    """Return the ffmpeg version token, or a generic label on any failure."""
+def _ffmpeg_version(executable_path: str) -> str:
+    """Execute one runtime command and return its version token on success."""
     try:
         completed = subprocess.run(
-            [ffmpeg_path, "-version"],
+            [executable_path, "-version"],
             capture_output=True,
             text=True,
             stdin=subprocess.DEVNULL,
             timeout=5,
             check=False,
         )
+        if completed.returncode != 0:
+            return ""
         first_line = completed.stdout.splitlines()[0] if completed.stdout else ""
         tokens = first_line.split()
-        return tokens[2] if len(tokens) >= 3 else "已安装"
-    except (OSError, subprocess.SubprocessError):
-        return "已安装"
+        return tokens[2] if len(tokens) >= 3 and tokens[1] == "version" else ""
+    except (OSError, subprocess.SubprocessError, UnicodeError):
+        return ""
 
 
 def _preview_items(items: list[str], limit: int = 18) -> str:

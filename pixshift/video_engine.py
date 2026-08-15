@@ -1,9 +1,10 @@
-"""PixShift Video Engine — ffmpeg-backed video operations (optional pillar).
+"""PixShift Video Engine — ffmpeg-backed video operations.
 
-ffmpeg/ffprobe are treated like PyMuPDF: an optional system dependency probed
-at runtime and reported by ``doctor``. The argv builders here are pure
-functions (no I/O), so their correctness is unit-tested even on hosts without
-ffmpeg installed; only ``probe``/``run_ffmpeg`` touch the binaries.
+ffmpeg/ffprobe are resolved through the local runtime boundary: an existing
+system pair wins, otherwise a platform wheel installed with PixShift provides
+the executables. The argv builders here are pure functions (no I/O), so their
+correctness is unit-tested even on hosts without a runtime; only
+``probe``/``run_ffmpeg`` touch the binaries.
 
 Security notes (see ADR-0005): every ffmpeg call uses an explicit argv list
 (never a shell string), user paths are resolved to absolute form so a name
@@ -17,7 +18,6 @@ from __future__ import annotations
 import json
 import math
 import os
-import shutil
 import signal
 import subprocess
 import threading
@@ -27,7 +27,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-FFMPEG_AVAILABLE = shutil.which("ffmpeg") is not None and shutil.which("ffprobe") is not None
+from pixshift.core.media_runtime import FFMPEG_INSTALL_HINT, resolve_ffmpeg_runtime
+
+_FFMPEG_RUNTIME = resolve_ffmpeg_runtime()
+FFMPEG_BINARY = _FFMPEG_RUNTIME.ffmpeg if _FFMPEG_RUNTIME else "ffmpeg"
+FFPROBE_BINARY = _FFMPEG_RUNTIME.ffprobe if _FFMPEG_RUNTIME else "ffprobe"
+FFMPEG_RUNTIME_SOURCE = _FFMPEG_RUNTIME.source if _FFMPEG_RUNTIME else ""
+FFMPEG_AVAILABLE = _FFMPEG_RUNTIME is not None
 
 PROBE_TIMEOUT_S = 20.0
 DEFAULT_RUN_TIMEOUT_S = 3600.0
@@ -191,9 +197,7 @@ class VideoBatchResult:
 def check_ffmpeg() -> None:
     """Raise a stable error when ffmpeg/ffprobe are missing."""
     if not FFMPEG_AVAILABLE:
-        raise FFmpegNotAvailableError(
-            "视频功能需要 ffmpeg。请安装: brew install ffmpeg / apt install ffmpeg"
-        )
+        raise FFmpegNotAvailableError(FFMPEG_INSTALL_HINT)
 
 
 def parse_timecode(value: str) -> float:
@@ -938,7 +942,7 @@ def probe(path: str) -> VideoInfo:
     try:
         completed = subprocess.run(
             [
-                "ffprobe",
+                FFPROBE_BINARY,
                 "-v",
                 "error",
                 "-print_format",
@@ -1030,7 +1034,7 @@ def run_ffmpeg(args: list[str], *, timeout: float = DEFAULT_RUN_TIMEOUT_S) -> tu
     the pipe and deadlock. stdin is closed to keep ffmpeg non-interactive.
     """
     check_ffmpeg()
-    command = ["ffmpeg", "-hide_banner", "-nostdin", "-loglevel", "error", "-y", *args]
+    command = [FFMPEG_BINARY, "-hide_banner", "-nostdin", "-loglevel", "error", "-y", *args]
     process = subprocess.Popen(
         command,
         stdout=subprocess.DEVNULL,

@@ -1,6 +1,9 @@
 # 视频
 
-视频命令需要系统中安装 ffmpeg 与 ffprobe（见[安装与环境](install.md)）。未安装时命令返回稳定的 `ffmpeg_missing` 错误，其余图片与 PDF 功能不受影响。
+支持平台的发布 wheel 已包含本地 ffmpeg 与 ffprobe（见[安装与环境](install.md)）。如果
+`PATH` 中同时存在两者，PixShift 优先使用系统版本；否则使用随包版本。运行
+`pixshift doctor` 可以确认当前来源。源码安装没有系统运行时、wheel 损坏或平台
+不受支持时返回稳定的 `ffmpeg_missing` 错误。
 
 输出同样是原子写入，已存在的输出默认跳过，加 `--overwrite` 才覆盖。
 

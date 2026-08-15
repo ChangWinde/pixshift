@@ -2,8 +2,8 @@
 
 ## 安装
 
-本手册跟随仓库 `main` 分支；若要使用文档中的完整命令面，请从仓库安装。
-PyPI 命令安装的是最近一次已发布版本，可能暂时落后于本手册。
+本手册跟随仓库 `main` 分支；PyPI 命令安装的是最近一次已发布版本，可能暂时
+落后于本手册。正式发布的支持平台 wheel 是默认且完整的安装方式。
 
 === "当前源码"
 
@@ -12,6 +12,9 @@ PyPI 命令安装的是最近一次已发布版本，可能暂时落后于本手
     cd pixshift
     pip install .
     ```
+
+    源码/可编辑安装不会在构建时联网抓取原生程序；视频功能使用系统中已有的
+    ffmpeg 与 ffprobe。这一例外让源码构建可复现、可离线。
 
 === "pip"
 
@@ -25,13 +28,11 @@ PyPI 命令安装的是最近一次已发布版本，可能暂时落后于本手
     uv tool install pixshift
     ```
 
-=== "AVIF 支持"
-
-    ```bash
-    pip install "pixshift[avif]"
-    ```
-
 要求 Python 3.10 及以上。Linux、macOS、Windows 在主分支推送和 Pull Request 上均有持续集成覆盖。
+
+支持平台上的 PyPI/uv 标准安装会提供所有媒体依赖，不需要额外的
+`pixshift[all]` 或安装后下载步骤。不要使用 `--no-deps`；它会有意绕过
+Python 依赖。源码安装与未提供 wheel 的平台需要系统 ffmpeg/ffprobe。
 
 ## 依赖说明
 
@@ -40,10 +41,21 @@ PyPI 命令安装的是最近一次已发布版本，可能暂时落后于本手
 | 图片核心（转换、压缩、裁剪、水印等） | Pillow | 是 |
 | HEIC/HEIF 读写 | pillow-heif | 是 |
 | PDF 全部功能 | PyMuPDF | 是 |
-| AVIF 编码 | pillow-avif-plugin | 否，需装 `pixshift[avif]` |
-| 视频全部功能 | ffmpeg / ffprobe | 否，需自行安装 |
+| AVIF 编码 | Pillow AVIF / pillow-avif-plugin | 是 |
+| 视频全部功能 | ffmpeg / ffprobe | 是（支持的平台 wheel） |
 
-视频功能采用**可选依赖**设计：没有 ffmpeg 时其余命令完全不受影响，视频命令会返回稳定的 `ffmpeg_missing` 错误而不是崩溃。
+视频运行时按下面的固定顺序解析：
+
+1. `PATH` 中同时存在的系统 ffmpeg 与 ffprobe；
+2. PixShift 平台 wheel 中同时存在的 ffmpeg 与 ffprobe；
+3. 都不完整时返回稳定的 `ffmpeg_missing`，不会混用两个来源。
+
+解析过程不修改 `PATH`，不会在 import、探测或编码时联网。当前平台 wheel
+覆盖 manylinux_2_28 兼容的 Linux x86-64/ARM64、macOS 15+ Intel/Apple Silicon
+和 Windows x86-64。musl/Alpine、其他架构、较早的 macOS 以及源码安装仍可使用
+PixShift，但需要提供系统 ffmpeg/ffprobe；`doctor` 会把缺失视为安装未就绪。
+
+系统版本会优先于随包版本，适合需要发行版安全更新、额外编码器或硬件集成的环境：
 
 安装 ffmpeg：
 
@@ -56,13 +68,20 @@ sudo apt install ffmpeg
 winget install Gyan.FFmpeg
 ```
 
+平台 wheel 内的 FFmpeg 8.1.2 是 GPL-3.0-or-later 程序，wheel 同时包含完整
+许可证、构建来源、固定提交与逐文件 SHA-256。PixShift Python 源码继续采用 MIT
+License；重新分发含运行时的 wheel 时仍须遵守 FFmpeg 的许可证与对应源码义务。
+
 ## 自检
 
 ```bash
 pixshift doctor
 ```
 
-该命令列出各项依赖的可用状态。可选依赖缺失只做提示，不会让命令失败——因此 `doctor` 返回成功不代表视频功能可用，需要看具体检查项。
+该命令列出各项依赖、是否必需，以及视频运行时来自 `系统` 还是 `随包安装`。
+标准媒体依赖缺失会令 `ok` 与 `all_ready` 为 `false`，因此成功结果代表三类媒体
+运行时均已就绪。视频检查会实际执行 ffmpeg 与 ffprobe，并要求两者版本一致；
+损坏、不可执行或错架构的文件不会被“存在性检查”误报为成功。
 
 查看当前环境实际支持的输入扩展名与输出格式：
 
@@ -70,7 +89,8 @@ pixshift doctor
 pixshift formats
 ```
 
-输出取决于运行环境的探测结果。例如未安装 AVIF 插件时，`avif` 不会出现在可选输出格式中。
+输出取决于运行环境的实际探测结果；系统 Pillow 或编解码器能力发生变化时，列表
+会反映当前可用格式，而不是静态宣传值。
 
 ## Shell 补全
 

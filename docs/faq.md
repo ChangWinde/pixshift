@@ -16,7 +16,17 @@ pixshift --version
 
 ## 视频命令报 `ffmpeg_missing`
 
-视频功能依赖系统的 ffmpeg 与 ffprobe，它们不随 pip 包安装。按[安装与环境](install.md)装好后，用 `pixshift doctor` 确认识别成功即可。图片与 PDF 功能不受影响。
+支持平台的发布 wheel 会带上 ffmpeg 与 ffprobe。出现这个错误通常意味着正在
+使用源码/可编辑安装、当前架构没有平台 wheel，或运行时文件损坏。先重新安装并自检：
+
+```bash
+pip install --upgrade --force-reinstall pixshift
+pixshift doctor
+```
+
+仍不可用时按[安装与环境](install.md)安装系统 ffmpeg/ffprobe；完整的系统二进制对
+会自动优先于随包版本。图片与 PDF 命令不会因为视频运行时缺失而崩溃，但
+`doctor` 会把整个安装标记为未就绪。
 
 ## `--target-size` 达不到目标怎么办
 
