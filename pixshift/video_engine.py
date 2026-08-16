@@ -939,6 +939,34 @@ def probe(path: str) -> VideoInfo:
         return info
     check_ffmpeg()
     info.size_bytes = os.path.getsize(path)
+    completed = _run_ffprobe(path, info)
+    if completed is None:
+        return info
+    try:
+        data = json.loads(completed.stdout)
+    except json.JSONDecodeError:
+        info.error = "probe_unparsable"
+        return info
+    streams = data.get("streams", [])
+    if not isinstance(streams, list):
+        info.error = "probe_unparsable"
+        return info
+    info.stream_count = len(streams)
+    _populate_container_info(info, data.get("format", {}))
+    for stream in streams:
+        if not isinstance(stream, dict):
+            continue
+        kind = stream.get("codec_type")
+        if kind == "video" and not info.video_codec:
+            if bool((stream.get("disposition") or {}).get("attached_pic", 0)):
+                continue
+            _populate_video_stream(info, stream)
+        elif kind == "audio" and not info.audio_codec:
+            _populate_audio_stream(info, stream)
+    return info
+
+
+def _run_ffprobe(path: str, info: VideoInfo) -> subprocess.CompletedProcess[str] | None:
     try:
         completed = subprocess.run(
             [
@@ -961,70 +989,63 @@ def probe(path: str) -> VideoInfo:
         )
     except subprocess.TimeoutExpired:
         info.error = "probe_timeout"
-        return info
+        return None
     if completed.returncode != 0:
         info.error = "probe_failed"
-        return info
-    try:
-        data = json.loads(completed.stdout)
-    except json.JSONDecodeError:
-        info.error = "probe_unparsable"
-        return info
+        return None
+    return completed
 
-    streams = data.get("streams", [])
-    info.stream_count = len(streams)
-    container_format = data.get("format", {})
-    info.container = str(container_format.get("format_name", ""))
+
+def _safe_probe_int(value: Any) -> int:
     try:
-        info.duration_sec = float(container_format.get("duration", 0.0))
-    except (TypeError, ValueError):
-        info.duration_sec = 0.0
-    if not math.isfinite(info.duration_sec) or info.duration_sec < 0:
-        # Non-finite durations would crash size estimates and serialize as
-        # invalid JSON (Infinity); treat them as "no signal".
-        info.duration_sec = 0.0
+        return int(value or 0)
+    except (TypeError, ValueError, OverflowError):
+        return 0
+
+
+def _safe_probe_float(value: Any) -> float:
     try:
-        info.bit_rate = int(container_format.get("bit_rate", 0))
-    except (TypeError, ValueError):
-        info.bit_rate = 0
-    for stream in streams:
-        kind = stream.get("codec_type")
-        if kind == "video" and not info.video_codec:
-            if bool((stream.get("disposition") or {}).get("attached_pic", 0)):
-                continue
-            info.video_codec = str(stream.get("codec_name", ""))
-            info.video_profile = str(stream.get("profile", ""))
-            try:
-                info.video_level = int(stream.get("level", 0) or 0)
-            except (TypeError, ValueError):
-                info.video_level = 0
-            info.pixel_format = str(stream.get("pix_fmt", ""))
-            info.frame_rate = str(stream.get("avg_frame_rate", ""))
-            info.video_time_base = str(stream.get("time_base", ""))
-            info.sample_aspect_ratio = str(stream.get("sample_aspect_ratio", ""))
-            info.field_order = str(stream.get("field_order", ""))
-            info.video_extradata_hash = str(stream.get("extradata_hash", ""))
-            info.color_range = str(stream.get("color_range", ""))
-            info.color_space = str(stream.get("color_space", ""))
-            info.color_primaries = str(stream.get("color_primaries", ""))
-            info.color_transfer = str(stream.get("color_transfer", ""))
-            info.width = int(stream.get("width", 0) or 0)
-            info.height = int(stream.get("height", 0) or 0)
-            info.fps = _ffprobe_fps(str(stream.get("avg_frame_rate", "0/0")))
-        elif kind == "audio" and not info.audio_codec:
-            info.audio_codec = str(stream.get("codec_name", ""))
-            try:
-                info.audio_sample_rate = int(stream.get("sample_rate", 0) or 0)
-            except (TypeError, ValueError):
-                info.audio_sample_rate = 0
-            try:
-                info.audio_channels = int(stream.get("channels", 0) or 0)
-            except (TypeError, ValueError):
-                info.audio_channels = 0
-            info.audio_channel_layout = str(stream.get("channel_layout", ""))
-            info.audio_sample_format = str(stream.get("sample_fmt", ""))
-            info.audio_time_base = str(stream.get("time_base", ""))
-    return info
+        parsed = float(value or 0.0)
+    except (TypeError, ValueError, OverflowError):
+        return 0.0
+    return parsed if math.isfinite(parsed) and parsed >= 0 else 0.0
+
+
+def _populate_container_info(info: VideoInfo, container: Any) -> None:
+    if not isinstance(container, dict):
+        return
+    info.container = str(container.get("format_name", ""))
+    # Non-finite values would crash estimates or serialize invalid JSON.
+    info.duration_sec = _safe_probe_float(container.get("duration", 0.0))
+    info.bit_rate = _safe_probe_int(container.get("bit_rate", 0))
+
+
+def _populate_video_stream(info: VideoInfo, stream: dict[str, Any]) -> None:
+    info.video_codec = str(stream.get("codec_name", ""))
+    info.video_profile = str(stream.get("profile", ""))
+    info.video_level = _safe_probe_int(stream.get("level", 0))
+    info.pixel_format = str(stream.get("pix_fmt", ""))
+    info.frame_rate = str(stream.get("avg_frame_rate", ""))
+    info.video_time_base = str(stream.get("time_base", ""))
+    info.sample_aspect_ratio = str(stream.get("sample_aspect_ratio", ""))
+    info.field_order = str(stream.get("field_order", ""))
+    info.video_extradata_hash = str(stream.get("extradata_hash", ""))
+    info.color_range = str(stream.get("color_range", ""))
+    info.color_space = str(stream.get("color_space", ""))
+    info.color_primaries = str(stream.get("color_primaries", ""))
+    info.color_transfer = str(stream.get("color_transfer", ""))
+    info.width = _safe_probe_int(stream.get("width", 0))
+    info.height = _safe_probe_int(stream.get("height", 0))
+    info.fps = _ffprobe_fps(str(stream.get("avg_frame_rate", "0/0")))
+
+
+def _populate_audio_stream(info: VideoInfo, stream: dict[str, Any]) -> None:
+    info.audio_codec = str(stream.get("codec_name", ""))
+    info.audio_sample_rate = _safe_probe_int(stream.get("sample_rate", 0))
+    info.audio_channels = _safe_probe_int(stream.get("channels", 0))
+    info.audio_channel_layout = str(stream.get("channel_layout", ""))
+    info.audio_sample_format = str(stream.get("sample_fmt", ""))
+    info.audio_time_base = str(stream.get("time_base", ""))
 
 
 def run_ffmpeg(args: list[str], *, timeout: float = DEFAULT_RUN_TIMEOUT_S) -> tuple[int, str]:

@@ -243,148 +243,248 @@ def compress_to_target_one(
     result.audio_action = (
         "copy_if_present" if audio_policy == "preserve" else "transcode_if_present"
     )
-    if audio_policy not in {"preserve", "compatible", "compact"}:
-        result.error = f"unsupported_audio_policy:{audio_policy}"
-        return result
-    if not os.path.exists(src):
-        result.error = "input_not_found"
+    validation_error = _target_request_error(
+        src,
+        dst,
+        target_bytes=target_bytes,
+        audio_policy=audio_policy,
+        overwrite=overwrite,
+    )
+    if validation_error:
+        result.error = validation_error
         return result
     result.input_bytes = os.path.getsize(src)
-    if os.path.exists(dst) and not overwrite:
-        result.error = "output_exists"
-        return result
-    if target_bytes <= 0:
-        result.error = "target_size_must_be_positive"
-        return result
 
     if result.input_bytes <= target_bytes and Path(src).suffix.lower() == Path(dst).suffix.lower():
-        # Already within budget: re-encoding could only lose quality.
-        try:
-            with atomic_output_path(dst, overwrite=overwrite) as temporary:
-                shutil.copyfile(src, temporary)
-        except FileExistsError as error:
-            result.error = "output_exists"
-            result.detail = str(error)
-            return result
-        except OSError as error:
-            result.error = "output_not_created"
-            result.detail = str(error)
-            return result
-        result.output_bytes = os.path.getsize(dst)
-        result.success = True
-        result.detail = "already_within_target"
-        result.audio_action = "stream_copy"
+        _copy_within_target(src, dst, result, overwrite=overwrite)
         return result
 
-    try:
-        probed = probe(src)
-    except FFmpegNotAvailableError:
-        result.error = "ffmpeg_missing"
+    probed = _probe_target_source(src, result)
+    if probed is None:
         return result
-    if probed.error:
-        result.error = probed.error
-        return result
-    if probed.duration_sec < MIN_USABLE_DURATION_SEC:
-        result.error = "no_duration_signal"
-        return result
-
     has_audio = bool(probed.audio_codec)
-    audio_bps = (
-        COMPATIBLE_AUDIO_BPS if audio_policy in {"preserve", "compatible"} else COMPACT_AUDIO_BPS
-    )
-    video_bps = compute_target_video_bitrate(
-        target_bytes,
-        probed.duration_sec,
-        has_audio=has_audio,
-        audio_bps=audio_bps,
+    video_bps = _target_video_bitrate(
+        target_bytes, probed, has_audio=has_audio, audio_policy=audio_policy
     )
     if video_bps < MIN_TARGET_VIDEO_BPS:
         result.error = "target_size_too_small"
         result.detail = f"computed video bitrate {video_bps}bps"
         return result
-
-    two_pass = hwaccel is None and codec != "av1"
-    actual_size = 0
-    for attempt in range(2):
-        passlog_dir = tempfile.mkdtemp(prefix=".pixshift-passlog-")
-        passlog = os.path.join(passlog_dir, "pass")
-        try:
-            if two_pass:
-                returncode, tail = run_ffmpeg(
-                    build_bitrate_pass_args(
-                        src,
-                        dst,
-                        codec=codec,
-                        video_bps=video_bps,
-                        has_audio=has_audio,
-                        pass_number=1,
-                        passlog=passlog,
-                        hwaccel=hwaccel,
-                        audio_policy=audio_policy,
-                    )
-                )
-                if returncode != 0:
-                    result.error = "ffmpeg_failed"
-                    result.detail = tail
-                    return result
-            try:
-                with atomic_output_path(dst, overwrite=overwrite) as temporary:
-                    returncode, tail = run_ffmpeg(
-                        build_bitrate_pass_args(
-                            src,
-                            temporary,
-                            codec=codec,
-                            video_bps=video_bps,
-                            has_audio=has_audio,
-                            pass_number=2 if two_pass else None,
-                            passlog=passlog,
-                            hwaccel=hwaccel,
-                            audio_policy=audio_policy,
-                        )
-                    )
-                    if returncode != 0:
-                        raise _FfmpegError(tail)
-                    actual_size = os.path.getsize(temporary)
-                    if actual_size > target_bytes:
-                        raise _TargetMissed()
-            except _FfmpegError as error:
-                result.error = "ffmpeg_failed"
-                result.detail = str(error)
-                return result
-            except _TargetMissed:
-                if attempt == 0:
-                    # Rate control overshot; scale the budget down and retry.
-                    video_bps = max(
-                        MIN_TARGET_VIDEO_BPS,
-                        int(video_bps * target_bytes / actual_size * 0.95),
-                    )
-                    continue
-                result.error = "target_size_missed"
-                result.detail = f"encoded {actual_size} bytes for a {target_bytes} byte target"
-                return result
-            except FFmpegNotAvailableError:
-                result.error = "ffmpeg_missing"
-                return result
-            except FileExistsError as error:
-                result.error = "output_exists"
-                result.detail = str(error)
-                return result
-            except OSError as error:
-                result.error = "output_not_created"
-                result.detail = str(error)
-                return result
-        finally:
-            shutil.rmtree(passlog_dir, ignore_errors=True)
-        break
-
+    encoded_bps = _encode_target_with_retry(
+        src,
+        dst,
+        target_bytes=target_bytes,
+        video_bps=video_bps,
+        codec=codec,
+        hwaccel=hwaccel,
+        has_audio=has_audio,
+        audio_policy=audio_policy,
+        overwrite=overwrite,
+        result=result,
+    )
+    if encoded_bps is None:
+        return result
     result.output_bytes = os.path.getsize(dst)
-    result.detail = f"video_bitrate_{video_bps}"
+    result.detail = f"video_bitrate_{encoded_bps}"
     result.success = True
     return result
 
 
+def _target_request_error(
+    src: str,
+    dst: str,
+    *,
+    target_bytes: int,
+    audio_policy: str,
+    overwrite: bool,
+) -> str:
+    if audio_policy not in {"preserve", "compatible", "compact"}:
+        return f"unsupported_audio_policy:{audio_policy}"
+    if not os.path.exists(src):
+        return "input_not_found"
+    if os.path.exists(dst) and not overwrite:
+        return "output_exists"
+    if target_bytes <= 0:
+        return "target_size_must_be_positive"
+    return ""
+
+
+def _copy_within_target(src: str, dst: str, result: VideoResult, *, overwrite: bool) -> None:
+    """Copy a fitting source without quality loss and map publication failures."""
+    try:
+        with atomic_output_path(dst, overwrite=overwrite) as temporary:
+            shutil.copyfile(src, temporary)
+    except FileExistsError as error:
+        result.error = "output_exists"
+        result.detail = str(error)
+        return
+    except OSError as error:
+        result.error = "output_not_created"
+        result.detail = str(error)
+        return
+    result.output_bytes = os.path.getsize(dst)
+    result.success = True
+    result.detail = "already_within_target"
+    result.audio_action = "stream_copy"
+
+
+def _probe_target_source(src: str, result: VideoResult) -> VideoInfo | None:
+    try:
+        probed = probe(src)
+    except FFmpegNotAvailableError:
+        result.error = "ffmpeg_missing"
+        return None
+    if probed.error:
+        result.error = probed.error
+        return None
+    if probed.duration_sec < MIN_USABLE_DURATION_SEC:
+        result.error = "no_duration_signal"
+        return None
+    return probed
+
+
+def _target_video_bitrate(
+    target_bytes: int,
+    probed: VideoInfo,
+    *,
+    has_audio: bool,
+    audio_policy: str,
+) -> int:
+    audio_bps = (
+        COMPATIBLE_AUDIO_BPS if audio_policy in {"preserve", "compatible"} else COMPACT_AUDIO_BPS
+    )
+    return compute_target_video_bitrate(
+        target_bytes,
+        probed.duration_sec,
+        has_audio=has_audio,
+        audio_bps=audio_bps,
+    )
+
+
+def _encode_target_with_retry(
+    src: str,
+    dst: str,
+    *,
+    target_bytes: int,
+    video_bps: int,
+    codec: str,
+    hwaccel: str | None,
+    has_audio: bool,
+    audio_policy: str,
+    overwrite: bool,
+    result: VideoResult,
+) -> int | None:
+    two_pass = hwaccel is None and codec != "av1"
+    for attempt in range(2):
+        try:
+            actual_size = _encode_target_attempt(
+                src,
+                dst,
+                target_bytes=target_bytes,
+                video_bps=video_bps,
+                codec=codec,
+                hwaccel=hwaccel,
+                has_audio=has_audio,
+                audio_policy=audio_policy,
+                overwrite=overwrite,
+                two_pass=two_pass,
+            )
+        except _TargetMissed as error:
+            actual_size = error.actual_size
+            if attempt == 0:
+                video_bps = max(
+                    MIN_TARGET_VIDEO_BPS,
+                    int(video_bps * target_bytes / actual_size * 0.95),
+                )
+                continue
+            result.error = "target_size_missed"
+            result.detail = f"encoded {actual_size} bytes for a {target_bytes} byte target"
+            return None
+        except Exception as error:
+            _map_target_encode_error(result, error)
+            return None
+        return video_bps
+    return None
+
+
+def _encode_target_attempt(
+    src: str,
+    dst: str,
+    *,
+    target_bytes: int,
+    video_bps: int,
+    codec: str,
+    hwaccel: str | None,
+    has_audio: bool,
+    audio_policy: str,
+    overwrite: bool,
+    two_pass: bool,
+) -> int:
+    passlog_dir = tempfile.mkdtemp(prefix=".pixshift-passlog-")
+    passlog = os.path.join(passlog_dir, "pass")
+    try:
+        if two_pass:
+            returncode, tail = run_ffmpeg(
+                build_bitrate_pass_args(
+                    src,
+                    dst,
+                    codec=codec,
+                    video_bps=video_bps,
+                    has_audio=has_audio,
+                    pass_number=1,
+                    passlog=passlog,
+                    hwaccel=hwaccel,
+                    audio_policy=audio_policy,
+                )
+            )
+            if returncode != 0:
+                raise _FfmpegError(tail)
+        with atomic_output_path(dst, overwrite=overwrite) as temporary:
+            returncode, tail = run_ffmpeg(
+                build_bitrate_pass_args(
+                    src,
+                    temporary,
+                    codec=codec,
+                    video_bps=video_bps,
+                    has_audio=has_audio,
+                    pass_number=2 if two_pass else None,
+                    passlog=passlog,
+                    hwaccel=hwaccel,
+                    audio_policy=audio_policy,
+                )
+            )
+            if returncode != 0:
+                raise _FfmpegError(tail)
+            actual_size = os.path.getsize(temporary)
+            if actual_size > target_bytes:
+                raise _TargetMissed(actual_size)
+            return actual_size
+    finally:
+        shutil.rmtree(passlog_dir, ignore_errors=True)
+
+
+def _map_target_encode_error(result: VideoResult, error: Exception) -> None:
+    if isinstance(error, _FfmpegError):
+        result.error = "ffmpeg_failed"
+        result.detail = str(error)
+    elif isinstance(error, FFmpegNotAvailableError):
+        result.error = "ffmpeg_missing"
+    elif isinstance(error, FileExistsError):
+        result.error = "output_exists"
+        result.detail = str(error)
+    elif isinstance(error, OSError):
+        result.error = "output_not_created"
+        result.detail = str(error)
+    else:
+        raise error
+
+
 class _TargetMissed(RuntimeError):
     """The encoded candidate exceeded the byte budget."""
+
+    def __init__(self, actual_size: int) -> None:
+        self.actual_size = actual_size
+        super().__init__(str(actual_size))
 
 
 def concat_videos(
@@ -396,129 +496,175 @@ def concat_videos(
 ) -> VideoResult:
     """Concatenate clips end to end (stream-copy unless ``reencode``)."""
     result = VideoResult(input_path=paths[0] if paths else "", output_path=dst)
-    if len(paths) < 2:
-        result.error = "concat_requires_two_inputs"
-        return result
     try:
-        validate_aggregate_output_path(paths, dst)
-    except OperationPolicyError as error:
-        result.error = error.code
+        _validate_concat_request(paths, dst, reencode=reencode, overwrite=overwrite)
+    except Exception as error:
+        _map_concat_error(result, error)
         return result
-    for path in paths:
-        if not os.path.exists(path):
-            result.error = "input_not_found"
-            result.detail = path
-            return result
     result.input_bytes = sum(os.path.getsize(path) for path in paths)
-    if os.path.exists(dst) and not overwrite:
-        result.error = "output_exists"
-        return result
-    if reencode:
-        try:
-            validate_container_codec(Path(dst).suffix, "h264")
-        except ValueError as error:
-            result.error = str(error)
-            return result
 
     try:
         probes = [probe(path) for path in paths]
-    except FFmpegNotAvailableError:
-        result.error = "ffmpeg_missing"
+        _validate_concat_probes(probes, reencode=reencode)
+        _run_concat(paths, probes, dst, reencode=reencode, overwrite=overwrite)
+    except Exception as error:
+        _map_concat_error(result, error)
         return result
+
+    result.output_bytes = os.path.getsize(dst)
+    result.success = True
+    return result
+
+
+def _validate_concat_request(
+    paths: list[str], dst: str, *, reencode: bool, overwrite: bool
+) -> None:
+    if len(paths) < 2:
+        raise ValueError("concat_requires_two_inputs")
+    validate_aggregate_output_path(paths, dst)
+    for path in paths:
+        if not os.path.exists(path):
+            raise _InputNotFoundError(path)
+    if os.path.exists(dst) and not overwrite:
+        raise _OutputExistsPreflight()
+    if reencode:
+        validate_container_codec(Path(dst).suffix, "h264")
+
+
+def _validate_concat_probes(probes: list[VideoInfo], *, reencode: bool) -> None:
     for probed in probes:
         if probed.error:
-            result.error = probed.error
-            result.detail = probed.path
-            return result
-    if not reencode:
-        signatures = {
-            (
-                item.video_codec,
-                item.video_profile,
-                item.video_level,
-                item.pixel_format,
-                item.frame_rate,
-                item.video_time_base,
-                item.sample_aspect_ratio,
-                item.field_order,
-                item.video_extradata_hash,
-                item.color_range,
-                item.color_space,
-                item.color_primaries,
-                item.color_transfer,
-                item.width,
-                item.height,
-                item.audio_codec,
-                item.audio_sample_rate,
-                item.audio_channels,
-                item.audio_channel_layout,
-                item.audio_sample_format,
-                item.audio_time_base,
-            )
-            for item in probes
-        }
-        if len(signatures) > 1:
-            result.error = "concat_requires_matching_streams"
-            result.detail = "stream signatures differ; pass --reencode to normalise"
-            return result
+            raise _ProbeError(probed.error, probed.path)
+    if not reencode and len({_concat_signature(item) for item in probes}) > 1:
+        raise _StreamMismatchError()
 
+
+def _concat_signature(item: VideoInfo) -> tuple[object, ...]:
+    """Return every stream field required for safe concat-demuxer copying."""
+    return (
+        item.video_codec,
+        item.video_profile,
+        item.video_level,
+        item.pixel_format,
+        item.frame_rate,
+        item.video_time_base,
+        item.sample_aspect_ratio,
+        item.field_order,
+        item.video_extradata_hash,
+        item.color_range,
+        item.color_space,
+        item.color_primaries,
+        item.color_transfer,
+        item.width,
+        item.height,
+        item.audio_codec,
+        item.audio_sample_rate,
+        item.audio_channels,
+        item.audio_channel_layout,
+        item.audio_sample_format,
+        item.audio_time_base,
+    )
+
+
+def _run_concat(
+    paths: list[str],
+    probes: list[VideoInfo],
+    dst: str,
+    *,
+    reencode: bool,
+    overwrite: bool,
+) -> None:
     list_dir = tempfile.mkdtemp(prefix=".pixshift-concat-")
-    list_path = os.path.join(list_dir, "clips.txt")
     try:
-        concat_paths = paths
-        if reencode:
-            # The concat demuxer itself cannot make heterogeneous inputs
-            # compatible. Normalize each segment first, then stream-copy the
-            # common signature into the requested final container.
-            if any(item.width <= 0 or item.height <= 0 for item in probes):
-                raise ValueError("concat_missing_dimensions")
-            width = max(2, max(item.width for item in probes) // 2 * 2)
-            height = max(2, max(item.height for item in probes) // 2 * 2)
-            fps = max((item.fps for item in probes if item.fps > 0), default=30.0)
-            include_audio = any(bool(item.audio_codec) for item in probes)
-            concat_paths = []
-            for index, (path, probed) in enumerate(zip(paths, probes, strict=True)):
-                normalized = os.path.join(list_dir, f"segment-{index:04d}.mp4")
-                returncode, tail = run_ffmpeg(
-                    build_concat_segment_args(
-                        path,
-                        normalized,
-                        width=width,
-                        height=height,
-                        fps=fps,
-                        source_has_audio=bool(probed.audio_codec),
-                        include_audio=include_audio,
-                    )
-                )
-                if returncode != 0:
-                    raise _FfmpegError(f"segment {index + 1}: {tail}")
-                concat_paths.append(normalized)
+        concat_paths = _normalise_concat_paths(paths, probes, list_dir) if reencode else paths
+        list_path = os.path.join(list_dir, "clips.txt")
         Path(list_path).write_text(concat_list_content(concat_paths), encoding="utf-8")
         with atomic_output_path(dst, overwrite=overwrite) as temporary:
             returncode, tail = run_ffmpeg(build_concat_args(list_path, temporary))
             if returncode != 0:
                 raise _FfmpegError(tail)
-    except _FfmpegError as error:
-        result.error = "ffmpeg_failed"
-        result.detail = str(error)
-        return result
-    except ValueError as error:
-        result.error = str(error)
-        return result
-    except FileExistsError as error:
-        result.error = "output_exists"
-        result.detail = str(error)
-        return result
-    except OSError as error:
-        result.error = "output_not_created"
-        result.detail = str(error)
-        return result
     finally:
         shutil.rmtree(list_dir, ignore_errors=True)
 
-    result.output_bytes = os.path.getsize(dst)
-    result.success = True
-    return result
+
+def _normalise_concat_paths(paths: list[str], probes: list[VideoInfo], list_dir: str) -> list[str]:
+    """Transcode heterogeneous inputs to one concat-demuxer-compatible signature."""
+    if any(item.width <= 0 or item.height <= 0 for item in probes):
+        raise ValueError("concat_missing_dimensions")
+    width = max(2, max(item.width for item in probes) // 2 * 2)
+    height = max(2, max(item.height for item in probes) // 2 * 2)
+    fps = max((item.fps for item in probes if item.fps > 0), default=30.0)
+    include_audio = any(bool(item.audio_codec) for item in probes)
+    normalized_paths: list[str] = []
+    for index, (path, probed) in enumerate(zip(paths, probes, strict=True)):
+        normalized = os.path.join(list_dir, f"segment-{index:04d}.mp4")
+        returncode, tail = run_ffmpeg(
+            build_concat_segment_args(
+                path,
+                normalized,
+                width=width,
+                height=height,
+                fps=fps,
+                source_has_audio=bool(probed.audio_codec),
+                include_audio=include_audio,
+            )
+        )
+        if returncode != 0:
+            raise _FfmpegError(f"segment {index + 1}: {tail}")
+        normalized_paths.append(normalized)
+    return normalized_paths
+
+
+def _map_concat_error(result: VideoResult, error: Exception) -> None:
+    if isinstance(error, OperationPolicyError):
+        result.error = error.code
+    elif isinstance(error, FFmpegNotAvailableError):
+        result.error = "ffmpeg_missing"
+    elif isinstance(error, _FfmpegError):
+        result.error = "ffmpeg_failed"
+        result.detail = str(error)
+    elif isinstance(error, _ProbeError):
+        result.error = error.code
+        result.detail = error.path
+    elif isinstance(error, _StreamMismatchError):
+        result.error = "concat_requires_matching_streams"
+        result.detail = "stream signatures differ; pass --reencode to normalise"
+    elif isinstance(error, _InputNotFoundError):
+        result.error = "input_not_found"
+        result.detail = error.path
+    elif isinstance(error, _OutputExistsPreflight):
+        result.error = "output_exists"
+    elif isinstance(error, FileExistsError):
+        result.error = "output_exists"
+        result.detail = str(error)
+    elif isinstance(error, OSError):
+        result.error = "output_not_created"
+        result.detail = str(error)
+    elif isinstance(error, ValueError):
+        result.error = str(error)
+    else:
+        raise error
+
+
+class _ProbeError(RuntimeError):
+    def __init__(self, code: str, path: str) -> None:
+        self.code = code
+        self.path = path
+        super().__init__(code)
+
+
+class _StreamMismatchError(RuntimeError):
+    """Stream-copy inputs do not share a complete ffprobe signature."""
+
+
+class _InputNotFoundError(RuntimeError):
+    def __init__(self, path: str) -> None:
+        self.path = path
+        super().__init__(path)
+
+
+class _OutputExistsPreflight(RuntimeError):
+    """The concat destination existed before encoding began."""
 
 
 def gif_one(

@@ -27,6 +27,7 @@ from .video_engine import (
     FFMPEG_AVAILABLE,
     VIDEO_INPUT_FORMATS,
     FFmpegNotAvailableError,
+    VideoInfo,
     probe,
     run_ffmpeg,
 )
@@ -73,41 +74,27 @@ def verify_media(
         min_ssim=min_ssim,
         min_psnr=min_psnr,
     )
-    if not 0 <= min_ssim <= 1 or (
-        min_psnr is not None and (not math.isfinite(min_psnr) or min_psnr < 0)
-    ):
+    rejection = _verification_rejection(
+        source, candidate, min_ssim=min_ssim, min_psnr=min_psnr, max_bytes=max_bytes
+    )
+    if rejection:
         result.rejected = True
-        result.error = "invalid_quality_threshold"
-        return result
-    if max_bytes is not None and max_bytes <= 0:
-        result.rejected = True
-        result.error = "invalid_max_size"
-        return result
-    if not Path(source).is_file() or not Path(candidate).is_file():
-        result.rejected = True
-        result.error = "input_not_found"
+        result.error = rejection
         return result
 
     result.source_bytes = os.path.getsize(source)
     result.candidate_bytes = os.path.getsize(candidate)
-    source_type = _media_type(source)
-    candidate_type = _media_type(candidate)
-    if not source_type or source_type != candidate_type:
+    result.media_type = _matching_media_type(source, candidate)
+    if not result.media_type:
         result.rejected = True
         result.error = "unsupported_media_pair"
-        result.detail = f"{source_type or '?'}:{candidate_type or '?'}"
+        result.detail = f"{_media_type(source) or '?'}:{_media_type(candidate) or '?'}"
         return result
-    result.media_type = source_type
     if max_bytes is not None:
         result.checks["max_size"] = result.candidate_bytes <= max_bytes
 
     try:
-        if source_type == "image":
-            _verify_images(result, allow_resize=allow_resize)
-        elif source_type == "pdf":
-            _verify_pdfs(result, allow_resize=allow_resize)
-        else:
-            _verify_videos(result, allow_resize=allow_resize)
+        _run_media_verifier(result, allow_resize=allow_resize)
     except FFmpegNotAvailableError:
         result.error = "ffmpeg_missing"
         return result
@@ -122,15 +109,46 @@ def verify_media(
         result.detail = str(error)
         return result
 
-    structural = all(result.checks.values())
+    _finalize_verification(result)
+    return result
+
+
+def _verification_rejection(
+    source: str,
+    candidate: str,
+    *,
+    min_ssim: float,
+    min_psnr: float | None,
+    max_bytes: int | None,
+) -> str:
+    invalid_psnr = min_psnr is not None and (not math.isfinite(min_psnr) or min_psnr < 0)
+    if not 0 <= min_ssim <= 1 or invalid_psnr:
+        return "invalid_quality_threshold"
+    if max_bytes is not None and max_bytes <= 0:
+        return "invalid_max_size"
+    if not Path(source).is_file() or not Path(candidate).is_file():
+        return "input_not_found"
+    return ""
+
+
+def _matching_media_type(source: str, candidate: str) -> str:
+    source_type = _media_type(source)
+    return source_type if source_type and source_type == _media_type(candidate) else ""
+
+
+def _run_media_verifier(result: VerifyResult, *, allow_resize: bool) -> None:
+    verifiers = {"image": _verify_images, "pdf": _verify_pdfs, "video": _verify_videos}
+    verifiers[result.media_type](result, allow_resize=allow_resize)
+
+
+def _finalize_verification(result: VerifyResult) -> None:
     quality = result.ssim is not None and result.ssim >= result.min_ssim
     if result.min_psnr is not None:
         quality = quality and result.psnr is not None and result.psnr >= result.min_psnr
     result.success = True
-    result.passed = bool(structural and quality)
+    result.passed = bool(all(result.checks.values()) and quality)
     if not result.passed:
         result.error = "quality_gate_failed"
-    return result
 
 
 def _media_type(path: str) -> str:
@@ -364,51 +382,75 @@ def _verify_videos(result: VerifyResult, *, allow_resize: bool) -> None:
     candidate = probe(result.candidate)
     if source.error or candidate.error:
         raise ValueError(source.error or candidate.error)
+    resize_compatible = _record_video_structure(
+        result, source, candidate, allow_resize=allow_resize
+    )
+    if not result.checks["dimensions"]:
+        return
+
+    scale = _video_scale(source, allow_resize=allow_resize, compatible=resize_compatible)
+    result.ssim = _video_metric_value(result, scale=scale, metric="ssim")
+    if result.min_psnr is not None:
+        result.psnr = _video_metric_value(result, scale=scale, metric="psnr")
+    if source.audio_codec and candidate.audio_codec:
+        _record_audio_content(result)
+
+
+def _record_video_structure(
+    result: VerifyResult,
+    source: VideoInfo,
+    candidate: VideoInfo,
+    *,
+    allow_resize: bool,
+) -> bool:
     duration_delta = abs(source.duration_sec - candidate.duration_sec)
     duration_tolerance = max(0.25, source.duration_sec * 0.005)
     result.checks["duration"] = duration_delta <= duration_tolerance
     result.observations["duration_delta_sec"] = round(duration_delta, 6)
     dimensions_match = (source.width, source.height) == (candidate.width, candidate.height)
-    resize_compatible = False
-    if min(source.width, source.height, candidate.width, candidate.height) > 0:
-        source_ratio = source.width / source.height
-        candidate_ratio = candidate.width / candidate.height
-        resize_compatible = (
-            abs(source_ratio - candidate_ratio) / max(source_ratio, candidate_ratio) <= 0.01
-        )
+    resize_compatible = _video_resize_compatible(source, candidate)
     result.checks["dimensions"] = dimensions_match or (allow_resize and resize_compatible)
     result.checks["audio_presence"] = bool(source.audio_codec) == bool(candidate.audio_codec)
     if source.audio_codec and candidate.audio_codec:
         result.checks["audio_channels"] = source.audio_channels == candidate.audio_channels
         result.checks["audio_sample_rate"] = source.audio_sample_rate == candidate.audio_sample_rate
-    if not result.checks["dimensions"]:
-        return
+    return resize_compatible
 
-    scale = (
-        f"scale={source.width}:{source.height}" if allow_resize and resize_compatible else "null"
+
+def _video_resize_compatible(source: VideoInfo, candidate: VideoInfo) -> bool:
+    if min(source.width, source.height, candidate.width, candidate.height) <= 0:
+        return False
+    source_ratio = source.width / source.height
+    candidate_ratio = candidate.width / candidate.height
+    return abs(source_ratio - candidate_ratio) / max(source_ratio, candidate_ratio) <= 0.01
+
+
+def _video_scale(source: VideoInfo, *, allow_resize: bool, compatible: bool) -> str:
+    return f"scale={source.width}:{source.height}" if allow_resize and compatible else "null"
+
+
+def _video_metric_value(result: VerifyResult, *, scale: str, metric: str) -> float:
+    tail = _run_video_metric(result, scale=scale, metric=metric)
+    pattern = (
+        r"All:([0-9]+(?:\.[0-9]+)?)" if metric == "ssim" else r"average:([0-9]+(?:\.[0-9]+)?|inf)"
     )
-    tail = _run_video_metric(result, scale=scale, metric="ssim")
-    match = re.search(r"All:([0-9]+(?:\.[0-9]+)?)", tail)
+    match = re.search(pattern, tail)
     if match is None:
         raise ValueError("video_metric_unavailable")
-    result.ssim = float(match.group(1))
-    if result.min_psnr is not None:
-        tail = _run_video_metric(result, scale=scale, metric="psnr")
-        match = re.search(r"average:([0-9]+(?:\.[0-9]+)?|inf)", tail)
-        if match is None:
-            raise ValueError("video_metric_unavailable")
-        result.psnr = float(match.group(1))
-    if source.audio_codec and candidate.audio_codec:
-        source_rms = _run_audio_rms(result, difference=False)
-        difference_rms = _run_audio_rms(result, difference=True)
-        if source_rms == float("-inf"):
-            audio_snr = float("inf") if difference_rms == float("-inf") else float("-inf")
-        elif difference_rms == float("-inf"):
-            audio_snr = float("inf")
-        else:
-            audio_snr = source_rms - difference_rms
-        result.observations["audio_snr_db"] = None if math.isinf(audio_snr) else round(audio_snr, 4)
-        result.checks["audio_content"] = audio_snr >= MIN_AUDIO_SNR_DB
+    return float(match.group(1))
+
+
+def _record_audio_content(result: VerifyResult) -> None:
+    source_rms = _run_audio_rms(result, difference=False)
+    difference_rms = _run_audio_rms(result, difference=True)
+    if source_rms == float("-inf"):
+        audio_snr = float("inf") if difference_rms == float("-inf") else float("-inf")
+    elif difference_rms == float("-inf"):
+        audio_snr = float("inf")
+    else:
+        audio_snr = source_rms - difference_rms
+    result.observations["audio_snr_db"] = None if math.isinf(audio_snr) else round(audio_snr, 4)
+    result.checks["audio_content"] = audio_snr >= MIN_AUDIO_SNR_DB
 
 
 def _run_video_metric(result: VerifyResult, *, scale: str, metric: str) -> str:

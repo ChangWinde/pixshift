@@ -92,153 +92,55 @@ def create_montage(
         if not input_paths:
             result.error = "没有输入图片"
             return result
-
-        output_extension = Path(output_path).suffix.lower()
-        if output_extension not in {".png", ".jpg", ".jpeg", ".webp"}:
-            raise ValueError(f"unsupported_output_format: {output_extension or '<none>'}")
-
-        if cols <= 0 or gap < 0 or border < 0:
-            raise ValueError("列数必须为正数，间距和边框不能为负数")
-        if cell_width is not None and cell_width <= 0:
-            raise ValueError("单元格宽度必须为正数")
-        if cell_height is not None and cell_height <= 0:
-            raise ValueError("单元格高度必须为正数")
+        output_extension = _validate_montage_request(
+            input_paths,
+            output_path,
+            cols=cols,
+            gap=gap,
+            border=border,
+            cell_width=cell_width,
+            cell_height=cell_height,
+        )
 
         if os.path.exists(output_path) and not overwrite:
             result.error = "输出文件已存在（使用 --overwrite 覆盖）"
             return result
 
         os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
-
-        # First pass keeps only dimensions and paths. Full decoded images are
-        # intentionally not retained together, which bounds peak memory for batches.
-        image_specs: list[tuple[str, int, int]] = []
-        for p in input_paths:
-            try:
-                with open_image(p) as source:
-                    ensure_static_image(source)
-                    normalized = normalize_orientation(source)
-                    image_specs.append((p, normalized.width, normalized.height))
-            except AnimatedInputNotSupportedError:
-                raise
-            except Exception:
-                result.skipped_invalid += 1
-                continue
+        image_specs, result.skipped_invalid = _collect_image_specs(input_paths)
 
         if not image_specs:
             result.error = "没有可用的图片"
             return result
 
         result.total_images = len(image_specs)
-
-        # 计算网格
         rows = (len(image_specs) + cols - 1) // cols
         result.grid_size = (cols, rows)
-
-        # 计算单元格大小
-        if cell_width is None or cell_height is None:
-            if auto_size:
-                # 自动计算：取所有图片的中位数大小
-                widths = sorted(spec[1] for spec in image_specs)
-                heights = sorted(spec[2] for spec in image_specs)
-                median_w = widths[len(widths) // 2]
-                median_h = heights[len(heights) // 2]
-
-                if cell_width is None:
-                    cell_width = min(median_w, 800)
-                if cell_height is None:
-                    cell_height = min(median_h, 600)
-            else:
-                # 使用最大尺寸
-                cell_width = cell_width or max(spec[1] for spec in image_specs)
-                cell_height = cell_height or max(spec[2] for spec in image_specs)
-
-        # 标签高度
+        cell_width, cell_height = _resolve_cell_size(
+            image_specs,
+            cell_width=cell_width,
+            cell_height=cell_height,
+            auto_size=auto_size,
+        )
         label_height = (label_size + 10) if label else 0
-
-        # 计算画布大小
         canvas_w = cols * cell_width + (cols + 1) * gap
         canvas_h = rows * (cell_height + label_height) + (rows + 1) * gap
         result.canvas_size = (canvas_w, canvas_h)
         ensure_pixel_count_within_limit(canvas_w * canvas_h)
-
-        # 解析颜色
-        bg_color = _parse_rgb(background)
-        bd_color = _parse_rgb(border_color)
-
-        # 创建画布
-        canvas = Image.new("RGB", (canvas_w, canvas_h), bg_color)
-        draw = ImageDraw.Draw(canvas)
-
-        # 获取字体
-        font = None
-        if label:
-            font = _get_simple_font(label_size)
-
-        # 放置图片
-        for idx, (image_path, _, _) in enumerate(image_specs):
-            row = idx // cols
-            col = idx % cols
-
-            x = gap + col * (cell_width + gap)
-            y = gap + row * (cell_height + label_height + gap)
-
-            # 缩放图片以适应单元格
-            with open_image(image_path) as source:
-                ensure_static_image(source)
-                img = convert_color_to_rgb(normalize_orientation(source))
-                resized = _fit_image(img, cell_width, cell_height)
-
-            # 居中放置
-            offset_x = x + (cell_width - resized.width) // 2
-            offset_y = y + (cell_height - resized.height) // 2
-
-            # 边框
-            if border > 0:
-                draw.rectangle(
-                    [
-                        offset_x - border,
-                        offset_y - border,
-                        offset_x + resized.width + border - 1,
-                        offset_y + resized.height + border - 1,
-                    ],
-                    outline=bd_color,
-                    width=border,
-                )
-
-            # 粘贴图片
-            if image_has_transparency(resized):
-                rgba = resized.convert("RGBA")
-                canvas.paste(rgba, (offset_x, offset_y), rgba)
-            else:
-                canvas.paste(resized, (offset_x, offset_y))
-
-            # 标签
-            if label and font:
-                label_x = x + cell_width // 2
-                label_y = y + cell_height + 2
-                text = Path(image_path).name
-                # 截断过长的文件名
-                if len(text) > 30:
-                    text = text[:27] + "..."
-                bbox = draw.textbbox((0, 0), text, font=font)
-                text_w = bbox[2] - bbox[0]
-                draw.text(
-                    (label_x - text_w // 2, label_y),
-                    text,
-                    fill=(80, 80, 80),
-                    font=font,
-                )
-
-        # 保存
-        ext = output_extension
-        with atomic_output_path(output_path, overwrite=overwrite) as temporary:
-            if ext in (".jpg", ".jpeg"):
-                canvas.save(temporary, format="JPEG", quality=95, optimize=True)
-            elif ext == ".webp":
-                canvas.save(temporary, format="WEBP", quality=95)
-            else:
-                canvas.save(temporary, format="PNG", optimize=True)
+        canvas = _render_montage(
+            image_specs,
+            canvas_size=(canvas_w, canvas_h),
+            cell_size=(cell_width, cell_height),
+            cols=cols,
+            gap=gap,
+            label=label,
+            label_size=label_size,
+            label_height=label_height,
+            border=border,
+            background=_parse_rgb(background),
+            border_color=_parse_rgb(border_color),
+        )
+        _save_montage(canvas, output_path, output_extension, overwrite=overwrite)
 
         result.output_size = os.path.getsize(output_path)
         result.success = True
@@ -248,6 +150,170 @@ def create_montage(
 
     result.duration = time.time() - start_time
     return result
+
+
+def _validate_montage_request(
+    input_paths: list[str],
+    output_path: str,
+    *,
+    cols: int,
+    gap: int,
+    border: int,
+    cell_width: int | None,
+    cell_height: int | None,
+) -> str:
+    """Validate scalar options before opening an input or creating a directory."""
+    output_extension = Path(output_path).suffix.lower()
+    if output_extension not in {".png", ".jpg", ".jpeg", ".webp"}:
+        raise ValueError(f"unsupported_output_format: {output_extension or '<none>'}")
+    if cols <= 0 or gap < 0 or border < 0:
+        raise ValueError("列数必须为正数，间距和边框不能为负数")
+    if cell_width is not None and cell_width <= 0:
+        raise ValueError("单元格宽度必须为正数")
+    if cell_height is not None and cell_height <= 0:
+        raise ValueError("单元格高度必须为正数")
+    return output_extension
+
+
+def _collect_image_specs(input_paths: list[str]) -> tuple[list[tuple[str, int, int]], int]:
+    """Read only dimensions in the first pass so decoded images never accumulate."""
+    specs: list[tuple[str, int, int]] = []
+    skipped = 0
+    for path in input_paths:
+        try:
+            with open_image(path) as source:
+                ensure_static_image(source)
+                normalized = normalize_orientation(source)
+                specs.append((path, normalized.width, normalized.height))
+        except AnimatedInputNotSupportedError:
+            raise
+        except Exception:
+            skipped += 1
+    return specs, skipped
+
+
+def _resolve_cell_size(
+    image_specs: list[tuple[str, int, int]],
+    *,
+    cell_width: int | None,
+    cell_height: int | None,
+    auto_size: bool,
+) -> tuple[int, int]:
+    """Resolve optional dimensions from the median or maximum input dimensions."""
+    widths = sorted(spec[1] for spec in image_specs)
+    heights = sorted(spec[2] for spec in image_specs)
+    if auto_size:
+        default_width = min(widths[len(widths) // 2], 800)
+        default_height = min(heights[len(heights) // 2], 600)
+    else:
+        default_width = max(widths)
+        default_height = max(heights)
+    return cell_width or default_width, cell_height or default_height
+
+
+def _render_montage(
+    image_specs: list[tuple[str, int, int]],
+    *,
+    canvas_size: tuple[int, int],
+    cell_size: tuple[int, int],
+    cols: int,
+    gap: int,
+    label: bool,
+    label_size: int,
+    label_height: int,
+    border: int,
+    background: tuple[int, int, int],
+    border_color: tuple[int, int, int],
+) -> Image.Image:
+    canvas = Image.new("RGB", canvas_size, background)
+    draw = ImageDraw.Draw(canvas)
+    font = _get_simple_font(label_size) if label else None
+    cell_width, cell_height = cell_size
+    for index, (image_path, _, _) in enumerate(image_specs):
+        row, col = divmod(index, cols)
+        origin = (
+            gap + col * (cell_width + gap),
+            gap + row * (cell_height + label_height + gap),
+        )
+        _render_montage_cell(
+            canvas,
+            draw,
+            image_path,
+            origin=origin,
+            cell_size=cell_size,
+            border=border,
+            border_color=border_color,
+            font=font,
+        )
+    return canvas
+
+
+def _render_montage_cell(
+    canvas: Image.Image,
+    draw: ImageDraw.ImageDraw,
+    image_path: str,
+    *,
+    origin: tuple[int, int],
+    cell_size: tuple[int, int],
+    border: int,
+    border_color: tuple[int, int, int],
+    font: ImageFont.FreeTypeFont | ImageFont.ImageFont | None,
+) -> None:
+    cell_width, cell_height = cell_size
+    with open_image(image_path) as source:
+        ensure_static_image(source)
+        image = convert_color_to_rgb(normalize_orientation(source))
+        resized = _fit_image(image, cell_width, cell_height)
+
+    x, y = origin
+    offset = (x + (cell_width - resized.width) // 2, y + (cell_height - resized.height) // 2)
+    if border > 0:
+        draw.rectangle(
+            [
+                offset[0] - border,
+                offset[1] - border,
+                offset[0] + resized.width + border - 1,
+                offset[1] + resized.height + border - 1,
+            ],
+            outline=border_color,
+            width=border,
+        )
+    if image_has_transparency(resized):
+        rgba = resized.convert("RGBA")
+        canvas.paste(rgba, offset, rgba)
+    else:
+        canvas.paste(resized, offset)
+    if font is not None:
+        _draw_label(draw, image_path, x=x, y=y + cell_height + 2, width=cell_width, font=font)
+
+
+def _draw_label(
+    draw: ImageDraw.ImageDraw,
+    image_path: str,
+    *,
+    x: int,
+    y: int,
+    width: int,
+    font: ImageFont.FreeTypeFont | ImageFont.ImageFont,
+) -> None:
+    text = Path(image_path).name
+    if len(text) > 30:
+        text = text[:27] + "..."
+    bbox = draw.textbbox((0, 0), text, font=font)
+    text_width = bbox[2] - bbox[0]
+    draw.text((x + width // 2 - text_width // 2, y), text, fill=(80, 80, 80), font=font)
+
+
+def _save_montage(
+    canvas: Image.Image, output_path: str, extension: str, *, overwrite: bool
+) -> None:
+    with atomic_output_path(output_path, overwrite=overwrite) as temporary:
+        if extension in (".jpg", ".jpeg"):
+            canvas.save(temporary, format="JPEG", quality=95, optimize=True)
+        elif extension == ".webp":
+            canvas.save(temporary, format="WEBP", quality=95)
+        else:
+            canvas.save(temporary, format="PNG", optimize=True)
 
 
 # ============================================================
