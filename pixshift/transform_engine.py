@@ -71,49 +71,18 @@ def rotate_image(
     result = TransformResult(input_path=input_path, output_path=output_path)
     start_time = time.time()
     try:
-        if degrees not in (0, 90, 180, 270):
-            raise ValueError("degrees_must_be_90_180_or_270")
-        if flip is not None and flip not in _FLIP_TRANSPOSE:
-            raise ValueError("flip_must_be_horizontal_or_vertical")
-        if degrees == 0 and flip is None:
-            raise ValueError("nothing_to_do")
+        _validate_transform_request(degrees=degrees, flip=flip)
         if os.path.exists(output_path) and not overwrite:
             result.error = "output_exists"
             return result
 
         result.input_size = os.path.getsize(input_path)
-        extension = os.path.splitext(output_path)[1].lower()
-        save_format = _SAVE_FORMATS.get(extension)
-        if save_format is None:
-            raise ValueError(f"unsupported_output_format:{extension}")
-
+        save_format = _transform_output_format(output_path)
         with open_image(input_path) as img:
             ensure_static_image(img)
-            frame: Image.Image = normalize_orientation(img)
-            if degrees:
-                frame = frame.transpose(_ROTATE_TRANSPOSE[degrees])
-            if flip is not None:
-                frame = frame.transpose(_FLIP_TRANSPOSE[flip])
-
-            if frame.mode in {"CMYK", "YCCK", "LAB"} and save_format != "TIFF":
-                frame = convert_color_to_rgb(frame)
-
-            save_kwargs: dict[str, object] = {}
-            exif_bytes = normalized_exif_bytes(frame)
-            if exif_bytes:
-                save_kwargs["exif"] = exif_bytes
-            icc_profile = frame.info.get("icc_profile")
-            if icc_profile:
-                save_kwargs["icc_profile"] = icc_profile
-            if save_format == "JPEG":
-                if frame.mode not in ("RGB", "L"):
-                    frame = convert_color_to_rgb(frame)
-                    if frame.mode not in ("RGB", "L"):
-                        frame = frame.convert("RGB")
-                save_kwargs.update({"quality": 95, "subsampling": 0, "optimize": True})
-            elif save_format == "WEBP":
-                save_kwargs.update({"quality": 95, "method": 4})
-
+            frame = _apply_transform(normalize_orientation(img), degrees=degrees, flip=flip)
+            frame = _prepare_transform_output(frame, save_format)
+            save_kwargs = _transform_save_kwargs(frame, save_format)
             with atomic_output_path(output_path, overwrite=overwrite) as temporary:
                 frame.save(temporary, format=save_format, **save_kwargs)
 
@@ -125,3 +94,54 @@ def rotate_image(
         result.error = str(error)
     result.duration = time.time() - start_time
     return result
+
+
+def _validate_transform_request(
+    *,
+    degrees: int,
+    flip: str | None,
+) -> None:
+    if degrees not in (0, 90, 180, 270):
+        raise ValueError("degrees_must_be_90_180_or_270")
+    if flip is not None and flip not in _FLIP_TRANSPOSE:
+        raise ValueError("flip_must_be_horizontal_or_vertical")
+    if degrees == 0 and flip is None:
+        raise ValueError("nothing_to_do")
+
+
+def _transform_output_format(output_path: str) -> str:
+    extension = os.path.splitext(output_path)[1].lower()
+    save_format = _SAVE_FORMATS.get(extension)
+    if save_format is None:
+        raise ValueError(f"unsupported_output_format:{extension}")
+    return save_format
+
+
+def _apply_transform(image: Image.Image, *, degrees: int, flip: str | None) -> Image.Image:
+    transformed = image.transpose(_ROTATE_TRANSPOSE[degrees]) if degrees else image
+    return transformed.transpose(_FLIP_TRANSPOSE[flip]) if flip is not None else transformed
+
+
+def _prepare_transform_output(image: Image.Image, save_format: str) -> Image.Image:
+    if image.mode in {"CMYK", "YCCK", "LAB"} and save_format != "TIFF":
+        image = convert_color_to_rgb(image)
+    if save_format == "JPEG" and image.mode not in ("RGB", "L"):
+        image = convert_color_to_rgb(image)
+        if image.mode not in ("RGB", "L"):
+            image = image.convert("RGB")
+    return image
+
+
+def _transform_save_kwargs(image: Image.Image, save_format: str) -> dict[str, object]:
+    save_kwargs: dict[str, object] = {}
+    exif_bytes = normalized_exif_bytes(image)
+    if exif_bytes:
+        save_kwargs["exif"] = exif_bytes
+    icc_profile = image.info.get("icc_profile")
+    if icc_profile:
+        save_kwargs["icc_profile"] = icc_profile
+    if save_format == "JPEG":
+        save_kwargs.update({"quality": 95, "subsampling": 0, "optimize": True})
+    elif save_format == "WEBP":
+        save_kwargs.update({"quality": 95, "method": 4})
+    return save_kwargs

@@ -143,15 +143,7 @@ def filter_generated_inputs(
     exact_exclusions = {Path(path).resolve(strict=False) for path in excluded_files}
     normalized_extension = _normalize_ext(excluded_extension) if excluded_extension else None
 
-    generated_root: Path | None = None
-    if output_root:
-        candidate_root = Path(output_root).resolve(strict=False)
-        if any(
-            candidate_root != source_root and _is_relative_to(candidate_root, source_root)
-            for source_root in source_dirs
-        ):
-            generated_root = candidate_root
-
+    generated_root = _nested_generated_root(output_root, source_dirs)
     candidates = {Path(file_path).resolve() for file_path in files}
     retained: list[str] = []
     ignored = 0
@@ -163,23 +155,50 @@ def filter_generated_inputs(
         if resolved in explicit_files:
             retained.append(file_path)
             continue
-        if generated_root is not None and _is_relative_to(resolved, generated_root):
-            ignored += 1
-            continue
-        if generated_suffix and resolved.stem.endswith(generated_suffix):
-            original_stem = resolved.stem[: -len(generated_suffix)]
-            if any(
-                candidate.parent == resolved.parent and candidate.stem == original_stem
-                for candidate in candidates
-            ):
-                ignored += 1
-                continue
-        if normalized_extension and resolved.suffix.lower() == normalized_extension:
+        if _is_generated_candidate(
+            resolved,
+            candidates,
+            generated_root=generated_root,
+            generated_suffix=generated_suffix,
+            excluded_extension=normalized_extension,
+        ):
             ignored += 1
             continue
         retained.append(file_path)
 
     return retained, ignored
+
+
+def _nested_generated_root(output_root: str | None, source_dirs: Sequence[Path]) -> Path | None:
+    if not output_root:
+        return None
+    candidate = Path(output_root).resolve(strict=False)
+    if any(
+        candidate != source_root and _is_relative_to(candidate, source_root)
+        for source_root in source_dirs
+    ):
+        return candidate
+    return None
+
+
+def _is_generated_candidate(
+    path: Path,
+    candidates: set[Path],
+    *,
+    generated_root: Path | None,
+    generated_suffix: str | None,
+    excluded_extension: str | None,
+) -> bool:
+    if generated_root is not None and _is_relative_to(path, generated_root):
+        return True
+    if generated_suffix and path.stem.endswith(generated_suffix):
+        original_stem = path.stem[: -len(generated_suffix)]
+        if any(
+            candidate.parent == path.parent and candidate.stem == original_stem
+            for candidate in candidates
+        ):
+            return True
+    return bool(excluded_extension and path.suffix.lower() == excluded_extension)
 
 
 def partition_existing_outputs(

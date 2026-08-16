@@ -22,6 +22,7 @@ from ..video_engine import (
     CONTAINER_DEFAULT_CODEC,
     VIDEO_CODECS,
     VIDEO_COMPRESS_PRESETS,
+    VideoResult,
     validate_container_codec,
 )
 from . import compress as compress_ops
@@ -60,6 +61,16 @@ class ApplyResult:
         if self.error:
             return False
         return all(step.success or step.skipped for step in self.steps)
+
+
+@dataclass(frozen=True)
+class _VideoPlan:
+    audio_policy: str
+    codec: str
+    preset: str
+    crf: int | None
+    container: str
+    output_name: str
 
 
 def load_plan_document(raw: str) -> list[dict[str, Any]]:
@@ -413,51 +424,16 @@ def _apply_video(
     verifies a plan (names, collisions, vocabulary) on hosts without ffmpeg;
     only real execution requires the optional dependency.
     """
-    arguments = applied.arguments
-    audio_policy = str(arguments.get("audio_policy") or "compatible").lower()
-    if audio_policy not in {"preserve", "compatible", "compact"}:
-        applied.error = f"unsupported_audio_policy:{audio_policy}"
-        return applied
-    codec = str(arguments.get("codec") or "")
-    preset = str(arguments.get("preset") or "web")
-    crf_raw = arguments.get("crf")
     try:
-        crf = int(crf_raw) if crf_raw is not None else None
-    except (TypeError, ValueError):
-        applied.error = "invalid_crf"
+        plan = _validated_video_plan(applied)
+    except ValueError as error:
+        applied.error = str(error)
         return applied
-    if crf is not None and not 0 <= crf <= 63:
-        applied.error = "invalid_crf"
-        return applied
-    if applied.command == "video.convert":
-        container = str(arguments.get("to") or "").lower().lstrip(".")
-        if container not in _VIDEO_CONVERT_CONTAINERS:
-            applied.error = f"unsupported_target_container:{container or '?'}"
-            return applied
-        try:
-            validate_container_codec(
-                codec=codec or CONTAINER_DEFAULT_CODEC[container], container=container
-            )
-        except ValueError as error:
-            applied.error = str(error)
-            return applied
-        output_name = conversion_output_name(applied.input_path, container)
-    else:
-        codec = codec or "h264"
-        if preset not in VIDEO_COMPRESS_PRESETS:
-            applied.error = f"unsupported_video_preset:{preset}"
-            return applied
-        if codec not in VIDEO_CODECS:
-            applied.error = f"unsupported_video_codec:{codec}"
-            return applied
-        container = VIDEO_CODECS[codec][1]
-        stem = Path(applied.input_path).stem
-        output_name = f"{stem}_compressed.{container}"
 
     output_path, skipped = _output_for(
         applied.input_path,
         output_dir=output_dir,
-        output_name=output_name,
+        output_name=plan.output_name,
         overwrite=overwrite,
         claimed=claimed,
     )
@@ -473,29 +449,68 @@ def _apply_video(
     if not video_ops.available():
         applied.error = "ffmpeg_missing"
         return applied
-    if applied.command == "video.convert":
-        result = video_ops.convert_one(
-            applied.input_path,
-            output_path,
-            container=container,
-            codec=codec or None,
-            overwrite=overwrite,
-            audio_policy=audio_policy,
-        )
-    else:
-        result = video_ops.compress_one(
-            applied.input_path,
-            output_path,
-            preset=preset,
-            codec=codec,
-            crf=crf,
-            overwrite=overwrite,
-            audio_policy=audio_policy,
-        )
+    result = _execute_video_plan(applied, plan, output_path, overwrite=overwrite)
     applied.success = bool(result.success)
     applied.error = result.error or ""
     applied.detail = applied.detail or result.detail
     return applied
+
+
+def _validated_video_plan(applied: AppliedStep) -> _VideoPlan:
+    arguments = applied.arguments
+    audio_policy = str(arguments.get("audio_policy") or "compatible").lower()
+    if audio_policy not in {"preserve", "compatible", "compact"}:
+        raise ValueError(f"unsupported_audio_policy:{audio_policy}")
+    codec = str(arguments.get("codec") or "")
+    preset = str(arguments.get("preset") or "web")
+    crf_raw = arguments.get("crf")
+    try:
+        crf = int(crf_raw) if crf_raw is not None else None
+    except (TypeError, ValueError) as error:
+        raise ValueError("invalid_crf") from error
+    if crf is not None and not 0 <= crf <= 63:
+        raise ValueError("invalid_crf")
+
+    if applied.command == "video.convert":
+        container = str(arguments.get("to") or "").lower().lstrip(".")
+        if container not in _VIDEO_CONVERT_CONTAINERS:
+            raise ValueError(f"unsupported_target_container:{container or '?'}")
+        validate_container_codec(
+            codec=codec or CONTAINER_DEFAULT_CODEC[container], container=container
+        )
+        output_name = conversion_output_name(applied.input_path, container)
+    else:
+        codec = codec or "h264"
+        if preset not in VIDEO_COMPRESS_PRESETS:
+            raise ValueError(f"unsupported_video_preset:{preset}")
+        if codec not in VIDEO_CODECS:
+            raise ValueError(f"unsupported_video_codec:{codec}")
+        container = VIDEO_CODECS[codec][1]
+        output_name = f"{Path(applied.input_path).stem}_compressed.{container}"
+    return _VideoPlan(audio_policy, codec, preset, crf, container, output_name)
+
+
+def _execute_video_plan(
+    applied: AppliedStep, plan: _VideoPlan, output_path: str, *, overwrite: bool
+) -> VideoResult:
+    if applied.command == "video.convert":
+        return video_ops.convert_one(
+            applied.input_path,
+            output_path,
+            container=plan.container,
+            codec=plan.codec or None,
+            overwrite=overwrite,
+            audio_policy=plan.audio_policy,
+        )
+    return video_ops.compress_one(
+        applied.input_path,
+        output_path,
+        preset=plan.preset,
+        codec=plan.codec,
+        crf=plan.crf,
+        overwrite=overwrite,
+        audio_policy=plan.audio_policy,
+    )
 
 
 def _apply_strip(

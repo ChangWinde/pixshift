@@ -806,6 +806,7 @@ def _run_watermark(
     console: Console,
     human_size: Callable[[int], str],
 ) -> None:
+    command = f"watermark.{mode}"
     files = watermark_ops.collect_files(list(inputs), recursive, selection)
     files, ignored_generated = filter_generated_inputs(
         files,
@@ -815,124 +816,204 @@ def _run_watermark(
         excluded_files=excluded_files,
     )
     if not files:
-        if as_json:
-            emit_json(
-                {
-                    "command": f"watermark.{mode}",
-                    "ok": True,
-                    "total": 0,
-                    "message": "no_files",
-                    "ignored_generated": ignored_generated,
-                }
-            )
-        else:
-            console.print("[yellow]未找到可处理的图片文件。[/yellow]")
+        _emit_empty_watermark_result(command, ignored_generated, as_json=as_json, console=console)
         return
 
     if ignored_generated and not as_json:
         console.print(f"[dim]已忽略 {ignored_generated} 个水印资产或既有输出[/dim]")
 
-    tasks: list[tuple[str, str]] = []
-    for f in files:
-        out_name = derivative_output_name(f, "_wm")
-        out_path = plan_output_path(f, out_name, output_dir, flatten, list(inputs))
-        tasks.append((f, out_path))
-    validate_tasks_or_exit(command=f"watermark.{mode}", as_json=as_json, tasks=tasks)
+    tasks = _plan_watermark_tasks(files, inputs, output_dir=output_dir, flatten=flatten)
+    validate_tasks_or_exit(command=command, as_json=as_json, tasks=tasks)
     all_tasks = tasks
     tasks, skipped_tasks = partition_existing_outputs(tasks, overwrite=overwrite)
 
     if dry_run:
-        skipped_outputs = {output for _, output in skipped_tasks}
-        payload = {
-            "command": f"watermark.{mode}",
-            "ok": True,
-            "mode": "dry_run",
-            "total": len(all_tasks),
-            "pending": len(tasks),
-            "skipped": len(skipped_tasks),
-            "ignored_generated": ignored_generated,
-            "preview": [
-                {
-                    "input": input_path,
-                    "output": output_path,
-                    "action": "skip_existing" if output_path in skipped_outputs else "watermark",
-                }
-                for input_path, output_path in all_tasks
-            ],
-        }
-        if as_json:
-            emit_json(payload)
-        else:
-            console.print(
-                Panel(
-                    f"  共 {len(tasks)} 个文件将添加水印，{len(skipped_tasks)} 个将跳过",
-                    title="[bold]水印处理预览[/bold]",
-                    box=box.ROUNDED,
-                )
-            )
+        _emit_watermark_preview(
+            command,
+            all_tasks,
+            tasks,
+            skipped_tasks,
+            ignored_generated,
+            as_json=as_json,
+            console=console,
+        )
         return
 
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)
-    success = 0
-    failed = 0
-    errors: list[dict[str, str]] = []
-    input_bytes = 0
-    output_bytes = 0
     start = time.time()
-    if mode == "text":
-        if apply_text_kwargs is None:
-            raise ValueError("text watermark options are required")
-        worker = functools.partial(watermark_ops.text_one, overwrite=overwrite, **apply_text_kwargs)
-    else:
-        if apply_image_kwargs is None:
-            raise ValueError("image watermark options are required")
-        worker = functools.partial(
-            watermark_ops.image_one, overwrite=overwrite, **apply_image_kwargs
-        )
+    worker = _watermark_worker(
+        mode,
+        overwrite=overwrite,
+        text_kwargs=apply_text_kwargs,
+        image_kwargs=apply_image_kwargs,
+    )
     with batch_progress(console, disable=as_json) as progress:
         task_id = progress.add_task("水印处理中", total=len(tasks))
         outcomes = run_batch_tasks(tasks, worker, on_result=lambda: progress.advance(task_id))
-    for (inp, out), result in zip(tasks, outcomes, strict=True):
-        input_bytes += result.input_size
-        output_bytes += result.output_size if result.success else 0
-        if result.success:
-            success += 1
-        else:
-            failed += 1
-            errors.append(failure_entry(inp, result.error, out))
+    payload = _watermark_result_payload(
+        command,
+        all_tasks,
+        tasks,
+        skipped_tasks,
+        outcomes,
+        ignored_generated=ignored_generated,
+        duration=time.time() - start,
+    )
+    _present_watermark_result(
+        payload, mode=mode, as_json=as_json, console=console, human_size=human_size
+    )
+
+
+def _emit_empty_watermark_result(
+    command: str, ignored_generated: int, *, as_json: bool, console: Console
+) -> None:
+    if as_json:
+        emit_json(
+            {
+                "command": command,
+                "ok": True,
+                "total": 0,
+                "message": "no_files",
+                "ignored_generated": ignored_generated,
+            }
+        )
+    else:
+        console.print("[yellow]未找到可处理的图片文件。[/yellow]")
+
+
+def _plan_watermark_tasks(
+    files: list[str], inputs: tuple[str, ...], *, output_dir: str | None, flatten: bool
+) -> list[tuple[str, str]]:
+    return [
+        (
+            path,
+            plan_output_path(
+                path, derivative_output_name(path, "_wm"), output_dir, flatten, list(inputs)
+            ),
+        )
+        for path in files
+    ]
+
+
+def _emit_watermark_preview(
+    command: str,
+    all_tasks: list[tuple[str, str]],
+    pending_tasks: list[tuple[str, str]],
+    skipped_tasks: list[tuple[str, str]],
+    ignored_generated: int,
+    *,
+    as_json: bool,
+    console: Console,
+) -> None:
+    skipped_outputs = {output for _, output in skipped_tasks}
     payload = {
-        "command": f"watermark.{mode}",
-        "ok": failed == 0,
+        "command": command,
+        "ok": True,
+        "mode": "dry_run",
+        "total": len(all_tasks),
+        "pending": len(pending_tasks),
+        "skipped": len(skipped_tasks),
+        "ignored_generated": ignored_generated,
+        "preview": [
+            {
+                "input": input_path,
+                "output": output_path,
+                "action": "skip_existing" if output_path in skipped_outputs else "watermark",
+            }
+            for input_path, output_path in all_tasks
+        ],
+    }
+    if as_json:
+        emit_json(payload)
+    else:
+        console.print(
+            Panel(
+                f"  共 {len(pending_tasks)} 个文件将添加水印，{len(skipped_tasks)} 个将跳过",
+                title="[bold]水印处理预览[/bold]",
+                box=box.ROUNDED,
+            )
+        )
+
+
+def _watermark_worker(
+    mode: str,
+    *,
+    overwrite: bool,
+    text_kwargs: dict[str, Any] | None,
+    image_kwargs: dict[str, Any] | None,
+) -> Callable[[str, str], Any]:
+    if mode == "text":
+        if text_kwargs is None:
+            raise ValueError("text watermark options are required")
+        return functools.partial(watermark_ops.text_one, overwrite=overwrite, **text_kwargs)
+    if image_kwargs is None:
+        raise ValueError("image watermark options are required")
+    return functools.partial(watermark_ops.image_one, overwrite=overwrite, **image_kwargs)
+
+
+def _watermark_result_payload(
+    command: str,
+    all_tasks: list[tuple[str, str]],
+    tasks: list[tuple[str, str]],
+    skipped_tasks: list[tuple[str, str]],
+    outcomes: list[Any],
+    *,
+    ignored_generated: int,
+    duration: float,
+) -> dict[str, Any]:
+    errors = [
+        failure_entry(input_path, outcome.error, output_path)
+        for (input_path, output_path), outcome in zip(tasks, outcomes, strict=True)
+        if not outcome.success
+    ]
+    success = sum(bool(outcome.success) for outcome in outcomes)
+    input_bytes = sum(int(outcome.input_size) for outcome in outcomes)
+    output_bytes = sum(int(outcome.output_size) for outcome in outcomes if outcome.success)
+    return {
+        "command": command,
+        "ok": not errors,
         "total": len(all_tasks),
         "success": success,
-        "failed": failed,
+        "failed": len(errors),
         "skipped": len(skipped_tasks),
         "input_bytes": input_bytes,
         "output_bytes": output_bytes,
-        "duration_sec": round(time.time() - start, 4),
+        "duration_sec": round(duration, 4),
         "errors": errors,
         "ignored_generated": ignored_generated,
     }
+
+
+def _present_watermark_result(
+    payload: dict[str, Any],
+    *,
+    mode: str,
+    as_json: bool,
+    console: Console,
+    human_size: Callable[[int], str],
+) -> None:
     if as_json:
-        if failed:
+        if payload["failed"]:
             emit_json_and_exit(payload, 1)
         emit_json(payload)
         return
-    mode_label = "文字" if mode == "text" else "图片"
+    errors = payload["errors"]
     if errors:
         print_failures(console, failure_lines(errors))
+    mode_label = "文字" if mode == "text" else "图片"
     console.print(
         Panel(
-            f"  成功: [bold green]{success}[/bold green]\n"
-            f"  失败: [bold red]{failed}[/bold red]\n"
-            f"  跳过: [bold yellow]{len(skipped_tasks)}[/bold yellow]\n"
-            f"  输入: {human_size(input_bytes)}；输出: {human_size(output_bytes)}",
+            f"  成功: [bold green]{payload['success']}[/bold green]\n"
+            f"  失败: [bold red]{payload['failed']}[/bold red]\n"
+            f"  跳过: [bold yellow]{payload['skipped']}[/bold yellow]\n"
+            f"  输入: {human_size(payload['input_bytes'])}；"
+            f"输出: {human_size(payload['output_bytes'])}",
             title=f"[bold]{mode_label}水印处理完成[/bold]",
-            border_style="green" if failed == 0 else "yellow",
+            border_style="green" if not payload["failed"] else "yellow",
             box=box.ROUNDED,
         )
     )
     console.print()
-    if failed:
+    if payload["failed"]:
         raise click.exceptions.Exit(1)

@@ -198,88 +198,36 @@ def compress_single(
         if not os.path.exists(input_path):
             result.error = f"文件不存在: {input_path}"
             return result
-
         result.input_size = os.path.getsize(input_path)
-
-        if os.path.exists(output_path) and not overwrite:
-            result.error = "输出文件已存在（使用 --overwrite 覆盖）"
-            return result
-
-        ext = Path(input_path).suffix.lower()
-        fmt_config = COMPRESSIBLE_FORMATS.get(ext)
-
-        if not fmt_config:
-            result.error = f"不支持压缩此格式: {ext}"
-            return result
-
-        if preset not in COMPRESS_PRESETS:
-            raise ValueError(f"unsupported_compress_preset:{preset}")
-        if max_size is not None and max_size <= 0:
-            raise ValueError("max_size_must_be_positive")
-        if quality is not None and not 1 <= quality <= 100:
-            raise ValueError("quality_must_be_between_1_and_100")
-        if quality is not None and target_size is not None:
-            raise ValueError("quality_and_target_size_are_mutually_exclusive")
-
+        ext, fmt_config = _validate_compress_request(
+            Path(input_path).suffix.lower(),
+            output_path,
+            quality=quality,
+            preset=preset,
+            target_size=target_size,
+            max_size=max_size,
+            overwrite=overwrite,
+        )
         os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
-
-        exact_copy_formats = {".jpg", ".jpeg", ".webp", ".avif", ".heic", ".heif"}
-        if (
-            preset == "lossless"
-            and quality is None
-            and target_size is None
-            and max_size is None
-            and ext in exact_copy_formats
+        if _can_copy_losslessly(
+            ext, preset=preset, quality=quality, target_size=target_size, max_size=max_size
         ):
             atomic_copy_file(input_path, output_path, overwrite=overwrite)
             result.quality_used = 100
             result.iterations = 1
         else:
-            with open_image(input_path) as source:
-                ensure_static_image(source)
-                target_bytes = parse_target_size(target_size) if target_size else None
-                if (
-                    target_bytes is not None
-                    and result.input_size <= target_bytes
-                    and (max_size is None or max(source.size) <= max_size)
-                ):
-                    atomic_copy_file(input_path, output_path, overwrite=overwrite)
-                    result.quality_used = 100
-                    result.iterations = 1
-                    result.output_size = result.input_size
-                    result.success = True
-                    result.duration = time.time() - start_time
-                    return result
-                img = normalize_orientation(source)
-
-                if max_size:
-                    img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
-
-                if target_bytes is not None:
-                    result = _compress_to_target(
-                        img,
-                        output_path,
-                        ext,
-                        fmt_config,
-                        target_bytes,
-                        result,
-                        overwrite=overwrite,
-                    )
-                else:
-                    actual_quality = _get_quality(ext, quality, preset)
-                    lossless = preset == "lossless" and quality is None
-                    payload = _encode_compressed(
-                        img, ext, fmt_config, actual_quality, lossless=lossless
-                    )
-                    # Select the winner before publishing. Publishing a larger
-                    # encode and then replacing it with the source creates a
-                    # second commit-time race and needlessly mutates the target.
-                    if max_size is None and len(payload) >= result.input_size:
-                        atomic_copy_file(input_path, output_path, overwrite=overwrite)
-                    else:
-                        atomic_write_bytes(output_path, payload, overwrite=overwrite)
-                    result.quality_used = actual_quality
-                    result.iterations = 1
+            _compress_decoded(
+                input_path,
+                output_path,
+                ext,
+                fmt_config,
+                quality=quality,
+                preset=preset,
+                target_size=target_size,
+                max_size=max_size,
+                overwrite=overwrite,
+                result=result,
+            )
 
         if os.path.exists(output_path):
             result.output_size = os.path.getsize(output_path)
@@ -290,6 +238,139 @@ def compress_single(
 
     result.duration = time.time() - start_time
     return result
+
+
+def _validate_compress_request(
+    ext: str,
+    output_path: str,
+    *,
+    quality: int | None,
+    preset: str,
+    target_size: str | None,
+    max_size: int | None,
+    overwrite: bool,
+) -> tuple[str, dict[str, Any]]:
+    if os.path.exists(output_path) and not overwrite:
+        raise ValueError("输出文件已存在（使用 --overwrite 覆盖）")
+    fmt_config = COMPRESSIBLE_FORMATS.get(ext)
+    if fmt_config is None:
+        raise ValueError(f"不支持压缩此格式: {ext}")
+    if preset not in COMPRESS_PRESETS:
+        raise ValueError(f"unsupported_compress_preset:{preset}")
+    if max_size is not None and max_size <= 0:
+        raise ValueError("max_size_must_be_positive")
+    if quality is not None and not 1 <= quality <= 100:
+        raise ValueError("quality_must_be_between_1_and_100")
+    if quality is not None and target_size is not None:
+        raise ValueError("quality_and_target_size_are_mutually_exclusive")
+    return ext, fmt_config
+
+
+def _can_copy_losslessly(
+    ext: str,
+    *,
+    preset: str,
+    quality: int | None,
+    target_size: str | None,
+    max_size: int | None,
+) -> bool:
+    exact_copy_formats = {".jpg", ".jpeg", ".webp", ".avif", ".heic", ".heif"}
+    return (
+        preset == "lossless"
+        and quality is None
+        and target_size is None
+        and max_size is None
+        and ext in exact_copy_formats
+    )
+
+
+def _compress_decoded(
+    input_path: str,
+    output_path: str,
+    ext: str,
+    fmt_config: dict[str, Any],
+    *,
+    quality: int | None,
+    preset: str,
+    target_size: str | None,
+    max_size: int | None,
+    overwrite: bool,
+    result: CompressResult,
+) -> None:
+    with open_image(input_path) as source:
+        ensure_static_image(source)
+        target_bytes = parse_target_size(target_size) if target_size else None
+        if _source_already_fits(result.input_size, source.size, target_bytes, max_size):
+            atomic_copy_file(input_path, output_path, overwrite=overwrite)
+            result.quality_used = 100
+            result.iterations = 1
+            return
+
+        image = normalize_orientation(source)
+        if max_size:
+            image.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+        if target_bytes is not None:
+            _compress_to_target(
+                image,
+                output_path,
+                ext,
+                fmt_config,
+                target_bytes,
+                result,
+                overwrite=overwrite,
+            )
+            return
+        _compress_at_quality(
+            image,
+            input_path,
+            output_path,
+            ext,
+            fmt_config,
+            quality=quality,
+            preset=preset,
+            resized=max_size is not None,
+            overwrite=overwrite,
+            result=result,
+        )
+
+
+def _source_already_fits(
+    input_size: int,
+    dimensions: tuple[int, int],
+    target_bytes: int | None,
+    max_size: int | None,
+) -> bool:
+    return (
+        target_bytes is not None
+        and input_size <= target_bytes
+        and (max_size is None or max(dimensions) <= max_size)
+    )
+
+
+def _compress_at_quality(
+    image: Image.Image,
+    input_path: str,
+    output_path: str,
+    ext: str,
+    fmt_config: dict[str, Any],
+    *,
+    quality: int | None,
+    preset: str,
+    resized: bool,
+    overwrite: bool,
+    result: CompressResult,
+) -> None:
+    actual_quality = _get_quality(ext, quality, preset)
+    lossless = preset == "lossless" and quality is None
+    payload = _encode_compressed(image, ext, fmt_config, actual_quality, lossless=lossless)
+    # Select the winner before publishing. Publishing a larger encode and then
+    # replacing it with the source creates a second commit-time race.
+    if not resized and len(payload) >= result.input_size:
+        atomic_copy_file(input_path, output_path, overwrite=overwrite)
+    else:
+        atomic_write_bytes(output_path, payload, overwrite=overwrite)
+    result.quality_used = actual_quality
+    result.iterations = 1
 
 
 def _get_quality(ext: str, quality: int | None, preset: str) -> int:
@@ -340,82 +421,86 @@ def _encode_compressed(
     lossless: bool = False,
 ) -> bytes:
     """Encode one image using the exact payload used for final output."""
-    save_kwargs: dict[str, Any] = {}
-    save_img = img
+    save_img = _prepare_compressed_image(img, ext)
+    save_kwargs = _compression_save_kwargs(ext, fmt_config, quality_val, lossless=lossless)
+    save_kwargs.update(_compression_metadata(img, save_img))
+    buf = io.BytesIO()
+    save_img.save(buf, **save_kwargs)
+    return buf.getvalue()
 
-    if save_img.mode in {"CMYK", "YCCK", "LAB"} and ext not in {".tif", ".tiff"}:
-        save_img = convert_color_to_rgb(save_img)
 
+def _prepare_compressed_image(image: Image.Image, ext: str) -> Image.Image:
+    prepared = image
+    if prepared.mode in {"CMYK", "YCCK", "LAB"} and ext not in {".tif", ".tiff"}:
+        prepared = convert_color_to_rgb(prepared)
     if ext in (".jpg", ".jpeg"):
-        if image_has_transparency(save_img):
-            save_img = flatten_transparency(save_img)
-        elif save_img.mode not in ("RGB", "L"):
-            save_img = convert_color_to_rgb(save_img)
-            if save_img.mode not in ("RGB", "L"):
-                save_img = save_img.convert("RGB")
-        save_kwargs = {
+        return _prepare_jpeg_image(prepared)
+    if ext in {".avif", ".heic", ".heif"} and prepared.mode not in ("RGB", "RGBA"):
+        prepared = convert_color_to_rgb(prepared)
+        if prepared.mode not in ("RGB", "RGBA"):
+            prepared = prepared.convert("RGB")
+    return prepared
+
+
+def _prepare_jpeg_image(image: Image.Image) -> Image.Image:
+    if image_has_transparency(image):
+        return flatten_transparency(image)
+    if image.mode in ("RGB", "L"):
+        return image
+    converted = convert_color_to_rgb(image)
+    return converted if converted.mode in ("RGB", "L") else converted.convert("RGB")
+
+
+def _compression_save_kwargs(
+    ext: str,
+    fmt_config: dict[str, Any],
+    quality_val: int,
+    *,
+    lossless: bool,
+) -> dict[str, Any]:
+    if ext in (".jpg", ".jpeg"):
+        return {
             "format": "JPEG",
             "quality": quality_val,
             "optimize": True,
             "subsampling": 0 if quality_val >= 95 else 2,
         }
-    elif ext == ".png":
-        save_kwargs = {
+    if ext == ".png":
+        return {
             "format": "PNG",
             "compress_level": min(9, max(0, quality_val)),
             "optimize": True,
         }
-    elif ext == ".webp":
-        # lossless 预设走 WebP 真·无损，而非 quality=100 的有损近似。
-        save_kwargs = (
+    if ext == ".webp":
+        return (
             {"format": "WEBP", "lossless": True, "method": 6}
             if lossless
             else {"format": "WEBP", "quality": quality_val, "method": 6}
         )
-    elif ext == ".avif":
-        if save_img.mode not in ("RGB", "RGBA"):
-            save_img = convert_color_to_rgb(save_img)
-            if save_img.mode not in ("RGB", "RGBA"):
-                save_img = save_img.convert("RGB")
-        save_kwargs = {
-            "format": "AVIF",
-            "quality": quality_val,
-        }
-    elif ext in (".heic", ".heif"):
-        if save_img.mode not in ("RGB", "RGBA"):
-            save_img = convert_color_to_rgb(save_img)
-            if save_img.mode not in ("RGB", "RGBA"):
-                save_img = save_img.convert("RGB")
-        save_kwargs = {
-            "format": "HEIF",
-            "quality": quality_val,
-        }
-    elif ext in (".tiff", ".tif"):
-        save_kwargs = {
-            "format": "TIFF",
-            "compression": "tiff_lzw",
-        }
-    else:
-        save_kwargs = {"format": fmt_config["format"]}
+    if ext == ".avif":
+        return {"format": "AVIF", "quality": quality_val}
+    if ext in (".heic", ".heif"):
+        return {"format": "HEIF", "quality": quality_val}
+    if ext in (".tiff", ".tif"):
+        return {"format": "TIFF", "compression": "tiff_lzw"}
+    return {"format": fmt_config["format"]}
 
-    # 保留 EXIF 和 ICC
+
+def _compression_metadata(original: Image.Image, encoded: Image.Image) -> dict[str, Any]:
+    metadata: dict[str, Any] = {}
     try:
-        exif_data = normalized_exif_bytes(img)
+        exif_data = normalized_exif_bytes(original)
         if exif_data:
-            save_kwargs["exif"] = exif_data
+            metadata["exif"] = exif_data
     except Exception:
         pass
-
     try:
-        icc_profile = save_img.info.get("icc_profile")
+        icc_profile = encoded.info.get("icc_profile")
         if icc_profile:
-            save_kwargs["icc_profile"] = icc_profile
+            metadata["icc_profile"] = icc_profile
     except Exception:
         pass
-
-    buf = io.BytesIO()
-    save_img.save(buf, **save_kwargs)
-    return buf.getvalue()
+    return metadata
 
 
 def _compress_to_target(

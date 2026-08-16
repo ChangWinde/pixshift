@@ -270,58 +270,59 @@ def _strip_jpeg_metadata(data: bytes) -> bytes | None:
         if marker is None:
             return None
         if marker == 0xDA:
-            # Baseline JPEGs have one entropy-coded scan. Walk it to the exact
-            # EOI instead of copying the tail blindly: comments, APP metadata,
-            # or arbitrary bytes are legal after SOS/EOI and would otherwise
-            # defeat the privacy guarantee of this fast path. Streams with
-            # multiple scans or uncommon in-scan markers take the safe
-            # decode/re-encode fallback.
-            if offset + 4 > total:
+            scan = _validated_jpeg_scan(data, offset)
+            if scan is None:
                 return None
-            length = int.from_bytes(data[offset + 2 : offset + 4], "big")
-            scan_start = offset + 2 + length
-            if length < 2 or scan_start > total:
-                return None
-            cursor = scan_start
-            while cursor < total:
-                if data[cursor] != 0xFF:
-                    cursor += 1
-                    continue
-                if cursor + 1 >= total:
-                    return None
-                scan_marker = data[cursor + 1]
-                if scan_marker == 0x00:  # stuffed entropy byte
-                    cursor += 2
-                    continue
-                if scan_marker == 0xFF:  # marker fill byte
-                    cursor += 1
-                    continue
-                if 0xD0 <= scan_marker <= 0xD7:  # restart marker
-                    cursor += 2
-                    continue
-                if scan_marker == 0xD9:  # end of image
-                    end = cursor + 2
-                    if end != total:
-                        return None
-                    kept.append(data[offset:end])
-                    return b"".join(kept)
-                return None
-            return None
+            kept.append(scan)
+            return b"".join(kept)
         if marker in (0xD8, 0x01) or 0xD0 <= marker <= 0xD7:
             kept.append(data[offset : offset + 2])
             offset += 2
             continue
-        if offset + 4 > total:
+        segment_end = _jpeg_segment_end(data, offset)
+        if segment_end is None:
             return None
-        length = int.from_bytes(data[offset + 2 : offset + 4], "big")
-        if length < 2 or offset + 2 + length > total:
-            return None
-        segment_end = offset + 2 + length
         segment = data[offset:segment_end]
         is_icc = marker == 0xE2 and segment[4:].startswith(b"ICC_PROFILE\x00")
         if marker not in _JPEG_DROPPED_MARKERS or is_icc:
             kept.append(segment)
         offset = segment_end
+    return None
+
+
+def _jpeg_segment_end(data: bytes, offset: int) -> int | None:
+    if offset + 4 > len(data):
+        return None
+    length = int.from_bytes(data[offset + 2 : offset + 4], "big")
+    segment_end = offset + 2 + length
+    return segment_end if length >= 2 and segment_end <= len(data) else None
+
+
+def _validated_jpeg_scan(data: bytes, offset: int) -> bytes | None:
+    """Return one baseline scan ending at the exact EOI, or refuse the splice."""
+    segment_end = _jpeg_segment_end(data, offset)
+    if segment_end is None:
+        return None
+    cursor = segment_end
+    while cursor < len(data):
+        if data[cursor] != 0xFF:
+            cursor += 1
+            continue
+        if cursor + 1 >= len(data):
+            return None
+        marker = data[cursor + 1]
+        if marker == 0x00:
+            cursor += 2  # stuffed entropy byte
+        elif marker == 0xFF:
+            cursor += 1  # marker fill byte
+        elif 0xD0 <= marker <= 0xD7:
+            cursor += 2  # restart marker
+        elif marker == 0xD9 and cursor + 2 == len(data):
+            return data[offset : cursor + 2]
+        else:
+            # Multiple scans, metadata after SOS, and trailing data use the
+            # decode/re-encode fallback so the privacy guarantee stays exact.
+            return None
     return None
 
 
@@ -979,145 +980,145 @@ def _compress_rebuild(
     # 抑制 MuPDF 的非关键警告
     logging.getLogger("fitz").setLevel(logging.ERROR)
 
-    # 统计计数
-    images_processed = 0
-    images_skipped = 0
-    images_replaced = 0
-
-    # 收集所有唯一的图片 xref，避免重复处理
-    processed_xrefs = set()
-
-    # An image XObject may be reused at different sizes across pages. Gather
-    # every placement before replacing any xref so downsampling is based on the
-    # placement that needs the most pixels, not whichever page happens to come
-    # first in the document.
-    placement_rects_by_xref: dict[int, list[Any]] = {}
-    if max_dpi:
-        for page_idx in range(doc.page_count):
-            try:
-                for placement in doc[page_idx].get_image_info(xrefs=True):
-                    info_xref = int(placement.get("xref", 0) or 0)
-                    if not info_xref:
-                        continue
-                    rect = fitz.Rect(placement["bbox"])
-                    if rect.width > 0 and rect.height > 0:
-                        placement_rects_by_xref.setdefault(info_xref, []).append(rect)
-            except Exception:
-                # Missing placement metadata must disable downsampling for the
-                # affected image rather than risk under-resolving it.
-                continue
+    stats = {"images_processed": 0, "images_skipped": 0, "images_replaced": 0}
+    processed_xrefs: set[int] = set()
+    placement_rects_by_xref = _pdf_image_placements(doc) if max_dpi else {}
 
     for page_idx in range(doc.page_count):
         page = doc[page_idx]
-        image_list = page.get_images(full=True)
-
-        for img_info in image_list:
+        for img_info in page.get_images(full=True):
             xref = img_info[0]
-
-            # 跳过已处理的图片（同一图片可能在多页引用）
             if xref in processed_xrefs:
                 continue
             processed_xrefs.add(xref)
-            images_processed += 1
-
+            stats["images_processed"] += 1
             try:
-                base_image = doc.extract_image(xref)
-                if not base_image or not base_image.get("image"):
-                    images_skipped += 1
-                    continue
-
-                # ``replace_image`` rebuilds the image dictionary. Preserve
-                # XObjects whose rendering depends on dictionary semantics not
-                # represented by the extracted pixel payload: soft/colour-key
-                # masks, stencil masks, and non-default Decode arrays.
-                mask_type, _ = doc.xref_get_key(xref, "Mask")
-                image_mask_type, image_mask_value = doc.xref_get_key(xref, "ImageMask")
-                is_stencil = image_mask_type == "bool" and image_mask_value.lower() == "true"
-                components = int(base_image.get("colorspace", 0) or 0)
-                if (
-                    base_image.get("smask", 0)
-                    or mask_type != "null"
-                    or is_stencil
-                    or _has_nondefault_decode(doc, xref, components)
-                ):
-                    images_skipped += 1
-                    continue
-
-                img_bytes = base_image["image"]
-                img_width = base_image.get("width", 0)
-                img_height = base_image.get("height", 0)
-
-                with open_image(io.BytesIO(img_bytes)) as opened_image:
-                    pil_img = opened_image.copy()
-                    pil_img.info.update(opened_image.info)
-
-                # 降低分辨率
-                if max_dpi and img_width > 0 and img_height > 0:
-                    try:
-                        required_scales = []
-                        for display_rect in placement_rects_by_xref.get(xref, []):
-                            display_w_inch = display_rect.width / 72
-                            display_h_inch = display_rect.height / 72
-                            if display_w_inch > 0 and display_h_inch > 0:
-                                current_dpi = max(
-                                    img_width / display_w_inch,
-                                    img_height / display_h_inch,
-                                )
-                                required_scales.append(min(1.0, max_dpi / current_dpi))
-                        if required_scales:
-                            scale = max(required_scales)
-                            if scale < 1:
-                                new_w = max(1, int(img_width * scale))
-                                new_h = max(1, int(img_height * scale))
-                                pil_img = pil_img.resize((new_w, new_h), Image.Resampling.LANCZOS)
-                    except Exception:
-                        pass
-
-                # 重新编码
-                pil_img = convert_color_to_srgb(pil_img)
-                buf = io.BytesIO()
-                icc_profile = pil_img.info.get("icc_profile")
-                if image_has_transparency(pil_img):
-                    pil_img.save(
-                        buf,
-                        format="PNG",
-                        optimize=True,
-                        icc_profile=icc_profile,
-                    )
-                else:
-                    if pil_img.mode != "RGB":
-                        pil_img = pil_img.convert("RGB")
-                    pil_img.save(
-                        buf,
-                        format="JPEG",
-                        quality=image_quality,
-                        optimize=True,
-                        icc_profile=icc_profile,
-                    )
-
-                new_bytes = buf.getvalue()
-
-                # 替换图片（只有新图更小时才替换）
-                if len(new_bytes) < len(img_bytes):
-                    page.replace_image(xref, stream=new_bytes)
-                    images_replaced += 1
-                else:
-                    images_skipped += 1
-
+                replaced = _compress_pdf_image(
+                    doc,
+                    page,
+                    xref,
+                    image_quality=image_quality,
+                    max_dpi=max_dpi,
+                    placements=placement_rects_by_xref.get(xref, []),
+                )
             except Exception:
-                images_skipped += 1
-                continue
+                replaced = False
+            stats["images_replaced" if replaced else "images_skipped"] += 1
 
-        # 清理页面内容流
         page.clean_contents()
 
     doc.save(output_path, **save_opts)
+    return stats
 
-    return {
-        "images_processed": images_processed,
-        "images_skipped": images_skipped,
-        "images_replaced": images_replaced,
-    }
+
+def _pdf_image_placements(doc: "fitz.Document") -> dict[int, list[Any]]:
+    """Collect every valid placement before replacing shared image XObjects."""
+    placements: dict[int, list[Any]] = {}
+    for page_idx in range(doc.page_count):
+        try:
+            for placement in doc[page_idx].get_image_info(xrefs=True):
+                xref = int(placement.get("xref", 0) or 0)
+                if not xref:
+                    continue
+                rect = fitz.Rect(placement["bbox"])
+                if rect.width > 0 and rect.height > 0:
+                    placements.setdefault(xref, []).append(rect)
+        except Exception:
+            # Missing placement metadata disables downsampling for this image;
+            # guessing could under-resolve an XObject reused at a larger size.
+            continue
+    return placements
+
+
+def _compress_pdf_image(
+    doc: "fitz.Document",
+    page: "fitz.Page",
+    xref: int,
+    *,
+    image_quality: int,
+    max_dpi: int | None,
+    placements: list[Any],
+) -> bool:
+    base_image = doc.extract_image(xref)
+    if not base_image or not base_image.get("image"):
+        return False
+    if not _pdf_image_is_replaceable(doc, xref, base_image):
+        return False
+
+    image_bytes = base_image["image"]
+    with open_image(io.BytesIO(image_bytes)) as opened_image:
+        image = opened_image.copy()
+        image.info.update(opened_image.info)
+    image = _downsample_pdf_image(
+        image,
+        width=int(base_image.get("width", 0) or 0),
+        height=int(base_image.get("height", 0) or 0),
+        max_dpi=max_dpi,
+        placements=placements,
+    )
+    encoded = _encode_pdf_image(image, image_quality)
+    if len(encoded) >= len(image_bytes):
+        return False
+    page.replace_image(xref, stream=encoded)
+    return True
+
+
+def _pdf_image_is_replaceable(doc: "fitz.Document", xref: int, base_image: dict) -> bool:
+    """Reject XObjects whose dictionary semantics cannot survive replacement."""
+    mask_type, _ = doc.xref_get_key(xref, "Mask")
+    image_mask_type, image_mask_value = doc.xref_get_key(xref, "ImageMask")
+    is_stencil = image_mask_type == "bool" and image_mask_value.lower() == "true"
+    components = int(base_image.get("colorspace", 0) or 0)
+    return not (
+        base_image.get("smask", 0)
+        or mask_type != "null"
+        or is_stencil
+        or _has_nondefault_decode(doc, xref, components)
+    )
+
+
+def _downsample_pdf_image(
+    image: Image.Image,
+    *,
+    width: int,
+    height: int,
+    max_dpi: int | None,
+    placements: list[Any],
+) -> Image.Image:
+    if not max_dpi or width <= 0 or height <= 0:
+        return image
+    try:
+        scales = [
+            min(1.0, max_dpi / max(width / (rect.width / 72), height / (rect.height / 72)))
+            for rect in placements
+            if rect.width > 0 and rect.height > 0
+        ]
+        scale = max(scales, default=1.0)
+        if scale < 1:
+            size = (max(1, int(width * scale)), max(1, int(height * scale)))
+            return image.resize(size, Image.Resampling.LANCZOS)
+    except Exception:
+        pass
+    return image
+
+
+def _encode_pdf_image(image: Image.Image, image_quality: int) -> bytes:
+    image = convert_color_to_srgb(image)
+    buffer = io.BytesIO()
+    icc_profile = image.info.get("icc_profile")
+    if image_has_transparency(image):
+        image.save(buffer, format="PNG", optimize=True, icc_profile=icc_profile)
+    else:
+        if image.mode != "RGB":
+            image = image.convert("RGB")
+        image.save(
+            buffer,
+            format="JPEG",
+            quality=image_quality,
+            optimize=True,
+            icc_profile=icc_profile,
+        )
+    return buffer.getvalue()
 
 
 # ============================================================

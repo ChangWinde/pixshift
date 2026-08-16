@@ -6,6 +6,11 @@ All notable changes to this project are documented in this file.
 
 ### Added
 
+- Repository and release integrity controls: official artifact-based GitHub Pages
+  deployment, CodeQL, enforced branch/tag rules, a protected PyPI environment, annotated
+  release tags, SHA-256 manifests, an SPDX SBOM, signed build/SBOM attestations, and
+  automatic GitHub Release creation. ADR-0009 records the alternatives and external-state
+  audit contract.
 - Supported release wheels now include AVIF support plus an authenticated FFmpeg 8.1.2
   ffmpeg/ffprobe fallback. The release gate verifies pinned lengths, SHA-256 values,
   codecs, filters, and a real encode/probe journey on manylinux_2_28 x86-64/ARM64,
@@ -44,6 +49,9 @@ All notable changes to this project are documented in this file.
   deployment sources, and the package documentation URL. The formerly flat test
   suite is grouped by owned boundary, and the README was rewritten as a concise
   product, safety, automation, and repository entry point.
+- The source-distribution `MANIFEST.in` is now an explicit conventional root-contract
+  entry, and hosted repository settings have a maintained source of truth under
+  `docs/project/` instead of relying on undocumented UI state.
 - Five engines (compress, strip, crop, watermark, montage) each carried their
   own copy of the directory-walking collector; they now delegate to the
   shared one in `core/files.py`, which is what gives every command the new

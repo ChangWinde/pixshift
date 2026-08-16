@@ -6,11 +6,18 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write
+
+concurrency:
+  group: pr-labeler-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
   label:
+    name: Apply pull request labels
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write # The labeler only mutates labels on this pull request.
     steps:
       - name: Auto-label PR by changed files
         uses: actions/labeler@bf12e9b00b37c5c0ca2b87b79b2daf7891dbda13 # v7.0.0

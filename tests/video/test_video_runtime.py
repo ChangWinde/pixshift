@@ -88,6 +88,34 @@ def test_probe_tolerates_unparsable_numbers(monkeypatch, clip):
     assert info.audio_codec == ""
 
 
+def test_probe_tolerates_malformed_stream_scalars(monkeypatch, clip):
+    payload = _probe_payload(
+        streams=[
+            {
+                "codec_type": "video",
+                "codec_name": "h264",
+                "width": "N/A",
+                "height": float("inf"),
+                "level": {},
+                "avg_frame_rate": "30/1",
+            },
+            {
+                "codec_type": "audio",
+                "codec_name": "aac",
+                "sample_rate": [],
+                "channels": "N/A",
+            },
+        ]
+    )
+    _patch_ffprobe(monkeypatch, stdout=json.dumps(payload))
+
+    info = probe(str(clip))
+
+    assert info.error == ""
+    assert (info.width, info.height, info.video_level) == (0, 0, 0)
+    assert (info.audio_sample_rate, info.audio_channels) == (0, 0)
+
+
 def test_probe_missing_input(tmp_path):
     info = probe(str(tmp_path / "absent.mp4"))
     assert info.exists is False
