@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Superseded in part by [ADR-0009](0009-repository-and-release-integrity.md)
 
 ## Context
 

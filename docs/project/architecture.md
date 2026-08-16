@@ -79,6 +79,8 @@ policy and media verification boundary are recorded in
 [ADR-0006](../adr/0006-extreme-quality-boundaries.md).
 The install-complete, offline video-runtime policy is recorded in
 [ADR-0008](../adr/0008-default-local-media-runtime.md).
+Repository and release trust boundaries are recorded in
+[ADR-0009](../adr/0009-repository-and-release-integrity.md).
 
 ## Repository Information Architecture
 
@@ -101,6 +103,8 @@ remain directly below `docs/` so established URLs stay stable; engineering mater
 grouped by audience and excluded from the site. The ownership, update matrix, retirement
 policy, and validation gates live in
 [documentation-governance.md](documentation-governance.md).
+GitHub-hosted branch, tag, Pages, scanning, and release controls are described and audited
+through [repository-governance.md](repository-governance.md).
 
 ## Automation and AI Clients
 
@@ -150,6 +154,8 @@ CI runs Ruff lint/format checks, mypy, the full pytest suite (including
 property-based contract tests), and a 78% coverage floor; the tag-driven
 release workflow adds authenticated FFmpeg staging, native execution and codec smoke
 tests, platform wheel tagging, isolated-install verification, and package metadata
-validation. The docs workflow builds the MkDocs site strictly. Python dependencies are
-resolved from `uv.lock`, native release inputs are pinned by byte length and SHA-256,
-and third-party GitHub Actions are pinned to immutable commit SHAs.
+validation. The docs workflow builds a strict Pages artifact with read-only source access
+and deploys it through OIDC. Release artifacts carry checksums, an SPDX SBOM, build
+provenance, and a signed SBOM attestation before trusted-publisher upload. Python
+dependencies are resolved from `uv.lock`, native release inputs are pinned by byte length
+and SHA-256, and third-party GitHub Actions are pinned to immutable commit SHAs.

@@ -11,14 +11,16 @@ automation clients, release metadata, and the published manual do not drift apar
 | `README.md` | Evaluators and new contributors | Product promise, fast orientation, repository map | English | No |
 | `docs/*.md` | CLI users and automation authors | Current supported workflows and public behavior | Chinese | Yes |
 | `docs/schemas/v1/` | Programs and agents | JSON payload structure for schema 1.1 | JSON/English | Served as static contracts |
-| `docs/project/` | Maintainers and contributors | Current architecture, process, goals, and evidence | English | No |
+| `docs/project/` | Maintainers and contributors | Current architecture, process, goals, repository controls, and evidence | English | No |
 | `docs/adr/` | Maintainers and reviewers | Immutable architectural decisions and tradeoffs | English | No |
 | `.github/` | Contributors and repository hosts | Contribution, support, security, review, and CI policy | English | No |
 | `AGENTS.md` | Coding agents | Safe invocation and repository-local operating rules | English | No |
 | `CHANGELOG.md` | Users and release tooling | Versioned release history and migrations | English | No |
 
 The placement rationale and root-file budget are recorded in
-[ADR-0007](../adr/0007-repository-documentation-governance.md).
+[ADR-0007](../adr/0007-repository-documentation-governance.md), with the packaging-manifest
+and hosted-governance contract superseded by
+[ADR-0009](../adr/0009-repository-and-release-integrity.md).
 
 ## Source-of-truth Rules
 
@@ -58,6 +60,7 @@ needs the semantic and mechanical checks below.
 | Release/version change | `pyproject.toml`, `uv.lock`, `CHANGELOG.md`, [releasing.md](releasing.md) |
 | Performance claim | Benchmark harness and [performance.md](performance.md); never README-only numbers |
 | Documentation structure | `mkdocs.yml`, link checks, this governance page, redirects if a public URL moves |
+| GitHub or release control | [Repository governance](repository-governance.md), workflow tests, a new or superseding ADR when the trust boundary changes |
 
 “No documentation impact” is a reviewable conclusion, not a default checkbox.
 
@@ -70,8 +73,9 @@ needs the semantic and mechanical checks below.
 3. **Verify mechanically.** Run the focused governance tests and a strict site build.
 4. **Review semantically.** Confirm examples work, warnings describe failure behavior,
    links lead to the authoritative page, and claims do not exceed what tests prove.
-5. **Publish from `main`.** The Pages workflow deploys the manual only after a successful
-   strict build. A green local build does not mean the public site has deployed.
+5. **Publish from `main`.** The Pages workflow uploads a strict-build artifact and deploys
+   it through the `github-pages` environment. A green local build does not mean the public
+   site has deployed.
 6. **Retire deliberately.** Preserve release history. Supersede ADRs instead of rewriting
    accepted decisions; when a public page moves, provide a redirect before removing its URL.
 
@@ -117,6 +121,10 @@ itself changes on `main`. If the site is stale:
 3. reproduce with `uv run mkdocs build --strict`;
 4. fix the source or deployment configuration without editing the generated `site/` tree;
 5. verify the deployed URL after the next successful publish.
+
+Hosted controls that are not represented by tracked files are audited against
+[repository-governance.md](repository-governance.md). A green checkout is not evidence that
+branch rules, release environments, dependency alerts, or Pages settings are active.
 
 Generated `site/`, `dist/`, coverage files, caches, virtual environments, and egg-info are
 local build state. They are ignored and must never be treated as documentation sources.

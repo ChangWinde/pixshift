@@ -178,9 +178,15 @@ The test grouping and placement rules are described in
 [`tests/README.md`](https://github.com/ChangWinde/pixshift/blob/main/tests/README.md).
 
 Root files are intentionally limited to tools that rely on conventional discovery:
-package and lock metadata, MkDocs and pre-commit configuration, the agent guide, license,
-changelog, and this README. The placement policy and update matrix are documented in
+package and lock metadata, the source-distribution manifest, MkDocs and pre-commit
+configuration, the agent guide, license, changelog, and this README. The placement policy
+and update matrix are documented in
 [`docs/project/documentation-governance.md`](https://github.com/ChangWinde/pixshift/blob/main/docs/project/documentation-governance.md).
+
+Hosted branch, tag, Pages, scanning, and release controls are documented in
+[`docs/project/repository-governance.md`](https://github.com/ChangWinde/pixshift/blob/main/docs/project/repository-governance.md).
+Release packages include SHA-256 checksums, an SPDX SBOM, and GitHub-verifiable build and
+SBOM attestations before trusted-publisher upload to PyPI.
 
 ## Contributing
 

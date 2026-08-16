@@ -60,6 +60,7 @@ PROJECT_PAGES = {
     "labels.md",
     "performance.md",
     "releasing.md",
+    "repository-governance.md",
 }
 HEADING_EXEMPT = {Path(".github/PULL_REQUEST_TEMPLATE.md")}
 TEST_SUITES = {"automation", "cli", "core", "image", "integration", "pdf", "repository", "video"}
@@ -319,6 +320,43 @@ def test_strict_build_and_deployment_sources_are_policy():
     for source in ("docs/**", "mkdocs.yml", ".github/workflows/docs.yml"):
         assert source in workflow, f"Docs workflow does not watch {source}"
     assert "mkdocs build --strict" in workflow
+    assert "actions/upload-pages-artifact@" in workflow
+    assert "actions/deploy-pages@" in workflow
+    assert "mkdocs gh-deploy" not in workflow
+
+
+def test_workflows_use_read_only_checkout_credentials() -> None:
+    for workflow_path in sorted((REPO / ".github" / "workflows").glob("*.yml")):
+        workflow = workflow_path.read_text(encoding="utf-8")
+        checkout_count = workflow.count("uses: actions/checkout@")
+        if checkout_count:
+            assert workflow.count("persist-credentials: false") == checkout_count, (
+                f"{workflow_path.name} must disable checkout credentials in every job"
+            )
+
+
+def test_hosted_security_and_release_controls_are_versioned() -> None:
+    ci_workflow = _read(".github/workflows/ci.yml")
+    assert "${{ github.base_ref }}" not in re.findall(r"run:.*", ci_workflow)
+
+    codeql = _read(".github/workflows/codeql.yml")
+    assert "github/codeql-action/init@" in codeql
+    assert "github/codeql-action/analyze@" in codeql
+    assert "security-events: write" in codeql
+
+    release = _read(".github/workflows/release.yml")
+    for contract in (
+        'git cat-file -t "refs/tags/${GITHUB_REF_NAME}"',
+        "sha256sum dist/*.whl dist/*.tar.gz",
+        "anchore/sbom-action@",
+        "actions/attest@",
+        "sbom-path: release-sbom.spdx.json",
+        "gh release create",
+    ):
+        assert contract in release, f"release workflow omits integrity contract: {contract}"
+
+    adr = _read("docs/adr/0009-repository-and-release-integrity.md")
+    assert "`MANIFEST.in` is added to the curated root contract" in adr
 
 
 def test_documentation_has_an_explicit_review_owner():

@@ -19,14 +19,23 @@ PixShift follows semantic versioning (`MAJOR.MINOR.PATCH`).
 2. Update `CHANGELOG.md`, set the same version in `pyproject.toml`, and run
    `uv lock`. Confirm that neither the tag nor package version already exists.
    The release workflow rejects a tag that differs from `project.version`.
-3. Merge the reviewed release commit, then create and push a version tag:
+3. Merge the reviewed release commit, then create and push an annotated version tag
+   (use `-s` as well when a maintainer signing key is available):
    ```bash
-   git tag vX.Y.Z
+   git tag -a vX.Y.Z -m "PixShift vX.Y.Z"
    git push origin vX.Y.Z
    ```
-4. The tag-only `release.yml` workflow runs the repository gate, builds the source
-   distribution, then builds and executes authenticated runtime wheels on every target.
-5. Download and verify artifacts from GitHub Actions.
+4. The tag-only `release.yml` workflow rejects lightweight or version-mismatched tags,
+   runs the repository gate, builds the source distribution, then builds and executes
+   authenticated runtime wheels on every target.
+5. The publish job creates SHA-256 checksums and an SPDX SBOM, signs build-provenance and
+   SBOM attestations through GitHub OIDC, publishes through PyPI trusted publishing, and
+   creates the matching GitHub Release.
+6. Download and verify artifacts, checksums, and attestations from GitHub Actions:
+   ```bash
+   gh attestation verify pixshift-*.whl -R ChangWinde/pixshift
+   sha256sum --check SHA256SUMS
+   ```
 
 ## Bundled Media Runtime
 
@@ -59,8 +68,8 @@ validated artifacts to PyPI through [trusted publishing](https://docs.pypi.org/t
    owner `ChangWinde`, repository `pixshift`, workflow `release.yml`,
    environment `pypi`. The PyPI project already exists, so configure this under
    the existing project's Publishing settings (not as a pending publisher).
-2. In the GitHub repository settings, create the `pypi` environment.
-   Recommended: require a reviewer so publishing stays an explicit decision.
+2. In the GitHub repository settings, create the `pypi` environment and require an
+   explicit reviewer. Limit its deployment policy to `v*` tags.
 3. Push a `vX.Y.Z` tag. The verification, source-build, and five platform-wheel matrix
    entries must all pass; the `publish` job uploads them only after the environment gate.
 
@@ -70,10 +79,13 @@ page on PyPI after the `publish` job succeeds.
 ## Documentation
 
 The user manual publishes itself: `docs.yml` runs on every push to `main` that
-touches `docs/` or `mkdocs.yml`, builds with `mkdocs build --strict`, and pushes
-the result to the `gh-pages` branch that serves
-<https://changwinde.github.io/pixshift/>. No release step is required, and the
-`gh-pages` branch must not be deleted.
+touches `docs/` or `mkdocs.yml`, builds with `mkdocs build --strict`, uploads an
+immutable Pages artifact, and deploys it through the `github-pages` environment to
+<https://changwinde.github.io/pixshift/>. No release step or generated branch is required.
+
+The expected hosted controls and audit commands live in
+[repository-governance.md](repository-governance.md). Verify them before tagging; workflow
+files alone cannot prove that rulesets, environments, or trusted publishers are active.
 
 ## Coverage Policy
 

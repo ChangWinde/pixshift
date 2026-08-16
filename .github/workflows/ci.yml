@@ -8,8 +8,13 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   commit-style:
+    name: Commit style
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
@@ -17,11 +22,15 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Check commit messages follow the Forge convention
-        run: python3 scripts/check_commit_messages.py --range "origin/${{ github.base_ref }}..HEAD"
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: python3 scripts/check_commit_messages.py --range "origin/${BASE_REF}..HEAD"
 
   test:
+    name: Test (${{ matrix.os }}, Python ${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -38,6 +47,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Setup uv and Python
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
