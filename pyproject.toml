@@ -44,7 +44,7 @@ docs = [
 ]
 dev = [
     "build>=1.2.0",
-    "hypothesis>=6.165.3",
+    "hypothesis>=6.165.10",
     "jsonschema>=4.23",
     "mypy>=1.10",
     "pytest>=7.0",
