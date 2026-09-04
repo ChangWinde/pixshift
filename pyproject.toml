@@ -43,7 +43,7 @@ docs = [
     "mkdocs-material>=9.5",
 ]
 dev = [
-    "build>=1.2.0",
+    "build>=1.6.0",
     "hypothesis>=6.165.3",
     "jsonschema>=4.23",
     "mypy>=1.10",
